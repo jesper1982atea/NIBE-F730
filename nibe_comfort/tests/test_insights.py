@@ -263,7 +263,7 @@ class PlanTests(unittest.TestCase):
                 tibber_prices(bad)
 
     def test_curve_pairs_values_at_same_time_and_fits_current_offset_only(self):
-        start = self.now - 7 * 86400
+        start = self.now // 1800 * 1800 - 7 * 86400
         outdoor = [[start + i * 3600, 10 - i] for i in range(12)]
         supply = [[start + i * 3600 + 60, 30 + (i) * 1.0] for i in range(12)]
         offset = [[start, 1], [start + 6 * 3600, 2]]
@@ -332,7 +332,7 @@ class PlanTests(unittest.TestCase):
 
     def test_plan_endpoint_reads_history_prices_and_never_writes(self):
         cfg = config(offset_entity=self.offset, outdoor_entity=self.outdoor, price_entity="sensor.electricity_price_hem")
-        start = self.now - 3 * 86400
+        start = self.now // 1800 * 1800 - 3 * 86400
         history = [
             [row(self.outdoor, 5, start)] + [{"state": str(5 - i), "last_changed": datetime.fromtimestamp(start + i * 3600, timezone.utc).isoformat()} for i in range(1, 12)],
             [row(self.supply, 30, start + 60)] + [{"state": str(30 + i), "last_changed": datetime.fromtimestamp(start + i * 3600 + 60, timezone.utc).isoformat()} for i in range(1, 12)],
