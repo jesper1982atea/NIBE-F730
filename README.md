@@ -73,6 +73,8 @@ nyare zip och tryck på *Uppdatera* på tillägget, eller gå över till alterna
    Anpassa säkerhetsgränserna till din anläggning.
 3. Börja med övervakning. Kontrollera anslutningen och förslagen innan du
    aktiverar automatiken. Manuell anslutning finns under utfällbara inställningar.
+4. Öppna **Testa styrningen** och tryck *Starta test* för att se att pumpen
+   tar emot en ändring. Förskjutningen ställs tillbaka efter 10 minuter.
 
 Alla NIBE-parametrar exponeras inte som skrivbara entiteter av myUplink.
 Kontobehörighet, pumpmodell och integration avgör tillgängligheten. Saknas

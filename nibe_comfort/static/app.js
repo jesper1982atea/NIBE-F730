@@ -913,6 +913,8 @@ function renderEvents() {
     for (const [key, change] of Object.entries(data.changes || {})) lines.push(`${fieldLabels[key] || key}: ${logValue(change.from)} → ${logValue(change.to)}`);
     if (event.kind === "write_attempt") lines.push(`Förskjutning ${data.previous} → ${data.value}. Rum ${displayNumber(data.indoor)} °C, mål ${displayNumber(data.target_temperature)} °C. Rumspåverkan ${displayNumber(data.contributions.room)}, väder ${displayNumber(data.contributions.weather)}, pris ${displayNumber(data.contributions.price)}.${data.target_shift ? ` Mål tillfälligt ${data.target_shift > 0 ? "+" : ""}${displayNumber(data.target_shift)}° (${data.preheat === "preheat" ? "förvärmning" : "dyrt elpris"}).` : ""}`);
     if (data.requested !== undefined) lines.push(`Begärt: ${data.requested}. Återläst: ${data.observed}.`);
+    if (event.kind === "test_write") lines.push(`Förskjutning ${data.previous} → ${data.value} i ${data.restore_after_minutes} minuter.`);
+    if (event.kind === "test_restore") lines.push(`Tillbaka till ${data.value}.`);
     if (event.kind === "offset_observed") lines.push(`${data.previous} → ${data.value}. ${data.note}`);
     if (data.error) lines.push(data.error);
     if (data.request_id) lines.push(`Tillhör begäran #${data.request_id}.`);
@@ -947,6 +949,70 @@ async function refreshDashboard() {
   dashboardBusy = true;
   try { await Promise.all([refreshOverview(), refreshEvents()]); }
   finally { dashboardBusy = false; }
+}
+
+const clock = (time) => new Date(time * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+let testTimer = null;
+
+function renderTest(data) {
+  const test = data.test;
+  const active = Boolean(test && ["running", "restoring"].includes(test.phase));
+  $("test-start").hidden = active;
+  $("test-stop").hidden = !test || test.phase !== "running";
+  for (const node of document.querySelectorAll(".test-new")) node.textContent = test ? displayNumber(test.value) : "det nya värdet";
+  for (const node of document.querySelectorAll(".test-old")) node.textContent = test ? displayNumber(test.original) : "ursprungsvärdet";
+  if (!test) {
+    $("test-steps").replaceChildren();
+    $("test-status").textContent = "Inget test har körts ännu.";
+    return;
+  }
+  const failed = test.result === "failed";
+  const restored = test.phase === "done" && ["confirmed", "unconfirmed"].includes(test.result);
+  const steps = [
+    [failed ? "fail" : "done", `Ändring skickad: ${displayNumber(test.original)} → ${displayNumber(test.value)} kl ${clock(test.started_at)}`],
+    [test.observed_at ? "done" : test.phase === "running" ? "wait" : "fail",
+      test.observed_at ? `Pumpen rapporterar ${displayNumber(test.value)} via Home Assistant (kl ${clock(test.observed_at)})`
+        : test.phase === "running" ? "Väntar på att pumpen rapporterar det nya värdet… (brukar ta 1–5 minuter)" : "Pumpen rapporterade aldrig det nya värdet"],
+    [test.phase === "running" ? "now" : test.observed_at ? "done" : "skip", `Kontrollera på pumpen att förskjutningen visar ${displayNumber(test.value)}`],
+    [restored ? "done" : test.phase === "restoring" ? "wait" : test.phase === "running" ? "todo" : "fail",
+      restored ? `Återställd till ${displayNumber(test.original)}` : test.phase === "restoring" ? `Återställer till ${displayNumber(test.original)}…`
+        : test.phase === "running" ? `Återställs automatiskt till ${displayNumber(test.original)} kl ${clock(test.restore_at)}` : "Återställningen kunde inte bekräftas"],
+  ];
+  $("test-steps").replaceChildren(...steps.map(([state, text]) => {
+    const item = document.createElement("li");
+    item.className = state;
+    item.textContent = text;
+    return item;
+  }));
+  const minutes = Math.max(0, Math.ceil((test.restore_at - data.now) / 60));
+  $("test-status").textContent = {
+    running: `Testet pågår. ${minutes} min kvar innan förskjutningen ställs tillbaka.`,
+    restoring: "Testtiden är slut. Väntar på att pumpen rapporterar ursprungsvärdet.",
+  }[test.phase] || {
+    confirmed: "Klart! Pumpen tog emot ändringen och är återställd. Styrningen fungerar.",
+    unconfirmed: "Pumpen rapporterade aldrig testvärdet. Ändringen når troligen inte pumpen; se tipsen nedan.",
+    changed: "Förskjutningen ändrades av något annat under testet och lämnades orörd. Kontrollera värdet på pumpen.",
+    restore_unconfirmed: `Återställningen kunde inte bekräftas. Kontrollera att förskjutningen är ${displayNumber(test.original)} på pumpen.`,
+    failed: `Home Assistant tog inte emot ändringen: ${test.error || "okänt fel"}.`,
+  }[test.result];
+  window.clearTimeout(testTimer);
+  if (active) testTimer = window.setTimeout(refreshTest, 10000);
+}
+
+async function refreshTest() {
+  try { renderTest(await api("test")); }
+  catch (error) { $("test-status").textContent = `Kunde inte läsa teststatus: ${error.message}`; }
+}
+
+async function testAction(action) {
+  if (action === "start" && !window.confirm("Förskjutningen ändras ett steg i 10 minuter och ställs sedan tillbaka automatiskt. Starta testet?")) return;
+  $("test-start").disabled = $("test-stop").disabled = true;
+  try {
+    renderTest(await api("test", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) }));
+    void refreshEvents();
+  } catch (error) {
+    $("test-status").textContent = `Testet kunde inte ${action === "start" ? "startas" : "avbrytas"}: ${error.message}`;
+  } finally { $("test-start").disabled = $("test-stop").disabled = false; }
 }
 
 async function showVersion() {
@@ -1004,9 +1070,12 @@ async function init() {
   $("refresh-hot-water").addEventListener("click", () => void refreshHotWater());
   $("refresh-learning").addEventListener("click", () => void refreshLearning());
   $("refresh-events").addEventListener("click", () => void refreshEvents());
+  $("test-start").addEventListener("click", () => void testAction("start"));
+  $("test-stop").addEventListener("click", () => void testAction("stop"));
   $("older-events").addEventListener("click", () => void refreshEvents(true));
   await refreshStatus();
   void showVersion();
+  void refreshTest();
   void refreshDashboard();
   void refreshHistory();
   void refreshForecast();

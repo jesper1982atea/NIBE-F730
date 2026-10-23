@@ -93,6 +93,21 @@ class ApiTests(unittest.TestCase):
             status, data = self.request("/api/version")
         self.assertEqual((status, data), (200, {"version": "9.9.9"}))
 
+    def test_pump_test_start_stop_and_validation(self):
+        self.controller.save(config())
+        self.assertIsNone(self.request("/api/test")[1]["test"])
+        self.assertEqual(self.request("/api/test", "PUT", {"action": "x"})[0], 400)
+        self.assertEqual(self.request("/api/test", "PUT", {"action": "start"}, content_type="text/plain")[0], 415)
+        self.assertEqual(self.request("/api/test", "PUT", {"action": "start"}, token=False)[0], 401)
+        self.ha.set_offset.assert_not_called()
+        status, data = self.request("/api/test", "PUT", {"action": "start"})
+        self.assertEqual((status, data["test"]["phase"], data["test"]["value"]), (200, "running", 1))
+        self.ha.set_offset.assert_called_once_with("number.offset", 1)
+        self.assertEqual(self.request("/api/test", "PUT", {"action": "start"})[0], 400)
+        status, data = self.request("/api/test", "PUT", {"action": "stop"})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["test"]["result"], "unconfirmed")
+
     def test_learning_is_read_only_and_wires_preheat_provider(self):
         self.ha.request.return_value = []
         self.controller.save(config())

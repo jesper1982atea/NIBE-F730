@@ -64,6 +64,8 @@ def handler_for(controller, api_token=None):
             try:
                 if path == "/api/settings":
                     self.respond(200, controller.settings())
+                elif path == "/api/test":
+                    self.respond(200, controller.test_status())
                 elif path == "/api/version":
                     self.respond(200, {"version": os.environ.get("NIBE_COMFORT_VERSION", "dev")})
                 elif path == "/api/status":
@@ -126,7 +128,26 @@ def handler_for(controller, api_token=None):
         def do_PUT(self):
             if not self.authorized():
                 return
-            if urlsplit(self.path).path != "/api/settings":
+            path = urlsplit(self.path).path
+            if path == "/api/test":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    action = json.loads(self.rfile.read(length)).get("action") if 0 < length <= 1024 else None
+                    if action == "start":
+                        controller.start_test()
+                    elif action == "stop":
+                        controller.stop_test()
+                    else:
+                        self.respond(400, {"error": "action måste vara start eller stop."})
+                        return
+                    self.respond(200, controller.test_status())
+                except (ValueError, AttributeError, ControlError) as exc:
+                    self.respond(400, {"error": str(exc) or "Ogiltig begäran."})
+                except (OSError, sqlite3.Error):
+                    LOG.exception("Kunde inte spara testläget")
+                    self.respond(500, {"error": "Testläget kunde inte sparas på disk."})
+                return
+            if path != "/api/settings":
                 self.respond(404, {"error": "Sökvägen finns inte."})
                 return
             try:
