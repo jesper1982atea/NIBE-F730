@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 0.2.4
+
+- Mörkt läge. Knappen **Tema** uppe till höger växlar mellan *auto*, *ljust*
+  och *mörkt*. *Auto* följer Home Assistants tema (även när du byter tema medan
+  sidan är öppen) och annars enhetens inställning. Valet sparas i webbläsaren.
+
 ## 0.2.3
 
 - Kurvförskjutningsgrafen visar tydligt **när** värmekurvan kommer att

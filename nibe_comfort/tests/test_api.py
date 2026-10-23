@@ -48,6 +48,33 @@ class ApiTests(unittest.TestCase):
             with exc:
                 return exc.code, json.load(exc)
 
+    def test_ingress_serves_static_files_including_theme(self):
+        handler = handler_for(self.controller, None)
+        ingress = type("IngressHandler", (handler,), {"address_string": lambda self: "172.30.32.2"})
+        original_setup = handler.setup
+
+        def setup(this):
+            original_setup(this)
+            this.client_address = ("172.30.32.2", this.client_address[1])
+
+        ingress.setup = setup
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ingress)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{server.server_port}"
+            with urlopen(base + "/theme.js", timeout=3) as response:
+                self.assertIn("text/javascript", response.headers["Content-Type"])
+                self.assertIn(b"prefers-color-scheme", response.read())
+            with urlopen(base + "/", timeout=3) as response:
+                html = response.read()
+            self.assertIn(b'src="./theme.js"', html)
+            self.assertLess(html.index(b"theme.js"), html.index(b"<body>"))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def test_authentication_required_for_reads_and_writes(self):
         self.assertEqual(self.request("/api/settings", token=False)[0], 401)
         self.assertEqual(self.request("/api/settings", method="PUT", body=config(), token=False)[0], 401)

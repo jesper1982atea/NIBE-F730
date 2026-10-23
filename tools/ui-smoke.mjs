@@ -95,10 +95,15 @@ const server = createServer(async (request, response) => {
     note: "Prognosen ändrar inte värmestyrningen.",
     points: Array.from({ length: 25 }, (_, i) => ({ timestamp: now + i * 3600, temperature: 10 + Math.cos(i / 3) * 3 })),
   };
-  else {
+  else if (request.url === "/ha-parent") {
+    // Same-origin stand-in for the Home Assistant frontend around the ingress iframe.
+    response.setHeader("Content-Type", "text/html");
+    response.end(`<!doctype html><html style="--primary-background-color:#111111"><body style="margin:0;background:#111111"><iframe id="panel" src="${prefix}/" style="width:390px;height:800px;border:0"></iframe></body></html>`);
+    return;
+  } else {
     const file = path === "/" ? "index.html" : path.slice(1);
-    if (!["index.html", "app.js", "style.css"].includes(file)) { response.writeHead(404); response.end("{}"); return; }
-    response.setHeader("Content-Type", { "index.html": "text/html", "app.js": "text/javascript", "style.css": "text/css" }[file]);
+    if (!["index.html", "app.js", "theme.js", "style.css"].includes(file)) { response.writeHead(404); response.end("{}"); return; }
+    response.setHeader("Content-Type", { "index.html": "text/html", "app.js": "text/javascript", "theme.js": "text/javascript", "style.css": "text/css" }[file]);
     response.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'self'");
     response.end(await readFile(`${root}/nibe_comfort/static/${file}`));
     return;
@@ -194,6 +199,45 @@ try {
   await page.waitForTimeout(1200);
   await page.locator("#plan-offset").screenshot({ path: `${artifacts}/offset-mobile.png` });
   await page.screenshot({ path: `${artifacts}/dashboard-mobile.png`, fullPage: true });
+  // Theme: follows the system when standalone, can be forced, and follows Home Assistant in the ingress iframe.
+  const theme = () => page.evaluate(() => document.documentElement.dataset.theme);
+  const background = (target) => target.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  assert.equal(await theme(), "light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+  assert.notEqual(await background(page), "rgb(243, 246, 241)");
+  if (shots) {
+    await page.setViewportSize({ width: 1280, height: 1100 });
+    await page.waitForTimeout(1200);
+    await page.evaluate(() => { document.querySelector("header").scrollIntoView(); document.scrollingElement.scrollTop = 0; });
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${shots}/morkt-lage.png` });
+    await page.locator("main > section.card").nth(3).screenshot({ path: `${shots}/morkt-varmeplan.png` });
+    await page.setViewportSize({ width: 1440, height: 1100 });
+  }
+  await page.locator("#theme-toggle").click();
+  assert.equal(await page.locator("#theme-toggle").textContent(), "Tema: ljust");
+  assert.equal(await theme(), "light");
+  await page.locator("#theme-toggle").click();
+  assert.equal(await page.locator("#theme-toggle").textContent(), "Tema: mörkt");
+  await page.emulateMedia({ colorScheme: "light" });
+  assert.equal(await theme(), "dark");
+  await page.reload();
+  await page.waitForFunction(() => document.getElementById("plan-curve").querySelector("svg"));
+  assert.equal(await theme(), "dark", "Forced theme must persist");
+  await page.locator("#theme-toggle").click();
+  assert.equal(await page.locator("#theme-toggle").textContent(), "Tema: auto");
+  assert.equal(await theme(), "light");
+  const haPage = await browser.newPage({ viewport: { width: 420, height: 820 }, colorScheme: "light" });
+  haPage.on("pageerror", (error) => errors.push(error.message));
+  await haPage.goto(`http://127.0.0.1:${server.address().port}/ha-parent`);
+  const panel = haPage.frameLocator("#panel");
+  await panel.locator("#plan-curve svg").waitFor();
+  const frame = haPage.frame({ url: /dashboard-test/ });
+  assert.equal(await frame.evaluate(() => document.documentElement.dataset.theme), "dark", "Must follow dark Home Assistant theme");
+  await haPage.evaluate(() => { document.documentElement.style.setProperty("--primary-background-color", "#fafafa"); document.body.style.background = "#fafafa"; });
+  await frame.waitForFunction(() => document.documentElement.dataset.theme === "light");
+  await haPage.close();
   failHistory = true;
   await page.locator("#refresh-history").click();
   await page.waitForFunction(() => document.getElementById("history-status").textContent.includes("Recorder saknas"));

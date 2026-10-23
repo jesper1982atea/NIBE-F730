@@ -103,7 +103,7 @@ def handler_for(controller, api_token=None):
                                 "current_temperature": current, "temperature_error": temperature_error,
                             })
                     self.respond(200, entities)
-                elif api_token is None and path in ("/", "/index.html", "/app.js", "/style.css"):
+                elif api_token is None and path in ("/", "/index.html", "/app.js", "/theme.js", "/style.css"):
                     name = "index.html" if path == "/" else path[1:]
                     mime = {"html": "text/html", "js": "text/javascript", "css": "text/css"}[name.rsplit(".", 1)[1]]
                     self.respond(200, (STATIC / name).read_bytes(), mime + "; charset=utf-8")
