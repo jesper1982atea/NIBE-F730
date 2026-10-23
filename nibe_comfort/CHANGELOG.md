@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## 0.2.10
+
+- **Testa styrningen** är enklare att följa: en stor ruta säger vilket värde
+  pumpen ska visa just nu, med *Före testet*, *Under testet* och *Pumpen
+  rapporterar nu* sida vid sida. Om automatiken redan hade justerat bort från
+  ditt grundvärde förklaras varför testet utgår från ett annat värde.
+  Menyvägarna på pumpen ligger under en utfällbar rad.
+
 ## 0.2.9
 
 - Ny utfällbar sektion **Testa styrningen** (KONTROLL). Knappen *Starta test*
