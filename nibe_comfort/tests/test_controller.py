@@ -114,6 +114,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn("'myuplink'", template)
         self.assertIn("'tibber'", template)
         self.assertIn("device_id(eid)", template)
+        self.assertIn("states.climate", template)
+        self.assertIn("device_entities(did)", template)
+        self.assertIn("did not in ns.items", template)
 
 
 class ValidationTests(unittest.TestCase):
@@ -299,6 +302,31 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(peers["number.offset"], ["sensor.supply"])
         self.assertEqual(peers["sensor.other"], [])
         self.assertNotIn("sensor.loose", peers)
+
+    def test_unchanged_climate_uses_fresh_report_from_same_device(self):
+        cfg = config(room_sensors=["climate.store"])
+        states = [
+            entity("climate.store", "heat", self.now - 4 * 3600,
+                   current_temperature=21.9, temperature_unit="°C"),
+            entity("sensor.store_temperature", 21.9, self.now, unit_of_measurement="°C"),
+            entity("number.offset", 0, self.now, min=-10, max=10, step=1),
+        ]
+        registry = [
+            {"entity_id": key, "device_id": "store", "platform": "climate_device"}
+            for key in ("climate.store", "sensor.store_temperature")
+        ]
+        peers = device_peers(registry)
+        self.assertEqual(evaluate(cfg, states, self.now, peers)["indoor"], 21.9)
+        states[1]["last_updated"] = states[0]["last_updated"]
+        with self.assertRaisesRegex(ControlError, "samma enhet"):
+            evaluate(cfg, states, self.now, peers)
+        states[1] = entity("sensor.store_temperature", 21.9, self.now, unit_of_measurement="°C")
+        registry[1]["device_id"] = "different"
+        with self.assertRaises(ControlError):
+            evaluate(cfg, states, self.now, device_peers(registry))
+        states[0]["state"] = "unavailable"
+        with self.assertRaisesRegex(ControlError, "otillgänglig"):
+            evaluate(cfg, states, self.now, peers)
 
     def test_unknown_temperature_unit_blocks(self):
         self.entities[0]["attributes"]["unit_of_measurement"] = "K"

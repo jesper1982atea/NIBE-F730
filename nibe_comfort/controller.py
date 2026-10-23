@@ -184,7 +184,14 @@ class HomeAssistant:
             "{% for eid in integration_entities(platform) %}"
             "{% set ns.items = ns.items + "
             "[{'entity_id': eid, 'device_id': device_id(eid), 'platform': platform}] %}"
-            "{% endfor %}{% endfor %}{{ ns.items | to_json }}"
+            "{% endfor %}{% endfor %}"
+            "{% for climate in states.climate %}"
+            "{% set did = device_id(climate.entity_id) %}"
+            "{% if did and did not in ns.items | map(attribute='device_id') | list %}"
+            "{% for eid in device_entities(did) %}"
+            "{% set ns.items = ns.items + "
+            "[{'entity_id': eid, 'device_id': did, 'platform': 'climate_device'}] %}"
+            "{% endfor %}{% endif %}{% endfor %}{{ ns.items | to_json }}"
         )
         registry = self.request("/template", {"template": template})
         validate_registry(registry)

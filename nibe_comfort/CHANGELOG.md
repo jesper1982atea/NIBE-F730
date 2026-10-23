@@ -1,5 +1,15 @@
 # Ändringslogg
 
+## 0.2.13
+
+- Oförändrade rumstermostater kan nu verifieras via färska rapporter från
+  samma Home Assistant-enhet, även utanför myUplink-integrationen.
+  Exempelvis kan LK-termostatens temperatur vara oförändrad medan dess
+  separata temperaturgivare fortsätter rapportera. Snittemperaturen
+  försvinner då inte på grund av termostatens gamla tidsstämpel.
+  Otillgängliga termostater och enheter som helt slutat rapportera
+  blockerar fortfarande styrningen.
+
 ## 0.2.12
 
 - Startsidan uppdateras direkt när appen blir synlig igen eller nätverket
