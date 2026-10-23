@@ -389,6 +389,13 @@ def current_readings(config, entities, now, peers):
         rooms.append(room)
     readings["rooms"] = rooms
     readings["house_indoor"] = round(sum(r["temperature"] for r in rooms) / len(rooms), 2) if rooms and all(r["temperature"] is not None for r in rooms) else None
+    readings["warm_room_limit"] = config["target_temperature"] + 2
+    readings["warm_rooms"] = [
+        room["entity_id"] for room in rooms
+        if room["entity_id"] not in control_rooms(config)
+        and room["temperature"] is not None
+        and room["temperature"] >= readings["warm_room_limit"]
+    ]
     sources = {
         "indoor": lambda: round(indoor_temperature(config, get), 2),
         "outdoor": lambda: temperature(get(config["outdoor_entity"])),
@@ -427,6 +434,7 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0):
         price_unit = price_entity.get("attributes", {}).get("unit_of_measurement", "")
         price_adjustment = price_contribution(config, price, error)
     desired = config["base_offset"] + room_adjustment + weather_adjustment + price_adjustment
+    requested = desired
     desired = max(config["min_offset"], min(config["max_offset"], desired))
     result = {
         "indoor": round(indoor, 2), "outdoor": outdoor, "price": price,
@@ -434,6 +442,12 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0):
         "contributions": {"room": round(room_adjustment, 2), "weather": round(weather_adjustment, 2), "price": price_adjustment},
         "desired_offset": round(desired, 3), "current_offset": None,
         "next_offset": None, "writable": False,
+        "control_limit": (
+            {"direction": "upper", "value": config["max_offset"], "requested": round(requested, 3)}
+            if requested > config["max_offset"] + 1e-6 else
+            {"direction": "lower", "value": config["min_offset"], "requested": round(requested, 3)}
+            if requested < config["min_offset"] - 1e-6 else None
+        ),
     }
     if not config["offset_entity"]:
         return result
@@ -781,6 +795,13 @@ class Controller:
                     result["message"] = "Test av styrningen pågår: automatiken väntar tills testet är klart."
                 elif self.config["enabled"]:
                     result["message"] = "Ingen ändring behövs."
+                    if result["control_limit"]:
+                        upper = result["control_limit"]["direction"] == "upper"
+                        result["message"] = (
+                            "Övre säkerhetsgränsen nådd: mer värme begärs men högre förskjutning tillåts inte."
+                            if upper else
+                            "Nedre säkerhetsgränsen nådd: lägre förskjutning begärs men tillåts inte."
+                        )
                     if abs(result["next_offset"] - result["current_offset"]) > 1e-6:
                         result["message"] = "Väntar på nästa tillåtna ändring."
                         if remaining == 0:

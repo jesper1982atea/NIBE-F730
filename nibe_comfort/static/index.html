@@ -25,6 +25,12 @@
         <h2 id="status-title">Välkommen till enklare värme</h2>
         <p id="status-message">Välj rum och ställ in din temperatur.</p>
       </div>
+      <div id="warm-room-warning" class="warm-room-warning" role="status" hidden>
+        <strong>Andra rum är redan för varma</strong>
+        <p id="warm-room-summary"></p>
+        <ul id="warm-room-list"></ul>
+        <p>Förskjutningen påverkar hela huset. Mer värme för prioriterade rum kan även värma dessa rum. Varningen stoppar inte automatiken. Temperaturökningen är uppmätt, inte en säker effekt av pumpens ändring.</p>
+      </div>
       <div class="now-grid">
         <div class="now-tile"><span id="indoor-label">Inne nu</span><strong><span id="indoor">—</span> °C</strong><small id="indoor-diff">Medel av dina valda rum</small><small>Alla valda givare: <b id="house-indoor">—</b> °C</small></div>
         <div class="now-tile target-tile">

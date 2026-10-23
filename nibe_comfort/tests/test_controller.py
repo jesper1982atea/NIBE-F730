@@ -146,6 +146,22 @@ class ValidationTests(unittest.TestCase):
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_reports_requested_offset_before_safety_limit(self):
+        cfg = config(base_offset=3, target_temperature=22, priority_sensors=["sensor.living"])
+        states = fixtures()
+        states[0] = entity("sensor.living", 21.1, unit_of_measurement="°C")
+        states[-1] = entity("number.offset", 3, min=-10, max=10, step=1)
+        result = evaluate(cfg, states, time.time())
+        self.assertEqual(result["control_limit"], {"direction": "upper", "value": 3, "requested": 4.35})
+        self.assertEqual(result["next_offset"], 3)
+        cfg["max_offset"] = 4
+        self.assertEqual(evaluate(cfg, states, time.time())["next_offset"], 4)
+        cfg.update(base_offset=-3, target_temperature=20)
+        states[-1]["state"] = "-3"
+        result = evaluate(cfg, states, time.time())
+        self.assertEqual(result["control_limit"]["direction"], "lower")
+        self.assertEqual(result["next_offset"], -3)
+
     def test_priority_average_controls_instead_of_house_average(self):
         cfg = config(priority_sensors=["sensor.living"], target_temperature=22)
         result = evaluate(cfg, fixtures(), time.time())
@@ -399,6 +415,41 @@ class ControllerTests(unittest.TestCase):
         self.allow_write()
         self.controller.tick()
         self.ha.set_offset.assert_not_called()
+
+    def test_bound_explains_why_no_write_when_cold(self):
+        self.controller.save(config(enabled=True, base_offset=3, target_temperature=22, priority_sensors=["sensor.living"]))
+        self.ha.states.side_effect = lambda: [*fixtures()[:-1], entity("number.offset", 3, min=-10, max=10, step=1)]
+        self.allow_write()
+        self.controller.tick()
+        self.assertIn("Övre säkerhetsgränsen", self.controller.snapshot()["message"])
+        self.ha.set_offset.assert_not_called()
+
+    def test_warm_room_warning_threshold_does_not_block_priority_control(self):
+        self.controller.save(config(enabled=True, target_temperature=22, priority_sensors=["sensor.living"]))
+        self.allow_write()
+        for value, expected in ((23.9, []), (24, ["sensor.bedroom"]), (25, ["sensor.bedroom"]),
+                                ("unavailable", [])):
+            with self.subTest(value=value):
+                self.ha.states.side_effect = lambda: [
+                    fixtures()[0], entity("sensor.bedroom", value, unit_of_measurement="°C"), *fixtures()[2:],
+                ]
+                self.controller.tick()
+                status = self.controller.snapshot()
+                self.assertEqual(status["warm_room_limit"], 24)
+                self.assertEqual(status["warm_rooms"], expected)
+                self.assertEqual(status["next_offset"], 1)
+        self.ha.set_offset.assert_called_once_with("number.offset", 1)
+        self.controller.save(config(target_temperature=20, priority_sensors=["sensor.bedroom"]))
+        self.ha.states.side_effect = lambda: [
+            entity("sensor.living", 22, unit_of_measurement="°C"),
+            entity("sensor.bedroom", 25, unit_of_measurement="°C"), *fixtures()[2:],
+        ]
+        self.controller.tick()
+        self.assertEqual(self.controller.snapshot()["warm_rooms"], ["sensor.living"])
+        self.assertEqual(self.controller.snapshot()["warm_room_limit"], 22)
+        self.controller.save(config(target_temperature=20))
+        self.controller.tick()
+        self.assertEqual(self.controller.snapshot()["warm_rooms"], [])
 
     def test_priority_status_shows_all_rooms_and_distinct_averages(self):
         self.controller.save(config(priority_sensors=["sensor.living"]))
