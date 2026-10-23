@@ -3,7 +3,7 @@
 ## Vad tillägget gör
 
 Du väljer en eller flera rumsgivare och önskad inomhustemperatur i °C.
-Tillägget läser Home Assistant varje minut. Medelvärdet av givarna jämförs
+Tillägget läser Home Assistant varje minut. Medelvärdet av de styrande givarna jämförs
 med ditt mål. Valfri påverkan från aktuell utetemperatur och aktuellt elpris
 läggs till. Resultatet blir ett förslag till **kurvförskjutning**, inte en
 direkt inställning av rumstemperaturen på pumpen.
@@ -47,10 +47,38 @@ varmvatten, temperaturhistorik och pumpens drift.
 tryck. Inställningarna är utfällda från början tills rum och pumpanslutning
 är valda.
 
+### Prioritera ett eller två rum
+
+Under **Inställningar** väljer du först **Rumsgivare** för de rum du vill
+följa. Välj sedan valfritt 1–2 av dessa under **Prioriterade rum** och
+spara. Exempel: välj endast vardagsrummets Liljebagge-givare för att styra
+dess uppmätta temperatur mot 22 °C, även om snittet för alla rum redan är
+högre. Välj inte både termostaten och dess separata temperaturgivare för
+samma rum: det skulle ge rummet dubbel vikt i snittet.
+
+Med två prioriterade givare väger de lika. Utan prioritering styr snittet
+av alla valda rum som tidigare. Inga prioriterade givare väljs vid uppdatering.
+
+Överst visas **Prioriterade rum nu** och **Alla valda givare**. Under dem
+öppnas rumslistan med varje temperatur, avvikelse från målet och uppmätt
+förändring senaste timmen. Förändringen jämför aktuell giltig temperatur
+med Recorder-historiken en timme tidigare. Saknas historik visas ingen
+förändring. Det är inte en prognos och säger inte vad som orsakat ändringen.
+
+**Pumpens förskjutning påverkar hela huset.** Varmare rum kan därför bli
+ännu varmare när vardagsrummet behöver värme. Rumslistan gör detta synligt,
+men reglerar inte enskilda golvvärmeslingor eller radiatorventiler.
+Husmodellen, förvärmningen och värmeplanen följer samma prioriterade snitt.
+
+Om en prioriterad givare är ogiltig pausas styrningen, utan att ersätta den
+med något annat rum. Övriga rum kan sakna mätvärde utan att stoppa
+prioriterad styrning. Då visas inte ett missvisande delsnitt för hela huset:
+**Alla valda givare** visar **—** och felet anges på berört rum.
+
 ### Ditt hus lär sig och förvärmning
 
 Tillägget lär sig hur ditt hus reagerar på värmekurvan. Varje timme sparas
-medelvärdet för de valda rummen, utegivaren och kurvförskjutningen i
+medelvärdet för de styrande rummen, utegivaren och kurvförskjutningen i
 `/data/learning.sqlite` (högst 180 dygn), så inlärningen fortsätter även när
 Home Assistants Recorder bara sparar en vecka. En enkel värmebalans per timme
 anpassas till mätvärdena:
@@ -231,7 +259,8 @@ av något annat under testet lämnas den orörd. Testet loggas i ändringsloggen
    beror på integration, modell och myUplink-behörigheter.
 2. Öppna NIBE Comfort från sidopanelen. Välj tillförlitliga rumsgivare,
    helst i representativa rum utan direkt sol eller tillfälliga värmekällor.
-   Alla valda givare måste vara tillgängliga; ingen givare ignoreras tyst.
+   Alla styrande givare måste vara tillgängliga; ingen ersätts tyst.
+   Valfria prioriterade givare väljs bland dina rumsgivare.
 3. Kontrollera den automatiskt hittade kurvförskjutningen och utegivaren.
    När en ny pumpanslutning fylls i automatiskt föreslås även dess aktuella
    förskjutning som bas, om värdet ryms inom dina säkerhetsgränser.
@@ -259,6 +288,9 @@ Inom toleransbandet sätts rumspåverkan till 0. Förslaget begränsas till dina
 säkerhetsgränser. Nästa skrivning begränsas dessutom av maximal ändring per
 gång och kvantiseras till entitetens giltiga steg, räknat från dess minimum.
 Små skillnader kan därför ge oförändrad förskjutning.
+
+Medeltemperaturen avser prioriterade givare om sådana valts, annars alla
+valda rumsgivare. Varje styrande givare väger lika.
 
 Grundinställningen tillåter högst 1 förskjutningssteg per 30 minuter.
 Värmesystem är tröga; detta är en enkel begränsad proportionell reglering,

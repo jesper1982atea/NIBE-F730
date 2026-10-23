@@ -90,7 +90,7 @@ function entityHints() {
 function renderSettings() {
   for (const [key, value] of Object.entries(settings)) {
     const input = $(key);
-    if (!input || key === "room_sensors") continue;
+    if (!input || ["room_sensors", "priority_sensors"].includes(key)) continue;
     if (typeof value === "boolean") input.checked = value;
     else if (input.tagName !== "SELECT") input.value = value;
   }
@@ -120,6 +120,8 @@ function renderSettings() {
     label.append(input, text);
     $("room_sensors").append(label);
   }
+  renderPriorityPicker(settings.priority_sensors);
+  $("room-impact").open = settings.priority_sensors.length > 0;
   if (!rooms.length) $("room_sensors").textContent = "Inga temperaturgivare hittades i Home Assistant.";
   $("mode").textContent = settings.enabled ? "Automatik aktiverad" : "Övervakning";
   $("mode").classList.toggle("active", settings.enabled);
@@ -159,13 +161,58 @@ async function findPump() {
 function readSettings() {
   const result = { ...settings };
   for (const [key, value] of Object.entries(settings)) {
-    if (key === "room_sensors") {
-      result[key] = Array.from($("room_sensors").querySelectorAll("input:checked"), (input) => input.value);
+    if (key === "room_sensors" || key === "priority_sensors") {
+      result[key] = Array.from($(key).querySelectorAll("input:checked"), (input) => input.value);
     } else if (typeof value === "boolean") result[key] = $(key).checked;
     else if (typeof value === "number") result[key] = $(key).valueAsNumber;
     else result[key] = $(key).value;
   }
   return result;
+}
+
+function renderPriorityPicker(selected) {
+  const ids = Array.from($("room_sensors").querySelectorAll("input:checked"), (input) => input.value);
+  $("priority_sensors").replaceChildren(...ids.map((id) => {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    Object.assign(input, { type: "checkbox", value: id, checked: selected.includes(id) });
+    const name = document.createElement("span");
+    name.textContent = entities.find((e) => e.entity_id === id)?.name || id;
+    label.append(input, name);
+    return label;
+  }));
+  limitPriorityPicker();
+}
+
+function limitPriorityPicker() {
+  const inputs = [...$("priority_sensors").querySelectorAll("input")];
+  const full = inputs.filter((input) => input.checked).length >= 2;
+  for (const input of inputs) input.disabled = full && !input.checked;
+}
+
+function renderRoomImpact() {
+  $("indoor-label").textContent = settings?.priority_sensors.length ? "Prioriterade rum nu" : "Inne nu";
+  $("house-indoor").textContent = displayNumber(lastStatus?.house_indoor);
+  $("room-impact-list").replaceChildren(...(lastStatus?.rooms || []).map((room) => {
+    const row = document.createElement("div");
+    row.className = "room-impact-row";
+    const name = document.createElement("strong");
+    name.textContent = `${room.name}${room.priority ? " · prioriterat" : ""}`;
+    const value = document.createElement("span");
+    const diff = room.temperature == null ? null : room.temperature - settings.target_temperature;
+    value.textContent = `${displayNumber(room.temperature)} °C${diff == null ? "" : Math.abs(diff) < 0.1 ? " · vid målet" : ` · ${displayNumber(Math.abs(diff))}° ${diff > 0 ? "över" : "under"} målet`}`;
+    const trend = document.createElement("small");
+    const line = historyData?.series.find((line) => line.entity_id === room.entity_id);
+    const stamp = (lastStatus?.checked_at || Date.now() / 1000) - 3600;
+    const previous = line?.points.findLast((point) => point[0] <= stamp)?.[1];
+    if (room.error) trend.textContent = room.error;
+    else if (room.temperature != null && typeof previous === "number") {
+      const delta = Math.round((room.temperature - previous) * 100) / 100;
+      trend.textContent = `${delta > 0 ? "+" : ""}${displayNumber(delta)} °C senaste timmen`;
+    } else trend.textContent = "Timförändring saknas";
+    row.append(name, value, trend);
+    return row;
+  }));
 }
 
 function displayNumber(value) {
@@ -184,6 +231,7 @@ async function refreshStatus() {
       $("mode").classList.toggle("active", state.enabled);
     }
     lastStatus = state;
+    renderRoomImpact();
     $("indoor").textContent = displayNumber(state.indoor);
     renderIndoorDiff();
     $("current-offset").textContent = displayNumber(state.current_offset);
@@ -212,6 +260,7 @@ async function refreshStatus() {
     $("status-title").textContent = "Kontakt med tillägget saknas";
     $("status-message").textContent = error.message;
     lastStatus = null;
+    renderRoomImpact();
     for (const id of ["indoor", "outdoor-now", "current-offset", "hero-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
     $("hero-offset-base").textContent = "";
     $("indoor-diff").textContent = "Medel av dina valda rum";
@@ -223,10 +272,11 @@ async function refreshStatus() {
 
 function renderIndoorDiff() {
   const indoor = lastStatus?.indoor, target = settings?.target_temperature;
-  if (typeof indoor !== "number" || typeof target !== "number") { $("indoor-diff").textContent = "Medel av dina valda rum"; return; }
+  const label = settings?.priority_sensors.length ? "Snitt för prioriterade rum" : "Medel av dina valda rum";
+  if (typeof indoor !== "number" || typeof target !== "number") { $("indoor-diff").textContent = label; return; }
   const diff = indoor - target;
-  $("indoor-diff").textContent = Math.abs(diff) < 0.15 ? "Precis som du vill ha det"
-    : `${displayNumber(Math.abs(Math.round(diff * 10) / 10))}° ${diff < 0 ? "under" : "över"} det du vill ha`;
+  $("indoor-diff").textContent = `${label} · ` + (Math.abs(diff) < 0.15 ? "Precis som du vill ha det"
+    : `${displayNumber(Math.abs(Math.round(diff * 10) / 10))}° ${diff < 0 ? "under" : "över"} det du vill ha`);
 }
 
 function targetChanged() {
@@ -544,8 +594,10 @@ async function refreshHistory() {
   try {
     historyData = await api("history");
     renderHistory();
+    renderRoomImpact();
   } catch (error) {
     historyData = null;
+    renderRoomImpact();
     $("temperature-chart").replaceChildren();
     $("temperature-legend").replaceChildren();
     $("history-table").replaceChildren();
@@ -861,7 +913,7 @@ async function refreshLearning() {
     const windows = preheat.windows || [];
     const start = data.now - 24 * 3600, end = data.now + 24 * 3600;
     const series = [
-      { name: "Inne, medel av rummen (timvis)", points: data.history, color: 0, step: false },
+      { name: settings.priority_sensors.length ? "Inne, prioriterade rum (timvis)" : "Inne, medel av rummen (timvis)", points: data.history, color: 0, step: false },
       { name: "Förutsägelse", points: data.prediction, color: 2, dashed: true, step: false },
     ].filter((line) => line.points.length);
     const clock = (stamp) => new Date(stamp * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
@@ -892,7 +944,7 @@ async function refreshLearning() {
 }
 
 const fieldLabels = {
-  target_temperature: "Måltemperatur", room_sensors: "Rumsgivare", enabled: "Automatik",
+  target_temperature: "Måltemperatur", room_sensors: "Rumsgivare", priority_sensors: "Prioriterade rum", enabled: "Automatik",
   offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare",
   forecast_entity: "Prognoskälla", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
   max_offset: "Högsta förskjutning", weather_gain: "Väderpåverkan", room_gain: "Rumspåverkan",
@@ -1066,6 +1118,8 @@ async function init() {
   $("settings").addEventListener("submit", (event) => {
     event.preventDefault();
     const next = readSettings();
+    if (next.enabled && JSON.stringify(next.priority_sensors) !== JSON.stringify(settings.priority_sensors)
+      && !window.confirm("Styrningen kommer att följa snittet för de prioriterade rummen, eller alla valda rum om inget prioriteras. Kurvförskjutningen påverkar hela huset och andra rum kan bli varmare. Spara ändringen?")) return;
     if (next.enabled && (!settings.enabled || next.offset_entity !== settings.offset_entity)
       && !window.confirm("Har du verifierat att vald entitet är kurvförskjutning och att gränserna passar din pump? Automatiken får ändra denna entitet.")) return;
     void save(next);
@@ -1087,6 +1141,9 @@ async function init() {
     });
   }
   $("target_temperature").addEventListener("input", targetChanged);
+  $("room_sensors").addEventListener("change", () => renderPriorityPicker(
+    Array.from($("priority_sensors").querySelectorAll("input:checked"), (input) => input.value)));
+  $("priority_sensors").addEventListener("change", limitPriorityPicker);
   $("offset_entity").addEventListener("change", entityHints);
   $("outdoor_entity").addEventListener("change", entityHints);
   $("price_entity").addEventListener("change", entityHints);

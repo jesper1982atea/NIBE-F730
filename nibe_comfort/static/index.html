@@ -26,7 +26,7 @@
         <p id="status-message">Välj rum och ställ in din temperatur.</p>
       </div>
       <div class="now-grid">
-        <div class="now-tile"><span>Inne nu</span><strong><span id="indoor">—</span> °C</strong><small id="indoor-diff">Medel av dina valda rum</small></div>
+        <div class="now-tile"><span id="indoor-label">Inne nu</span><strong><span id="indoor">—</span> °C</strong><small id="indoor-diff">Medel av dina valda rum</small><small>Alla valda givare: <b id="house-indoor">—</b> °C</small></div>
         <div class="now-tile target-tile">
           <label for="target_temperature">Du vill ha · °C</label>
           <div class="target-control">
@@ -41,6 +41,11 @@
       </div>
       <p id="hero-extra" class="hero-extra"></p>
       <p id="updated" class="muted"></p>
+      <details id="room-impact">
+        <summary>Temperatur i alla valda rum</summary>
+        <p>Förskjutningen påverkar hela huset, inte bara prioriterade rum. Här ser du uppmätta värden och förändring senaste timmen, inte en prognos eller bevis på vad som orsakat förändringen.</p>
+        <div id="room-impact-list"></div>
+      </details>
     </section>
 
     <section class="card dashboard">
@@ -140,8 +145,11 @@
           <h2>Vilka rum räknas?</h2>
           <p>Pumpens grundkurva finns kvar. Vi justerar förskjutningen försiktigt för att nå temperaturen du valt högst upp.</p>
           <label for="room_sensors">Rumsgivare</label>
-          <p class="hint" id="room-help">Markera de rum som ska påverka värmen. Även golvvärme (climate) kan väljas: vi läser uppmätt temperatur, inte termostatens börvärde. Undvik att välja både en termostat och dess separata givare för samma rum. Alla val väger lika.</p>
+          <p class="hint" id="room-help">Markera rummen som ska visas. Utan prioriterade givare styr deras gemensamma snitt värmen. Även golvvärme (climate) kan väljas: vi läser uppmätt temperatur, inte termostatens börvärde. Välj inte både en termostat och dess separata givare för samma rum, eftersom rummet då räknas dubbelt.</p>
           <div id="room_sensors" class="sensor-list" role="group" aria-describedby="room-help"></div>
+          <label for="priority_sensors">Prioriterade rum · valfritt, högst 2 givare</label>
+          <p class="hint" id="priority-help">Välj 1–2 av rummen ovan vars snittemperatur ska nå ditt mål, till exempel vardagsrummet. Övriga rum visas men styr inte. Även de kan bli varmare. Ingen prioritering väljs automatiskt.</p>
+          <div id="priority_sensors" class="sensor-list" role="group" aria-describedby="priority-help"></div>
         </section>
 
         <section class="card">

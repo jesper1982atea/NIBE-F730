@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from controller import ControlError, fresh_entity, next_step, number, price_contribution, temperature
+from controller import ControlError, control_rooms, fresh_entity, next_step, number, price_contribution, temperature
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 
 
@@ -798,11 +798,11 @@ class Insights:
 
     def house_model(self, config):
         """Learn from Home Assistant history (7 days) plus everything stored earlier. Cached for an hour."""
-        key = ("model", tuple(config["room_sensors"]), config["outdoor_entity"], config["offset_entity"])
+        key = ("model", tuple(control_rooms(config)), config["outdoor_entity"], config["offset_entity"])
 
         def load():
             now = time.time()
-            rooms = list(config["room_sensors"])
+            rooms = list(control_rooms(config))
             result = {"model": None, "indoor": {}, "outdoor": {}, "offset": {}, "now": now, "error": None}
             if not rooms or not config["offset_entity"]:
                 result["error"] = "Välj rum och pumpens kurvförskjutning först."
@@ -833,7 +833,7 @@ class Insights:
 
     def preheat(self, config):
         """Pre-heating windows from Tibber prices and the learned lead time. Cached 15 minutes."""
-        key = ("preheat", tuple(config["room_sensors"]), config["offset_entity"], config["preheat_degrees"])
+        key = ("preheat", tuple(control_rooms(config)), config["offset_entity"], config["preheat_degrees"])
 
         def load():
             model = None

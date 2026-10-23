@@ -398,6 +398,66 @@ try {
   await page.waitForFunction(() => document.getElementById("history-status").textContent.includes("Recorder saknas"));
   assert.equal(await page.locator("#temperature-chart svg").count(), 0);
   assert.equal(await page.locator("#enabled").isChecked(), true, "History failure must not change automation");
+  const priorityPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  priorityPage.on("pageerror", (error) => errors.push(error.message));
+  const thirdRoom = entities.find((entity) => entity.name.startsWith("LK Badrum")).entity_id;
+  let priorityConfig = { ...settings, target_temperature: 22, room_sensors: ["sensor.living", thermostat, thirdRoom], priority_sensors: [] };
+  await priorityPage.route("**/api/settings", async (route) => {
+    if (route.request().method() === "PUT") priorityConfig = route.request().postDataJSON();
+    await route.fulfill({ json: priorityConfig });
+  });
+  await priorityPage.route("**/api/status", (route) => route.fulfill({ json: {
+    indoor: priorityConfig.priority_sensors.length === 1 ? 21 : priorityConfig.priority_sensors.length === 2 ? 22 : 23,
+    house_indoor: 23, current_offset: 2, outdoor: 10, checked_at: Date.now() / 1000, enabled: true,
+    rooms: [
+      { entity_id: "sensor.living", name: "Vardagsrum", temperature: 21 },
+      { entity_id: thermostat, name: "LK Allrum", temperature: 23 },
+      { entity_id: thirdRoom, name: entities.find((entity) => entity.entity_id === thirdRoom).name, temperature: 25 },
+    ].map((room) => ({ ...room, priority: priorityConfig.priority_sensors.includes(room.entity_id) })),
+  } }));
+  await priorityPage.route("**/api/history", (route) => route.fulfill({ json: {
+    start: now - 86400, end: now, target: 22,
+    series: priorityConfig.room_sensors.map((id) => ({
+      entity_id: id, name: id, points: [[now - 7200, id === "sensor.living" ? 20 : id === thermostat ? 22 : 24], [now, id === "sensor.living" ? 21 : id === thermostat ? 23 : 25]],
+    })),
+  } }));
+  await priorityPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await priorityPage.locator("#room-impact-list .room-impact-row").first().waitFor({ state: "attached" });
+  assert.equal(await priorityPage.locator("#indoor").textContent(), "23");
+  assert.equal(await priorityPage.locator("#house-indoor").textContent(), "23");
+  await priorityPage.locator("#settings-panel > summary").click();
+  await priorityPage.locator('#priority_sensors input[value="sensor.living"]').check();
+  priorityPage.once("dialog", (dialog) => dialog.accept());
+  await priorityPage.locator("#save").click();
+  await priorityPage.waitForFunction(() => document.getElementById("indoor").textContent === "21");
+  assert.deepEqual(priorityConfig.priority_sensors, ["sensor.living"]);
+  assert.equal(await priorityPage.locator("#indoor-label").textContent(), "Prioriterade rum nu");
+  assert.equal(await priorityPage.locator("#house-indoor").textContent(), "23");
+  assert.equal(await priorityPage.locator("#room-impact").getAttribute("open"), "");
+  await priorityPage.waitForFunction(() => !document.getElementById("history-status").textContent.startsWith("Hämtar"));
+  assert.match(await priorityPage.locator("#room-impact-list").textContent(), /\+1 °C senaste timmen/, await priorityPage.locator("#history-status").textContent());
+  assert.match(await priorityPage.locator("#room-impact-list").textContent(), /Vardagsrum · prioriterat.*21 °C · 1° under målet/);
+  assert.match(await priorityPage.locator("#room-impact-list").textContent(), /25 °C · 3° över målet/);
+  await priorityPage.locator(`#priority_sensors input[value="${thermostat}"]`).check();
+  assert.equal(await priorityPage.locator(`#priority_sensors input[value="${thirdRoom}"]`).isDisabled(), true);
+  priorityPage.once("dialog", (dialog) => dialog.accept());
+  await priorityPage.locator("#save").click();
+  await priorityPage.waitForFunction(() => document.getElementById("indoor").textContent === "22");
+  assert.deepEqual([...priorityConfig.priority_sensors].sort(), ["sensor.living", thermostat].sort());
+  await priorityPage.locator(".hero").screenshot({ path: `${artifacts}/priority-rooms.png` });
+  for (const width of [320, 390]) {
+    await priorityPage.setViewportSize({ width, height: 844 });
+    assert.equal(await priorityPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `Priority rooms overflow at ${width}px`);
+  }
+  await priorityPage.locator(`#room_sensors input[value="${thermostat}"]`).uncheck();
+  assert.equal(await priorityPage.locator(`#priority_sensors input[value="${thermostat}"]`).count(), 0);
+  assert.equal(await priorityPage.locator(`#priority_sensors input[value="${thirdRoom}"]`).isDisabled(), false);
+  await priorityPage.locator('#priority_sensors input[value="sensor.living"]').uncheck();
+  priorityPage.once("dialog", (dialog) => dialog.accept());
+  await priorityPage.locator("#save").click();
+  await priorityPage.waitForFunction(() => document.getElementById("indoor-label").textContent === "Inne nu");
+  assert.deepEqual(priorityConfig.priority_sensors, []);
+  await priorityPage.close();
   assert.deepEqual(errors, []);
   console.log("Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
 } finally {
