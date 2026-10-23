@@ -191,6 +191,16 @@ function limitPriorityPicker() {
   for (const input of inputs) input.disabled = full && !input.checked;
 }
 
+function roomTrend(room) {
+  if (room.error) return room.error;
+  const line = historyData?.series.find((line) => line.entity_id === room.entity_id);
+  const stamp = (lastStatus?.checked_at || Date.now() / 1000) - 3600;
+  const previous = line?.points.findLast((point) => point[0] <= stamp)?.[1];
+  if (room.temperature == null || typeof previous !== "number") return "Timförändring saknas";
+  const delta = Math.round((room.temperature - previous) * 100) / 100;
+  return `${delta > 0 ? "+" : ""}${displayNumber(delta)} °C senaste timmen`;
+}
+
 function renderRoomImpact() {
   $("indoor-label").textContent = settings?.priority_sensors.length ? "Prioriterade rum nu" : "Inne nu";
   $("house-indoor").textContent = displayNumber(lastStatus?.house_indoor);
@@ -203,16 +213,20 @@ function renderRoomImpact() {
     const diff = room.temperature == null ? null : room.temperature - settings.target_temperature;
     value.textContent = `${displayNumber(room.temperature)} °C${diff == null ? "" : Math.abs(diff) < 0.1 ? " · vid målet" : ` · ${displayNumber(Math.abs(diff))}° ${diff > 0 ? "över" : "under"} målet`}`;
     const trend = document.createElement("small");
-    const line = historyData?.series.find((line) => line.entity_id === room.entity_id);
-    const stamp = (lastStatus?.checked_at || Date.now() / 1000) - 3600;
-    const previous = line?.points.findLast((point) => point[0] <= stamp)?.[1];
-    if (room.error) trend.textContent = room.error;
-    else if (room.temperature != null && typeof previous === "number") {
-      const delta = Math.round((room.temperature - previous) * 100) / 100;
-      trend.textContent = `${delta > 0 ? "+" : ""}${displayNumber(delta)} °C senaste timmen`;
-    } else trend.textContent = "Timförändring saknas";
+    trend.textContent = roomTrend(room);
+    row.classList.toggle("too-warm", lastStatus.warm_rooms?.includes(room.entity_id) || false);
     row.append(name, value, trend);
     return row;
+  }));
+  const warm = (lastStatus?.rooms || []).filter((room) => lastStatus.warm_rooms?.includes(room.entity_id));
+  $("warm-room-warning").hidden = !warm.length;
+  $("warm-room-summary").textContent = warm.length
+    ? `Varningsgräns ${displayNumber(lastStatus.warm_room_limit)} °C (2° över ditt mål). ${lastStatus.enabled && lastStatus.next_offset > lastStatus.current_offset ? "Automatiken planerar ändå att höja förskjutningen för de prioriterade rummen." : "Följ dessa rum när du värmer de prioriterade rummen."}`
+    : "";
+  $("warm-room-list").replaceChildren(...warm.map((room) => {
+    const item = document.createElement("li");
+    item.textContent = `${room.name}: ${displayNumber(room.temperature)} °C · ${displayNumber(room.temperature - settings.target_temperature)}° över målet · ${roomTrend(room)}`;
+    return item;
   }));
 }
 

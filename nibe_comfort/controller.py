@@ -389,6 +389,13 @@ def current_readings(config, entities, now, peers):
         rooms.append(room)
     readings["rooms"] = rooms
     readings["house_indoor"] = round(sum(r["temperature"] for r in rooms) / len(rooms), 2) if rooms and all(r["temperature"] is not None for r in rooms) else None
+    readings["warm_room_limit"] = config["target_temperature"] + 2
+    readings["warm_rooms"] = [
+        room["entity_id"] for room in rooms
+        if room["entity_id"] not in control_rooms(config)
+        and room["temperature"] is not None
+        and room["temperature"] >= readings["warm_room_limit"]
+    ]
     sources = {
         "indoor": lambda: round(indoor_temperature(config, get), 2),
         "outdoor": lambda: temperature(get(config["outdoor_entity"])),

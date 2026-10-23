@@ -70,6 +70,13 @@ förändring. Det är inte en prognos och säger inte vad som orsakat ändringen
 men reglerar inte enskilda golvvärmeslingor eller radiatorventiler.
 Husmodellen, förvärmningen och värmeplanen följer samma prioriterade snitt.
 
+När ett annat valt rum når **2 °C över målet** visas en varning högst upp:
+exempelvis 24 °C vid mål 22 °C. Varningen namnger rummen och visar deras
+temperatur och uppmätta timförändring. En pågående höjningsplan visas
+uttryckligen. Varningen stoppar inte automatiken och utger sig inte för
+att bevisa att pumpen orsakat temperaturökningen. Saknade mätvärden
+är aldrig bevis för att ett rum ligger under varningsgränsen.
+
 Om en prioriterad givare är ogiltig pausas styrningen, utan att ersätta den
 med något annat rum. Övriga rum kan sakna mätvärde utan att stoppa
 prioriterad styrning. Då visas inte ett missvisande delsnitt för hela huset:

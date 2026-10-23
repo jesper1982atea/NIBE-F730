@@ -420,7 +420,9 @@ try {
   });
   await priorityPage.route("**/api/status", (route) => route.fulfill({ json: {
     indoor: priorityConfig.priority_sensors.length === 1 ? 21 : priorityConfig.priority_sensors.length === 2 ? 22 : 23,
-    house_indoor: 23, current_offset: 2, outdoor: 10, checked_at: Date.now() / 1000, enabled: true,
+    house_indoor: 23, current_offset: 2, next_offset: 3, outdoor: 10, checked_at: Date.now() / 1000, enabled: true,
+    warm_room_limit: 24,
+    warm_rooms: priorityConfig.priority_sensors.length ? [thirdRoom] : [],
     rooms: [
       { entity_id: "sensor.living", name: "Vardagsrum", temperature: 21 },
       { entity_id: thermostat, name: "LK Allrum", temperature: 23 },
@@ -437,6 +439,7 @@ try {
   await priorityPage.locator("#room-impact-list .room-impact-row").first().waitFor({ state: "attached" });
   assert.equal(await priorityPage.locator("#indoor").textContent(), "23");
   assert.equal(await priorityPage.locator("#house-indoor").textContent(), "23");
+  assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), false);
   await priorityPage.locator("#settings-panel > summary").click();
   await priorityPage.locator('#priority_sensors input[value="sensor.living"]').check();
   priorityPage.once("dialog", (dialog) => dialog.accept());
@@ -450,6 +453,10 @@ try {
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /\+1 °C senaste timmen/, await priorityPage.locator("#history-status").textContent());
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /Vardagsrum · prioriterat.*21 °C · 1° under målet/);
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /25 °C · 3° över målet/);
+  assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), true);
+  assert.match(await priorityPage.locator("#warm-room-summary").textContent(), /24 °C.*planerar ändå att höja/);
+  assert.match(await priorityPage.locator("#warm-room-list").textContent(), /LK Badrum.*25 °C.*3° över målet.*\+1 °C senaste timmen/);
+  assert.equal(await priorityPage.locator("#room-impact-list .too-warm").count(), 1);
   await priorityPage.locator(`#priority_sensors input[value="${thermostat}"]`).check();
   assert.equal(await priorityPage.locator(`#priority_sensors input[value="${thirdRoom}"]`).isDisabled(), true);
   priorityPage.once("dialog", (dialog) => dialog.accept());
@@ -469,6 +476,7 @@ try {
   await priorityPage.locator("#save").click();
   await priorityPage.waitForFunction(() => document.getElementById("indoor-label").textContent === "Inne nu");
   assert.deepEqual(priorityConfig.priority_sensors, []);
+  assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), false);
   await priorityPage.close();
   assert.deepEqual(errors, []);
   console.log("Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");

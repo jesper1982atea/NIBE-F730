@@ -2,6 +2,10 @@
 
 ## 0.2.15
 
+- Varning högst upp om ett annat valt rum når 2 °C över målet vid prioriterad
+  styrning. Rummets namn, temperatur, avvikelse och uppmätt timförändring
+  visas, även när automatiken planerar att höja för prioriterade rum.
+  Detta är en varning, inte ett automatiskt stopp.
 - När mer eller mindre värme begärs men säkerhetsgränsen stoppar nästa
   steg visas **Övre gränsen nådd** eller **Nedre gränsen nådd**, i stället
   för det missvisande **Ingen behövs**. Beräknad förskjutning före

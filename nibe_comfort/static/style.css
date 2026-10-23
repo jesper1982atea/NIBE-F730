@@ -22,6 +22,7 @@
 .hero-extra{margin:16px 0 0;font-size:14px;color:#dbe8e1}
 .now-tile .offset-now{border-top:1px solid rgba(255,255,255,.2);padding-top:10px;margin-top:8px;font-size:14px}.offset-now b{color:#fff;font-size:22px}
 .hero-extra:empty{display:none}
+.warm-room-warning{border:2px solid #e3a947;background:rgba(227,169,71,.12);border-radius:14px;padding:16px;margin-bottom:14px}.warm-room-warning>strong{color:#ffe0a6;font-size:18px}.warm-room-warning ul{padding-left:20px;margin:10px 0}.warm-room-warning p{margin:8px 0}.room-impact-row.too-warm{border-left:3px solid #e3a947;padding-left:10px}
 .room-impact-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr);gap:8px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.15);font-size:14px}.room-impact-row small{color:#c8d8d1}#room-impact{margin-top:14px}#room-impact p{margin-bottom:6px}@media(max-width:600px){.room-impact-row{grid-template-columns:minmax(0,1fr)}}
 .hero #updated{margin:6px 0 0;font-size:12px;color:#9fbcae}
 .fold{margin-top:24px}
