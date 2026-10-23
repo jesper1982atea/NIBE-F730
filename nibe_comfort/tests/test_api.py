@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -7,7 +8,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import handler_for
@@ -86,6 +87,11 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Ingen Tibber", plan["prices"]["error"])
         self.assertEqual(plan["offset"]["planned"], [])
         self.ha.set_offset.assert_not_called()
+
+    def test_version_comes_from_build(self):
+        with patch.dict(os.environ, {"NIBE_COMFORT_VERSION": "9.9.9"}):
+            status, data = self.request("/api/version")
+        self.assertEqual((status, data), (200, {"version": "9.9.9"}))
 
     def test_learning_is_read_only_and_wires_preheat_provider(self):
         self.ha.request.return_value = []
