@@ -4,7 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -189,6 +189,34 @@ class PlanWithPreheatTests(unittest.TestCase):
 
 
 class InsightsLearningTests(unittest.TestCase):
+    def test_model_and_preheat_cache_follow_priority_rooms(self):
+        from urllib.parse import parse_qs, urlparse
+        ha = Mock()
+        ha.request.return_value = []
+        ha.states.return_value = fixtures()
+        ha.integration_registry.return_value = []
+        with tempfile.TemporaryDirectory() as folder:
+            insights = Insights(ha, folder)
+            cfg = config(priority_sensors=["sensor.living"])
+            insights.house_model(cfg)
+            query = parse_qs(urlparse(ha.request.call_args_list[0].args[0]).query)
+            self.assertEqual(query["filter_entity_id"], ["sensor.living"])
+            calls = ha.request.call_count
+            insights.house_model(cfg)
+            self.assertEqual(ha.request.call_count, calls)
+            cfg["priority_sensors"] = ["sensor.bedroom"]
+            insights.house_model(cfg)
+            query = parse_qs(urlparse(ha.request.call_args_list[calls].args[0]).query)
+            self.assertEqual(query["filter_entity_id"], ["sensor.bedroom"])
+            with patch.object(insights, "house_model", return_value={"model": None}) as model, \
+                    patch.object(insights, "prices", return_value=[]):
+                insights.preheat(cfg)
+                insights.preheat(cfg)
+                self.assertEqual(model.call_count, 1)
+                cfg["priority_sensors"] = ["sensor.living"]
+                insights.preheat(cfg)
+                self.assertEqual(model.call_count, 2)
+
     def test_learning_without_history_or_tibber_reports_learning(self):
         ha = Mock()
         ha.request.return_value = []

@@ -75,6 +75,10 @@ nyare zip och tryck på *Uppdatera* på tillägget, eller gå över till alterna
    aktiverar automatiken. Manuell anslutning finns under utfällbara inställningar.
 4. Öppna **Testa styrningen** och tryck *Starta test* för att se att pumpen
    tar emot en ändring. Förskjutningen ställs tillbaka efter 10 minuter.
+5. Vill du framför allt få ett visst rum närmare målet kan du välja 1–2
+   **prioriterade rumsgivare** i inställningarna. Deras snitt styr då värmen.
+   Startsidan visar också alla valda rums snitt och varje rums temperatur
+   och förändring. Förskjutningen påverkar hela huset, även redan varma rum.
 
 Alla NIBE-parametrar exponeras inte som skrivbara entiteter av myUplink.
 Kontobehörighet, pumpmodell och integration avgör tillgängligheten. Saknas

@@ -146,6 +146,23 @@ class ValidationTests(unittest.TestCase):
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_priority_average_controls_instead_of_house_average(self):
+        cfg = config(priority_sensors=["sensor.living"], target_temperature=22)
+        result = evaluate(cfg, fixtures(), time.time())
+        self.assertEqual(result["indoor"], 20)
+        self.assertEqual(result["contributions"]["room"], 3)
+        self.assertEqual(result["next_offset"], 1)
+        cfg["priority_sensors"] = ["sensor.living", "sensor.bedroom"]
+        self.assertEqual(evaluate(cfg, fixtures(), time.time())["indoor"], 21)
+        cfg["priority_sensors"] = []
+        self.assertEqual(evaluate(cfg, fixtures(), time.time())["indoor"], 21)
+
+    def test_priority_validation(self):
+        for priority in ("sensor.living", ["sensor.other"], ["sensor.living"] * 2,
+                         ["sensor.living", "sensor.bedroom", "sensor.other"], [None]):
+            with self.subTest(priority=priority), self.assertRaises(ControlError):
+                config(priority_sensors=priority)
+
     def setUp(self):
         self.now = time.time()
         self.entities = fixtures(self.now)
@@ -382,6 +399,45 @@ class ControllerTests(unittest.TestCase):
         self.allow_write()
         self.controller.tick()
         self.ha.set_offset.assert_not_called()
+
+    def test_priority_status_shows_all_rooms_and_distinct_averages(self):
+        self.controller.save(config(priority_sensors=["sensor.living"]))
+        self.controller.tick()
+        status = self.controller.snapshot()
+        self.assertEqual((status["indoor"], status["house_indoor"]), (20, 21))
+        self.assertEqual([r["temperature"] for r in status["rooms"]], [20, 22])
+        self.assertEqual([r["priority"] for r in status["rooms"]], [True, False])
+
+    def test_monitoring_room_failure_does_not_block_priority_control(self):
+        self.controller.save(config(enabled=True, priority_sensors=["sensor.living"], target_temperature=22))
+        self.allow_write()
+        self.ha.states.side_effect = lambda: [
+            fixtures()[0], entity("sensor.bedroom", "unavailable"), *fixtures()[2:],
+        ]
+        self.controller.tick()
+        status = self.controller.snapshot()
+        self.assertEqual(status["indoor"], 20)
+        self.assertIsNone(status["house_indoor"])
+        self.assertIsNotNone(status["rooms"][1]["error"])
+        self.ha.set_offset.assert_called_once_with("number.offset", 1)
+        self.ha.set_offset.reset_mock()
+        self.ha.states.side_effect = lambda: [
+            entity("sensor.living", "unavailable"), *fixtures()[1:],
+        ]
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        self.assertIsNone(self.controller.snapshot()["indoor"])
+        self.ha.set_offset.assert_not_called()
+
+    def test_priority_migration_preserves_previous_control(self):
+        old = config(enabled=True, target_temperature=22)
+        del old["priority_sensors"]
+        self.controller.path.write_text(json.dumps(old))
+        restored = Controller(self.ha, self.temp.name)
+        self.assertEqual(restored.settings()["priority_sensors"], [])
+        self.assertTrue(restored.settings()["enabled"])
+        restored.tick()
+        self.assertEqual(restored.snapshot()["indoor"], 21)
 
     def test_unavailable_offset_keeps_fresh_temperatures_and_recovers(self):
         self.controller.save(config(enabled=True, target_temperature=23, outdoor_entity="sensor.outdoor"))

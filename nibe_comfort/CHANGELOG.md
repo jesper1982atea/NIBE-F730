@@ -1,5 +1,19 @@
 # Ändringslogg
 
+## 0.2.14
+
+- Välj valfritt 1–2 **prioriterade rumsgivare** i inställningarna. Deras
+  snittemperatur styr mot ditt mål. Övriga valda rum visas för uppföljning,
+  men påverkar inte styrningen. Utan prioritering fortsätter allt som tidigare.
+- Startsidan visar både styrande snitt och snittet för alla valda givare.
+  Rumslistan visar varje temperatur, avvikelse från målet och uppmätt
+  förändring senaste timmen. Förändringen är ingen prognos eller garanti
+  för vad pumpen har orsakat; förskjutningen påverkar hela huset.
+- Husmodellen, förvärmningen och värmeplanen följer samma styrande rum.
+  Ogiltiga prioriterade givare pausar styrningen. Ett fel i ett rum som
+  bara övervakas markeras men stoppar inte prioriterad styrning.
+- Befintliga inställningar behålls utan automatisk prioritering.
+
 ## 0.2.13
 
 - Oförändrade rumstermostater kan nu verifieras via färska rapporter från

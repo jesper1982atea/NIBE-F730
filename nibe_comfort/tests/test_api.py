@@ -136,6 +136,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request("/api/settings", "PUT", {})[0], 400)
         self.assertEqual(self.request("/api/settings", "PUT", config(), content_type="text/plain")[0], 415)
 
+    def test_priority_settings_and_status_round_trip(self):
+        cfg = config(priority_sensors=["sensor.living"], target_temperature=22)
+        self.assertEqual(self.request("/api/settings", "PUT", cfg)[0], 200)
+        self.controller.tick()
+        status, data = self.request("/api/status")
+        self.assertEqual(status, 200)
+        self.assertEqual((data["indoor"], data["house_indoor"]), (20, 21))
+        self.assertEqual(self.request("/api/settings")[1]["priority_sensors"], ["sensor.living"])
+        cfg["priority_sensors"] = ["sensor.missing"]
+        self.assertEqual(self.request("/api/settings", "PUT", cfg)[0], 400)
+        self.assertEqual(self.controller.settings()["priority_sensors"], ["sensor.living"])
+
     def test_activation_preflight_failure_is_not_saved(self):
         self.ha.states.side_effect = ControlError("Ingen kontakt")
         status, body = self.request("/api/settings", "PUT", config(enabled=True))

@@ -18,6 +18,7 @@ DEFAULTS = {
     "enabled": False,
     "target_temperature": 21.0,
     "room_sensors": [],
+    "priority_sensors": [],
     "offset_entity": "",
     "outdoor_entity": "",
     "price_entity": "",
@@ -97,6 +98,11 @@ def validate(config):
         raise ControlError("Rumsgivare måste vara sensor- eller climate-entiteter.")
     if len(set(rooms)) != len(rooms):
         raise ControlError("Samma rumsgivare får inte väljas flera gånger.")
+    priority = result["priority_sensors"]
+    if not isinstance(priority, list) or len(priority) > 2 or any(not isinstance(key, str) or key not in rooms for key in priority):
+        raise ControlError("Välj högst två prioriterade givare bland dina rumsgivare.")
+    if len(set(priority)) != len(priority):
+        raise ControlError("Samma prioriterade givare får inte väljas flera gånger.")
     for key, prefixes in (
         ("offset_entity", ("number.",)),
         ("outdoor_entity", ("sensor.", "weather.")),
@@ -350,20 +356,39 @@ def price_contribution(config, price, error):
     return adjustment
 
 
+def control_rooms(config):
+    return config["priority_sensors"] or config["room_sensors"]
+
+
 def indoor_temperature(config, get):
-    if not config["room_sensors"]:
+    selected = control_rooms(config)
+    if not selected:
         raise ControlError("Välj minst en rumsgivare.")
-    rooms = [temperature(get(key)) for key in config["room_sensors"]]
+    rooms = [temperature(get(key)) for key in selected]
     if any(not 5 <= value <= 40 for value in rooms):
         raise ControlError("En rumsgivare visar en orimlig inomhustemperatur (utanför 5–40 °C).")
     return sum(rooms) / len(rooms)
 
 
 def current_readings(config, entities, now, peers):
-    """Read dashboard values independently; unavailable inputs still block control."""
+    """Read dashboard values independently; control validates its own selected inputs."""
     states = {entity["entity_id"]: entity for entity in entities}
     get = lambda key: fresh_entity(states, key, config["max_age_minutes"], now, peers.get(key, ()))
     readings = {"indoor": None, "outdoor": None, "current_offset": None, "reading_errors": {}}
+    rooms = []
+    for key in config["room_sensors"]:
+        room = {"entity_id": key, "name": states.get(key, {}).get("attributes", {}).get("friendly_name", key),
+                "temperature": None, "priority": key in config["priority_sensors"], "error": None}
+        try:
+            value = temperature(get(key))
+            if not 5 <= value <= 40:
+                raise ControlError(f"{key}: orimlig inomhustemperatur.")
+            room["temperature"] = round(value, 2)
+        except ControlError as exc:
+            room["error"] = str(exc)
+        rooms.append(room)
+    readings["rooms"] = rooms
+    readings["house_indoor"] = round(sum(r["temperature"] for r in rooms) / len(rooms), 2) if rooms and all(r["temperature"] is not None for r in rooms) else None
     sources = {
         "indoor": lambda: round(indoor_temperature(config, get), 2),
         "outdoor": lambda: temperature(get(config["outdoor_entity"])),
@@ -485,6 +510,7 @@ class Controller:
                 saved.setdefault("forecast_entity", "")
                 saved.setdefault("preheat_enabled", False)
                 saved.setdefault("preheat_degrees", 0.5)
+                saved.setdefault("priority_sensors", [])
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
         self.pending = None
@@ -537,6 +563,8 @@ class Controller:
             event_id = self.events.add("settings_attempt", "Begäran att spara inställningar.", changes=changes)
             atomic_json(self.path, config)
             self.config = config
+            self.status = {"message": "Inställningar sparade. Väntar på ny avläsning.", "error_message": None,
+                           "enabled": config["enabled"]}
             self.events.add("settings_saved", "Inställningar sparade.", request_id=event_id, changes=changes)
 
     def observe(self, entities, now, peers=None):
@@ -738,8 +766,7 @@ class Controller:
                 preheat = self.preheat(now, schedule)
                 result = evaluate(self.config, entities, now, peers, preheat["shift"])
                 result["preheat"] = preheat
-                result["outdoor"] = readings["outdoor"]
-                result["reading_errors"] = readings["reading_errors"]
+                result.update(readings)
                 if self.last_error:
                     self.events.add("resumed", "Giltiga mätvärden igen; styrningen kan fortsätta.")
                     self.last_error = None
