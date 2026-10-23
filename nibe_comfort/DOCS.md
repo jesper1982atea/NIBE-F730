@@ -68,6 +68,13 @@ tidsaxel, med en linje för *nu*:
   - Listan *Justeringar* visar kommande ändringar med orsak och gjorda
     ändringar senaste dygnet med källa.
 
+### Mörkt läge
+
+Knappen **Tema** uppe till höger växlar mellan *auto*, *ljust* och *mörkt*.
+*Auto* följer Home Assistants tema, även om du byter tema medan sidan är öppen.
+Öppnas sidan utanför Home Assistant följer den enhetens ljus/mörk-inställning.
+Valet sparas per webbläsare.
+
 Gränssnittet anpassar sig till smala skärmar (även Home Assistant-appen) utan
 sidoscroll, och graferna ritas om i skärmens bredd så att texten går att läsa.
 - **Värmekurvan som den är inställd nu**: myUplink exponerar inte kurvans

@@ -20,6 +20,10 @@ skrivförsök sparas i en beständig ändringslogg.
 | --- | --- | --- |
 | ![Temperaturgraf med uppmätt och inställd temperatur](docs/screenshots/temperaturer.png) | ![Måltemperatur, rumsgivare, väder och elpris](docs/screenshots/installningar.png) | ![Mobilvy i Home Assistant-appen](docs/screenshots/mobil.png) |
 
+| Mörkt läge (följer Home Assistant) | Värmeplan i mörkt läge |
+| --- | --- |
+| ![Översikt i mörkt läge](docs/screenshots/morkt-lage.png) | ![Värmeplan i mörkt läge](docs/screenshots/morkt-varmeplan.png) |
+
 Skärmbilderna är tagna med testdata.
 
 ## Installation
@@ -89,7 +93,7 @@ npm run screenshots  # uppdaterar docs/screenshots
 
 1. Höj `version` i `nibe_comfort/config.yaml` och skriv i
    `nibe_comfort/CHANGELOG.md`.
-2. Skapa och pusha en tagg: `git tag v0.2.3 && git push origin v0.2.3`.
+2. Skapa och pusha en tagg: `git tag v0.2.4 && git push origin v0.2.4`.
 3. GitHub Actions testar, bygger `nibe_comfort-<version>.zip` och skapar en
    release med zip-filen och installationsinstruktioner.
 

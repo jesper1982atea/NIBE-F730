@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <script src="./theme.js"></script>
   <title>NIBE Comfort</title>
   <link rel="stylesheet" href="./style.css">
   <script src="./app.js" defer></script>
@@ -10,7 +12,10 @@
 <body>
   <header>
     <div><span class="eyebrow">DIN VÄRME, BEGRIPLIG</span><h1>NIBE <span>Comfort</span></h1></div>
-    <span id="mode" class="badge">Ansluter…</span>
+    <div class="header-actions">
+      <button id="theme-toggle" type="button" class="badge theme-toggle">Tema: auto</button>
+      <span id="mode" class="badge">Ansluter…</span>
+    </div>
   </header>
   <main>
     <div id="notice" role="status" hidden></div>

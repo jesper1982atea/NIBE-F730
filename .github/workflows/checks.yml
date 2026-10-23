@@ -16,6 +16,6 @@ jobs:
         with:
           node-version: "22"
       - run: python -m unittest discover -s nibe_comfort/tests -v
-      - run: node --check nibe_comfort/static/app.js
+      - run: node --check nibe_comfort/static/app.js && node --check nibe_comfort/static/theme.js
       - run: node nibe_comfort/tests/test_discovery_ui.cjs
       - run: docker build --tag nibe-comfort:test nibe_comfort
