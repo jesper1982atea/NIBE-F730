@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from controller import ControlError, Controller, DEFAULTS, HomeAssistant, device_peers, discover_nibe, evaluate, validate
+from controller import ControlError, Controller, DEFAULTS, HomeAssistant, current_readings, device_peers, discover_nibe, evaluate, validate
 
 
 def entity(entity_id, value, now=None, **attributes):
@@ -146,6 +146,52 @@ class ValidationTests(unittest.TestCase):
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_comfort_reads_setpoint_and_mode_without_affecting_control(self):
+        now = time.time()
+        cfg = config(room_sensors=["climate.living"])
+        states = [entity("climate.living", "heat", now, current_temperature=21, temperature=20,
+                         temperature_unit="°C")]
+        room = current_readings(cfg, states, now, {})["rooms"][0]
+        self.assertEqual((room["temperature"], room["setpoint"], room["thermostat_mode"]), (21, 20, "heat"))
+        states[0]["attributes"].update(current_temperature=69.8, temperature=68, temperature_unit="°F")
+        room = current_readings(cfg, states, now, {})["rooms"][0]
+        self.assertEqual((room["temperature"], room["setpoint"]), (21, 20))
+        states[0]["attributes"]["temperature"] = "invalid"
+        room = current_readings(cfg, states, now, {})["rooms"][0]
+        self.assertEqual(room["temperature"], 21)
+        self.assertIsNone(room["setpoint"])
+        self.assertIsNotNone(room["thermostat_error"])
+        self.assertIsNone(room["error"])
+        states[0]["attributes"].pop("temperature")
+        room = current_readings(cfg, states, now, {})["rooms"][0]
+        self.assertIsNone(room["setpoint"])
+        self.assertIsNone(room["thermostat_error"])
+        states[0]["last_updated"] = entity("climate.living", "heat", now - 86400)["last_updated"]
+        room = current_readings(cfg, states, now, {})["rooms"][0]
+        self.assertIsNone(room["temperature"])
+        self.assertIsNotNone(room["thermostat_error"])
+
+    def test_comfort_only_links_unique_same_device_thermostat(self):
+        now = time.time()
+        cfg = config(room_sensors=["sensor.living"])
+        states = [entity("sensor.living", 21, now, unit_of_measurement="°C"),
+                  entity("climate.living", "off", now, current_temperature=21, temperature=20, temperature_unit="°C")]
+        room = current_readings(cfg, states, now, {})["rooms"][0]
+        self.assertIsNone(room["thermostat"])
+        peers = {"sensor.living": ["climate.living"]}
+        room = current_readings(cfg, states, now, peers)["rooms"][0]
+        self.assertEqual((room["setpoint"], room["thermostat_mode"]), (20, "off"))
+        peers["sensor.living"].append("climate.other")
+        room = current_readings(cfg, states, now, peers)["rooms"][0]
+        self.assertIsNone(room["setpoint"])
+        self.assertIn("Flera", room["thermostat_error"])
+        peers["sensor.living"].pop()
+        states[1]["state"] = "unavailable"
+        room = current_readings(cfg, states, now, peers)["rooms"][0]
+        self.assertIsNone(room["setpoint"])
+        self.assertIsNotNone(room["thermostat_error"])
+        self.assertEqual(room["temperature"], 21)
+
     def test_reports_requested_offset_before_safety_limit(self):
         cfg = config(base_offset=3, target_temperature=22, priority_sensors=["sensor.living"])
         states = fixtures()

@@ -280,7 +280,7 @@ try {
   if (shots) {
     await page.setViewportSize({ width: 1280, height: 1100 });
     await page.waitForTimeout(1200);
-    const cards = page.locator("main > section.card");
+    const cards = page.locator("main > section.card:not(#comfort-card)");
     await page.evaluate(() => { document.querySelector("header").scrollIntoView(); document.scrollingElement.scrollTop = 0; }); await page.waitForTimeout(300);
     await page.screenshot({ path: `${shots}/oversikt.png` });
     await cards.nth(4).screenshot({ path: `${shots}/temperaturer.png` });
@@ -326,7 +326,7 @@ try {
     await page.evaluate(() => { document.querySelector("header").scrollIntoView(); document.scrollingElement.scrollTop = 0; });
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${shots}/morkt-lage.png` });
-    await page.locator("main > section.card").nth(1).screenshot({ path: `${shots}/morkt-varmeplan.png` });
+    await page.locator("main > section.card:not(#comfort-card)").nth(1).screenshot({ path: `${shots}/morkt-varmeplan.png` });
     await page.locator("#hot-water-card").screenshot({ path: `${shots}/morkt-varmvatten.png` });
     await page.locator("#learning-card").screenshot({ path: `${shots}/morkt-husmodell.png` });
     await page.setViewportSize({ width: 1440, height: 1100 });
@@ -413,6 +413,11 @@ try {
   const priorityPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
   priorityPage.on("pageerror", (error) => errors.push(error.message));
   const thirdRoom = entities.find((entity) => entity.name.startsWith("LK Badrum")).entity_id;
+  let comfortMode = "heat";
+  let comfortSetpoint = 20;
+  let comfortEvents = [{ id: 100, kind: "offset_observed", timestamp: now - 7200, message: "Ändring",
+    details: { entity_id: offset, previous: 3, value: 4 } }];
+  await priorityPage.route("**/api/events*", (route) => route.fulfill({ json: comfortEvents }));
   let priorityConfig = { ...settings, target_temperature: 22, room_sensors: ["sensor.living", thermostat, thirdRoom], priority_sensors: [] };
   await priorityPage.route("**/api/settings", async (route) => {
     if (route.request().method() === "PUT") priorityConfig = route.request().postDataJSON();
@@ -424,7 +429,8 @@ try {
     warm_room_limit: 24,
     warm_rooms: priorityConfig.priority_sensors.length ? [thirdRoom] : [],
     rooms: [
-      { entity_id: "sensor.living", name: "Vardagsrum", temperature: 21 },
+      { entity_id: "sensor.living", name: "Vardagsrum", temperature: 21,
+        thermostat: "climate.living", thermostat_mode: comfortMode, setpoint: comfortSetpoint },
       { entity_id: thermostat, name: "LK Allrum", temperature: 23 },
       { entity_id: thirdRoom, name: entities.find((entity) => entity.entity_id === thirdRoom).name, temperature: 25 },
     ].map((room) => ({ ...room, priority: priorityConfig.priority_sensors.includes(room.entity_id) })),
@@ -453,6 +459,46 @@ try {
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /\+1 °C senaste timmen/, await priorityPage.locator("#history-status").textContent());
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /Vardagsrum · prioriterat.*21 °C · 1° under målet/);
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /25 °C · 3° över målet/);
+  assert.match(await priorityPage.locator("#comfort-advice").textContent(), /Vardagsrum.*inställd på 20 °C.*begränsa värmen/);
+  assert.match(await priorityPage.locator("#comfort-advice").textContent(), /Andra rum är redan minst 2 °C/);
+  assert.match(await priorityPage.locator("#comfort-change").textContent(), /3 → 4.*Jämför uppmätta/);
+  assert.match(await priorityPage.locator("#comfort-response").textContent(), /Vardagsrum: 20 → 21 °C \(\+1 °C sedan höjningen\)/);
+  await priorityPage.locator("#comfort-card").screenshot({ path: `${artifacts}/comfort-card.png` });
+  comfortMode = "off";
+  await priorityPage.evaluate(() => window.dispatchEvent(new Event("online")));
+  await priorityPage.waitForFunction(() => document.getElementById("comfort-advice").textContent.includes("Termostaten är avstängd"));
+  comfortMode = "heat";
+  comfortSetpoint = null;
+  await priorityPage.evaluate(() => window.dispatchEvent(new Event("online")));
+  await priorityPage.waitForFunction(() => document.getElementById("comfort-advice").textContent.includes("börvärde saknas"));
+  comfortSetpoint = 22;
+  comfortEvents = [{ ...comfortEvents[0], timestamp: now - 600 }];
+  await priorityPage.locator("#log-panel > summary").click();
+  await priorityPage.locator("#refresh-events").click();
+  await priorityPage.evaluate(() => window.dispatchEvent(new Event("online")));
+  await priorityPage.waitForFunction(() => document.getElementById("comfort-change").textContent.includes("tidigt att bedöma"));
+  await priorityPage.waitForFunction(() => document.getElementById("comfort-advice").textContent.includes("Det visar inte att ventilen är öppen"));
+  comfortEvents = [{ ...comfortEvents[0], details: { entity_id: offset, previous: 4, value: 3 } }];
+  await priorityPage.locator("#refresh-events").click();
+  await priorityPage.evaluate(() => window.dispatchEvent(new Event("online")));
+  await priorityPage.waitForFunction(() => document.getElementById("comfort-change").textContent.includes("en sänkning"));
+  assert.equal(await priorityPage.locator("#comfort-response li").count(), 0);
+  comfortEvents = [{ ...comfortEvents[0], details: { entity_id: "number.another_pump", previous: 3, value: 4 } }];
+  await priorityPage.locator("#refresh-events").click();
+  await priorityPage.evaluate(() => window.dispatchEvent(new Event("online")));
+  await priorityPage.waitForFunction(() => document.getElementById("comfort-change").textContent.includes("Ingen bekräftad höjning"));
+  comfortEvents = [{ id: 101, kind: "offset_observed", timestamp: now - 2 * 86400,
+    details: { entity_id: offset, previous: 3, value: 4 } }];
+  await priorityPage.locator("#refresh-events").click();
+  await priorityPage.waitForFunction(() => document.getElementById("comfort-response").textContent.includes("jämförelse saknas"));
+  assert.doesNotMatch(await priorityPage.locator("#comfort-response").textContent(), /sedan höjningen/);
+  await priorityPage.unroute("**/api/events*");
+  await priorityPage.route("**/api/events*", (route) => route.fulfill({
+    status: 502, json: { error: "Loggen kan inte nås" },
+  }));
+  await priorityPage.locator("#refresh-events").click();
+  await priorityPage.waitForFunction(() => document.getElementById("comfort-change").textContent.includes("Loggen kan inte nås"));
+  assert.equal(await priorityPage.locator("#comfort-response li").count(), 0);
   assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), true);
   assert.match(await priorityPage.locator("#warm-room-summary").textContent(), /24 °C.*planerar ändå att höja/);
   assert.match(await priorityPage.locator("#warm-room-list").textContent(), /LK Badrum.*25 °C.*3° över målet.*\+1 °C senaste timmen/);
