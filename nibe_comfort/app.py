@@ -19,7 +19,9 @@ STATIC = Path(__file__).parent / "static"
 
 
 def handler_for(controller, api_token=None):
-    insights = Insights(controller.ha)
+    insights = Insights(controller.ha, getattr(controller, "data_dir", None))
+    if getattr(controller, "preheat_provider", 1) is None:
+        controller.preheat_provider = insights.preheat
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
@@ -76,6 +78,8 @@ def handler_for(controller, api_token=None):
                     self.respond(200, insights.forecast(controller.settings()["forecast_entity"]))
                 elif path == "/api/plan":
                     self.respond(200, insights.plan(controller.settings(), controller.snapshot(), controller.events.recent()))
+                elif path == "/api/learning":
+                    self.respond(200, insights.learning(controller.settings(), controller.snapshot(), controller.events.recent()))
                 elif path == "/api/events":
                     before = parse_qs(urlsplit(self.path).query).get("before", [None])[0]
                     if before is not None and (not before.isascii() or not before.isdigit() or len(before) > 19

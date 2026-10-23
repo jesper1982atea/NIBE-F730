@@ -10,6 +10,9 @@ värmekurva, SMHI/HA-väderprognos, Tibbers aktuella pris samt pumpens tillgäng
 `climate` stöds som rumsgivare. Inställningsändringar och automatiska
 skrivförsök sparas i en beständig ändringslogg.
 
+Tillägget lär sig också hur huset svarar på värmekurvan och kan, om du slår på
+det, förvärma före dyra elpristimmar och låta huset svalna lite under dem.
+
 ## Skärmbilder
 
 | Översikt | Värmeplan med justeringar |
@@ -23,6 +26,10 @@ skrivförsök sparas i en beständig ändringslogg.
 | Varmvatten | Varmvatten på mobil |
 | --- | --- |
 | ![Varmvattentank med nivå, tappningar per timme och tankens temperatur](docs/screenshots/varmvatten.png) | ![Varmvatten i mobilvy](docs/screenshots/mobil-varmvatten.png) |
+
+| Ditt hus lär sig | Husmodellen på mobil | Husmodellen i mörkt läge |
+| --- | --- | --- |
+| ![Självlärande husmodell med förutsägelse och förvärmning](docs/screenshots/husmodell.png) | ![Husmodellen i mobilvy](docs/screenshots/mobil-husmodell.png) | ![Husmodellen i mörkt läge](docs/screenshots/morkt-husmodell.png) |
 
 | Mörkt läge (följer Home Assistant) | Värmeplan i mörkt läge | Varmvatten i mörkt läge |
 | --- | --- | --- |
@@ -97,7 +104,7 @@ npm run screenshots  # uppdaterar docs/screenshots
 
 1. Höj `version` i `nibe_comfort/config.yaml` och skriv i
    `nibe_comfort/CHANGELOG.md`.
-2. Skapa och pusha en tagg: `git tag v0.2.6 && git push origin v0.2.6`.
+2. Skapa och pusha en tagg: `git tag v0.2.7 && git push origin v0.2.7`.
 3. GitHub Actions testar, bygger `nibe_comfort-<version>.zip` och skapar en
    release med zip-filen och installationsinstruktioner.
 

@@ -36,6 +36,8 @@ DEFAULTS = {
     "max_step": 1.0,
     "min_interval_minutes": 30.0,
     "max_age_minutes": 180.0,
+    "preheat_enabled": False,
+    "preheat_degrees": 0.5,
 }
 LIMITS = {
     "target_temperature": (10, 30),
@@ -53,6 +55,7 @@ LIMITS = {
     "max_step": (0.1, 2),
     "min_interval_minutes": (10, 1440),
     "max_age_minutes": (5, 1440),
+    "preheat_degrees": (0.1, 1.5),
 }
 
 
@@ -76,8 +79,9 @@ def validate(config):
     if not isinstance(config, dict) or set(config) != set(DEFAULTS):
         raise ControlError("Konfigurationen innehåller saknade eller okända fält.")
     result = copy.deepcopy(config)
-    if type(result["enabled"]) is not bool:
-        raise ControlError("enabled måste vara boolesk.")
+    for key in ("enabled", "preheat_enabled"):
+        if type(result[key]) is not bool:
+            raise ControlError(f"{key} måste vara boolesk.")
     for key, (low, high) in LIMITS.items():
         result[key] = number(result[key], key)
         if not low <= result[key] <= high:
@@ -106,6 +110,8 @@ def validate(config):
         raise ControlError("Välj utomhusgivare för väderpåverkan.")
     if (result["cheap_boost"] or result["expensive_reduction"]) and not result["price_entity"]:
         raise ControlError("Välj elprisgivare för elprisstyrning.")
+    if result["preheat_enabled"] and not result["price_entity"]:
+        raise ControlError("Välj elprisgivare (Tibber) för förvärmning.")
     if result["enabled"] and (not rooms or not result["offset_entity"]):
         raise ControlError("Välj rumsgivare och kurvförskjutning innan aktivering.")
     return result
@@ -333,7 +339,8 @@ def price_contribution(config, price, error):
     return adjustment
 
 
-def evaluate(config, entities, now, peers=None):
+def evaluate(config, entities, now, peers=None, target_shift=0.0):
+    """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule."""
     states = {entity["entity_id"]: entity for entity in entities}
     peers = peers or {}
     get = lambda key: fresh_entity(states, key, config["max_age_minutes"], now, peers.get(key, ()))
@@ -343,7 +350,8 @@ def evaluate(config, entities, now, peers=None):
     if any(not 5 <= value <= 40 for value in rooms):
         raise ControlError("En rumsgivare visar en orimlig inomhustemperatur (utanför 5–40 °C).")
     indoor = sum(rooms) / len(rooms)
-    error = config["target_temperature"] - indoor
+    target_shift = max(-config["preheat_degrees"], min(config["preheat_degrees"], target_shift)) if config["preheat_enabled"] else 0.0
+    error = config["target_temperature"] + target_shift - indoor
     room_adjustment = 0 if abs(error) <= config["deadband"] else error * config["room_gain"]
     outdoor = None
     weather_adjustment = 0
@@ -362,7 +370,7 @@ def evaluate(config, entities, now, peers=None):
     desired = max(config["min_offset"], min(config["max_offset"], desired))
     result = {
         "indoor": round(indoor, 2), "outdoor": outdoor, "price": price,
-        "price_unit": price_unit, "error": round(error, 2),
+        "price_unit": price_unit, "error": round(error, 2), "target_shift": round(target_shift, 2),
         "contributions": {"room": round(room_adjustment, 2), "weather": round(weather_adjustment, 2), "price": price_adjustment},
         "desired_offset": round(desired, 3), "current_offset": None,
         "next_offset": None, "writable": False,
@@ -440,6 +448,8 @@ class Controller:
             saved = json.loads(self.path.read_text())
             if isinstance(saved, dict):
                 saved.setdefault("forecast_entity", "")
+                saved.setdefault("preheat_enabled", False)
+                saved.setdefault("preheat_degrees", 0.5)
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
         self.pending = None
@@ -455,6 +465,10 @@ class Controller:
         self.events.add("startup", "Tillägget startat. Minsta ändringsintervall gäller efter omstart.", settings=self.config)
         self.status = {"message": "Väntar på första avläsningen.", "error_message": None}
         self.peer_cache = (0, {})
+        self.data_dir = str(data_dir)
+        # Set by the web layer: callable(config) -> {"windows": [...]} for price-based pre-heating.
+        self.preheat_provider = None
+        self.preheat_kind = None
 
     def peers(self):
         """Same-device entities per entity, refreshed every 5 minutes."""
@@ -514,14 +528,52 @@ class Controller:
                 atomic_json(self.state_path, {"last_attempt": self.last_write, "pending": None})
                 self.pending = None
 
+    def preheat_schedule(self):
+        """Fetch pre-heating windows outside the lock (may read history). Returns windows or an error text."""
+        with self.lock:
+            config = copy.deepcopy(self.config)
+        if not config["preheat_enabled"] or not self.preheat_provider:
+            return None
+        try:
+            return {"windows": list(self.preheat_provider(config)["windows"])}
+        except Exception as exc:  # optional optimisation: fall back to plain comfort control
+            return {"error": str(exc) or type(exc).__name__}
+
+    def preheat(self, now, schedule):
+        """Active pre-heating window. Any problem means no shift: normal comfort control continues."""
+        result = {"shift": 0.0, "kind": None, "until": None, "note": None}
+        if not self.config["preheat_enabled"]:
+            windows = []
+        elif not schedule:
+            result["note"] = "Förvärmning är inte tillgänglig ännu."
+            windows = []
+        elif "error" in schedule:
+            result["note"] = f"Förvärmning pausad: {schedule['error']}"
+            windows = []
+        else:
+            windows = schedule["windows"]
+        for window in windows:
+            if window["start"] <= now < window["end"]:
+                result.update(shift=window["shift"], kind=window["kind"], until=window["end"])
+                break
+        if result["kind"] != self.preheat_kind:
+            labels = {"preheat": "Förvärmning startad före dyrt elpris.", "coast": "Dyrt elpris: huset får bli lite svalare.",
+                      None: "Förvärmning/sparläge avslutat; vanlig måltemperatur gäller."}
+            self.events.add("preheat", labels[result["kind"]], window=result["kind"], shift=result["shift"], until=result["until"])
+            self.preheat_kind = result["kind"]
+        return result
+
     def tick(self):
+        schedule = self.preheat_schedule()
         with self.lock:
             now = time.time()
             try:
                 entities = self.ha.states()
                 peers = self.peers()
                 self.observe(entities, now, peers)
-                result = evaluate(self.config, entities, now, peers)
+                preheat = self.preheat(now, schedule)
+                result = evaluate(self.config, entities, now, peers, preheat["shift"])
+                result["preheat"] = preheat
                 if self.last_error:
                     self.events.add("resumed", "Giltiga mätvärden igen; styrningen kan fortsätta.")
                     self.last_error = None
@@ -542,6 +594,7 @@ class Controller:
                                 value=result["next_offset"], target_temperature=self.config["target_temperature"],
                                 indoor=result["indoor"], outdoor=result["outdoor"], price=result["price"],
                                 contributions=result["contributions"], desired_offset=result["desired_offset"],
+                                target_shift=result["target_shift"], preheat=preheat.get("kind"),
                             )
                             pending = dict(
                                 request_id=request_id, timestamp=now,

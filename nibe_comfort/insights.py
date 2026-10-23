@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
 from controller import ControlError, fresh_entity, next_step, number, price_contribution, temperature
+from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 
 
 def discover_tibber(states, registry):
@@ -304,7 +305,7 @@ def history_series(histories, config, states, unit, start, end):
                     setpoints.append([max(start, stamp), setpoint])
         # Keep all availability transitions, plus the first/last reading per five-minute bin.
         reduced = []
-        for point in sorted(points):
+        for point in sorted(points, key=lambda point: point[0]):
             if reduced and point[0] // 300 == reduced[-1][0] // 300 and point[1] is not None and reduced[-1][1] is not None:
                 if len(reduced) > 1 and reduced[-2][0] // 300 == point[0] // 300 and reduced[-2][1] is not None:
                     reduced[-1] = point
@@ -315,7 +316,7 @@ def history_series(histories, config, states, unit, start, end):
         line = {"entity_id": eid, "name": names.get(eid, eid), "outdoor": eid == config["outdoor_entity"],
                 "kind": "climate" if eid.startswith("climate.") else "sensor", "points": reduced}
         if eid.startswith("climate."):
-            line["setpoints"] = sorted(setpoints)
+            line["setpoints"] = sorted(setpoints, key=lambda point: point[0])
         series.append(line)
     return {"start": start, "end": end, "target": config["target_temperature"], "series": series}
 
@@ -432,7 +433,7 @@ def tibber_prices(response):
     return sorted(prices)
 
 
-def planned_offsets(config, status, forecast, prices, now, end, use_prices):
+def planned_offsets(config, status, forecast, prices, now, end, use_prices, windows=None):
     """Simulate what the controller would write later, if the room stays as it is now.
 
     Uses the controller's own rules: room deviation, weather rule on the forecast, price rule on
@@ -445,11 +446,17 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices):
     weather_on = bool(config["weather_gain"])
     price_configured = bool(config["cheap_boost"] or config["expensive_reduction"])
     price_on = price_configured and use_prices
-    room = status["contributions"]["room"]
+    preheat_on = bool(config.get("preheat_enabled")) and bool(windows)
+    base_error = status["error"] - (status.get("target_shift") or 0)
 
     def desired_at(stamp):
         outdoor = price = None
         weather = price_adjustment = 0
+        room = status["contributions"]["room"]
+        window = shift_at(windows, stamp) if preheat_on else None
+        error = base_error + (window["shift"] if window else 0)
+        if preheat_on:
+            room = 0 if abs(error) <= config["deadband"] else error * config["room_gain"]
         if weather_on:
             future = [row for row in forecast if row[0] <= stamp]
             outdoor = (future[-1] if future else forecast[0])[1] if forecast else None
@@ -459,9 +466,13 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices):
         if price_on:
             price = value_at(prices, stamp)
             if price is not None:
-                price_adjustment = price_contribution(config, price, status["error"])
+                price_adjustment = price_contribution(config, price, error)
         value = config["base_offset"] + room + weather + price_adjustment
         reasons = []
+        if window and window["kind"] == "preheat":
+            reasons.append(f"förvärmer +{window['shift']:g}° före dyrt elpris")
+        elif window:
+            reasons.append(f"dyrt elpris, får bli {-window['shift']:g}° svalare")
         if price_adjustment > 0:
             reasons.append(f"billigt elpris ({price:g})")
         elif price_adjustment < 0:
@@ -477,13 +488,15 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices):
         slots += [t for t, _ in prices if now < t <= end]
     if weather_on:
         slots += [t for t, _ in forecast if now < t <= end]
+    if preheat_on:
+        slots += [t for w in windows for t in (w["start"], w["end"]) if now < t <= end]
     slots = sorted(set(slots))
     for stamp in slots:
         value, _ = desired_at(stamp)
         if value is not None and (not plan["desired"] or plan["desired"][-1][1] != value):
             plan["desired"].append([stamp, value])
 
-    if not weather_on and not price_on:
+    if not weather_on and not price_on and not preheat_on:
         plan["notes"].append("Väder- och elprispåverkan är 0, så planen följer bara rumstemperaturen.")
     if price_configured and not use_prices:
         plan["notes"].append("Prisplanen kräver Tibber-priser och att elprisgivaren är Tibbers, så att priserna har samma enhet.")
@@ -542,16 +555,20 @@ def actual_changes(history, events, start):
                 c = match["details"].get("contributions", {})
                 item["reasons"] = [f"{label} {c[key]:+g}" for key, label in (("room", "rum"), ("weather", "väder"), ("price", "elpris"))
                                    if c.get(key)]
+                kind = match["details"].get("preheat")
+                if kind:
+                    item["reasons"].append("förvärmning" if kind == "preheat" else "sparläge vid dyrt elpris")
             changes.append(item)
         previous = value
     return changes
 
 
 class Insights:
-    def __init__(self, ha):
+    def __init__(self, ha, data_dir=None):
         self.ha = ha
         self.cache = {}
         self.lock = threading.Lock()
+        self.store = LearningStore(f"{data_dir}/learning.sqlite" if data_dir else None)
 
     def cached(self, key, seconds, loader):
         with self.lock:
@@ -767,8 +784,94 @@ class Insights:
         forecast, prices, use_prices = result.pop("_forecast"), result.pop("_prices"), result.pop("_use_prices")
         result["now"] = now
         end = result["end"] = max(result["end"], now + 36 * 3600)
-        plan = planned_offsets(config, status, forecast, prices, now, end, use_prices)
+        windows = []
+        if config["preheat_enabled"]:
+            try:
+                windows = self.preheat(config)["windows"]
+            except ControlError as exc:
+                result["notes"].append(f"Förvärmning: {exc}")
+        plan = planned_offsets(config, status, forecast, prices, now, end, use_prices, windows)
         result["offset"].update(planned=plan["planned"], desired=plan["desired"], changes=plan["changes"])
         result["offset"]["done"] = actual_changes(result["offset"]["history"], events or [], result["start"])
         result["notes"].extend(plan["notes"])
+        return result
+
+    def house_model(self, config):
+        """Learn from Home Assistant history (7 days) plus everything stored earlier. Cached for an hour."""
+        key = ("model", tuple(config["room_sensors"]), config["outdoor_entity"], config["offset_entity"])
+
+        def load():
+            now = time.time()
+            rooms = list(config["room_sensors"])
+            result = {"model": None, "indoor": {}, "outdoor": {}, "offset": {}, "now": now, "error": None}
+            if not rooms or not config["offset_entity"]:
+                result["error"] = "Välj rum och pumpens kurvförskjutning först."
+                return result
+            start = now - 7 * 86400
+            stamp = quote(datetime.fromtimestamp(start, timezone.utc).isoformat(), safe="")
+            end_time = datetime.fromtimestamp(now, timezone.utc).isoformat()
+            ids = rooms + ([config["outdoor_entity"]] if config["outdoor_entity"].startswith("sensor.") else [])
+            histories = self.ha.request("/history/period/" + stamp + "?" + urlencode({"filter_entity_id": ",".join(ids), "end_time": end_time}))
+            states = self.ha.states()
+            series = history_series(histories, config, states, self.ha._temperature_unit, start, now)["series"]
+            rows = []
+            for line in series:
+                rows += [(line["entity_id"], h, v) for h, v in hourly_means(line["points"], start, now).items()]
+            offset_rows = history_groups(self.ha.request("/history/period/" + stamp + "?" + urlencode({
+                "filter_entity_id": config["offset_entity"], "end_time": end_time,
+                "minimal_response": "", "no_attributes": "", "significant_changes_only": "0"})))
+            offset_steps = numeric_steps(offset_rows.get(config["offset_entity"], []), config["offset_entity"], start)
+            rows += [(config["offset_entity"], h, v) for h, v in hourly_means(offset_steps, start, now).items()]
+            self.store.add(rows, now)
+            stored = self.store.load(rooms + [config["outdoor_entity"], config["offset_entity"]])
+            hours = set.intersection(*(set(stored[e]) for e in rooms))
+            indoor = {h: sum(stored[e][h] for e in rooms) / len(rooms) for h in hours}
+            result.update(indoor=indoor, outdoor=stored.get(config["outdoor_entity"], {}), offset=stored[config["offset_entity"]])
+            result["model"] = learn(indoor, result["outdoor"], result["offset"], now)
+            return result
+        return self.cached(key, 3600, load)
+
+    def preheat(self, config):
+        """Pre-heating windows from Tibber prices and the learned lead time. Cached 15 minutes."""
+        key = ("preheat", tuple(config["room_sensors"]), config["offset_entity"], config["preheat_degrees"])
+
+        def load():
+            model = None
+            try:
+                model = self.house_model(config)["model"]
+            except Exception:  # the model only tunes the lead time; defaults work without it
+                model = None
+            lead = lead_hours(model, config["preheat_degrees"])
+            result = preheat_windows(self.prices(), time.time(), lead, config["preheat_degrees"])
+            result["lead_hours"] = lead
+            result["lead_source"] = "learned" if model and model["status"] == "good" else "default"
+            return result
+        return self.cached(key, 900, load)
+
+    def learning(self, config, status, events=None):
+        """Model summary, recent indoor temperature and a 24-hour prediction along the current plan."""
+        data = self.house_model(config)
+        now = time.time()
+        model = data["model"]
+        result = {"now": now, "error": data["error"], "model": model, "history": [], "prediction": [],
+                  "target": config["target_temperature"], "preheat": {"enabled": config["preheat_enabled"],
+                  "degrees": config["preheat_degrees"], "windows": [], "lead_hours": None, "lead_source": None, "note": None}}
+        result["history"] = [[h + 1800, round(v, 2)] for h, v in sorted(data["indoor"].items()) if h >= now - 36 * 3600]
+        try:
+            schedule = self.preheat(config)
+            result["preheat"].update(windows=schedule["windows"], lead_hours=schedule["lead_hours"],
+                                     lead_source=schedule["lead_source"], note=schedule["note"] or None)
+        except ControlError as exc:
+            result["preheat"]["note"] = str(exc)
+        if not model or not model.get("beta") or status.get("indoor") is None:
+            return result
+        plan = self.plan(config, status, events)
+        steps = sorted([[h, v] for h, v in data["offset"].items()] + [list(p) for p in plan["offset"]["planned"]])
+        current = status.get("current_offset")
+        offset_at = lambda t: (value_at(steps, t) if value_at(steps, t) is not None else current if current is not None else config["base_offset"])
+        forecast = plan["outdoor"]["forecast"]
+        outdoor_now = next((v for _, v in reversed(plan["outdoor"]["history"]) if v is not None), None)
+        fallback = outdoor_now if outdoor_now is not None else (sum(data["outdoor"].values()) / len(data["outdoor"]) if data["outdoor"] else 0)
+        outdoor_at = lambda t: (value_at(forecast, t) if forecast and value_at(forecast, t) is not None else fallback)
+        result["prediction"] = predict(model, status["indoor"], now, offset_at, outdoor_at)
         return result

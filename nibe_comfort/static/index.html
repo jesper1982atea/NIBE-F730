@@ -66,6 +66,26 @@
       <p id="plan-curve-status" class="hint"></p>
     </section>
 
+    <section class="card dashboard" id="learning-card">
+      <div class="section-heading"><div><span class="section-number">SJÄLVLÄRANDE</span><h2>Ditt hus lär sig</h2></div><button type="button" id="refresh-learning" class="secondary">Uppdatera</button></div>
+      <p id="learn-status" role="status">Hämtar husmodellen…</p>
+      <div id="learn-progress" class="learn-progress"></div>
+      <p id="learn-message" class="explanation"></p>
+      <div id="learn-facts" class="live-grid"></div>
+      <h3>Inne · senaste dygnet och vad modellen tror händer</h3>
+      <div id="learn-chart" class="chart" role="img" aria-label="Innetemperatur och förutsägelse"></div>
+      <div id="learn-legend" class="chart-legend"></div>
+      <p class="hint chart-key"><span class="key preheat">Rött fält</span> = förvärmning före dyrt elpris, <span class="key coast">blått fält</span> = dyra timmar då huset får bli lite svalare. Förutsägelsen följer värmeplanen och väderprognosen.</p>
+      <h3>Förvärmning före dyra timmar</h3>
+      <div class="learn-controls">
+        <label class="toggle"><input type="checkbox" id="preheat_enabled" name="preheat_enabled" form="settings"> Låt huset förvärmas när elen är billig</label>
+        <div><label for="preheat_degrees">Hur mycket varmare/svalare · °C</label><input id="preheat_degrees" name="preheat_degrees" form="settings" type="number" min="0.1" max="1.5" step="0.1" required></div>
+        <button type="submit" form="settings" id="save-preheat">Spara</button>
+      </div>
+      <p class="hint">Före tydligt dyra timmar (minst 25 % över dygnets mittpris) höjs måltemperaturen tillfälligt, och under de dyra timmarna får det bli lika mycket svalare. Kräver Tibber-priser. Automatiken måste vara aktiverad för att något ska skickas till pumpen. Av från början.</p>
+      <ul id="learn-windows" class="plan-changes"></ul>
+    </section>
+
     <section class="card dashboard" id="hot-water-card">
       <div class="section-heading"><div><span class="section-number">TANKEN JUST NU OCH SENASTE VECKAN</span><h2>Varmvatten</h2></div><button type="button" id="refresh-hot-water" class="secondary">Uppdatera</button></div>
       <p id="hw-status" role="status">Hämtar varmvatten…</p>
