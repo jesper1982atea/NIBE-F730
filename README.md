@@ -1,2 +1,97 @@
-# NIBE-F730
-Heatpump
+# NIBE Comfort
+
+Home Assistant-tillägg för begriplig temperaturstyrning av NIBE F730: välj
+rumsgivare, ställ önskad temperatur och låt tillägget föreslå eller stegvis
+justera värmekurvans förskjutning via Home Assistants myUplink-integration.
+
+Visar även temperaturgrafer per rum med termostaternas börvärde, en värmeplan
+med väder, Tibbers kvartspriser och planerad förskjutning, en uppskattad
+värmekurva, SMHI/HA-väderprognos, Tibbers aktuella pris samt pumpens tillgängliga larm- och driftvärden. Golvvärme via
+`climate` stöds som rumsgivare. Inställningsändringar och automatiska
+skrivförsök sparas i en beständig ändringslogg.
+
+## Skärmbilder
+
+| Översikt | Värmeplan med justeringar |
+| --- | --- |
+| ![Översikt med temperatur, pumpstatus och el](docs/screenshots/oversikt.png) | ![Värmeplan med utetemperatur, elpris och planerade justeringar](docs/screenshots/varmeplan.png) |
+
+| Temperatur per rum | Inställningar | Mobil |
+| --- | --- | --- |
+| ![Temperaturgraf med uppmätt och inställd temperatur](docs/screenshots/temperaturer.png) | ![Måltemperatur, rumsgivare, väder och elpris](docs/screenshots/installningar.png) | ![Mobilvy i Home Assistant-appen](docs/screenshots/mobil.png) |
+
+Skärmbilderna är tagna med testdata.
+
+## Installation
+
+Kräver Home Assistant OS eller Supervised (tillägg/appar) och
+[myUplink-integrationen](https://www.home-assistant.io/integrations/myuplink/).
+
+### Alternativ A – via tilläggsbutiken (rekommenderas, får uppdateringar)
+
+1. **Inställningar → Tillägg → Tilläggsbutik → ⋮ → Repositories**.
+2. Lägg till `https://github.com/jesper1982atea/NIBE-F730`.
+3. Installera **NIBE Comfort**, starta det och öppna det från sidopanelen.
+
+[![Lägg till repository i Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fjesper1982atea%2FNIBE-F730)
+
+### Alternativ B – manuellt med zip-fil (för att testa)
+
+1. Ladda ner `nibe_comfort-<version>.zip` från
+   [Releases](https://github.com/jesper1982atea/NIBE-F730/releases/latest)
+   och packa upp den. Du får mappen `nibe_comfort`.
+2. Kopiera mappen till `/addons` i Home Assistant, till exempel med tillägget
+   **Samba share** (`\\homeassistant\addons`), **Studio Code Server** eller SSH.
+   Resultatet ska vara `/addons/nibe_comfort/config.yaml`.
+3. **Inställningar → Tillägg → Tilläggsbutik → ⋮ → Sök efter uppdateringar**.
+4. Installera **NIBE Comfort** under *Lokala tillägg* och starta det.
+
+En manuell installation uppdateras inte automatiskt. Byt ut mappen mot en
+nyare zip och tryck på *Uppdatera* på tillägget, eller gå över till alternativ A.
+
+### Första start
+
+1. Öppna webbgränssnittet. Tillägget försöker hitta myUplinks kurvförskjutning
+   för klimatsystem 1 och samma pumps utegivare BT1 automatiskt.
+   Välj dina rumsgivare själv och spara inställningarna.
+2. Kontrollera enhet, tillåtet intervall och steglängd i Home Assistant.
+   Anpassa säkerhetsgränserna till din anläggning.
+3. Börja med övervakning. Kontrollera anslutningen och förslagen innan du
+   aktiverar automatiken. Manuell anslutning finns under utfällbara inställningar.
+
+Alla NIBE-parametrar exponeras inte som skrivbara entiteter av myUplink.
+Kontobehörighet, pumpmodell och integration avgör tillgängligheten. Saknas
+en skrivbar kurvförskjutning kan tillägget visa förslag, men inte styra pumpen.
+Det skapar inte en egen direktanslutning till NIBE eller kringgår myUplinks
+begränsningar. Grundkurva, varmvatten, ventilation och kompressorskydd lämnas
+oförändrade.
+
+Se [användarguiden](nibe_comfort/DOCS.md) för reglering, säkerhet och lokalt API.
+
+## Utveckling
+
+Python 3.12 eller senare, inga externa Pythonpaket:
+
+```sh
+python3 -m unittest discover -s nibe_comfort/tests -v
+node nibe_comfort/tests/test_discovery_ui.cjs
+```
+
+Webbläsartest och nya skärmbilder (Playwright):
+
+```sh
+cd tools && npm install && npx playwright install chromium
+npm run ui           # testar gränssnittet, även mobilbredder 320–412 px
+npm run screenshots  # uppdaterar docs/screenshots
+```
+
+## Ny release
+
+1. Höj `version` i `nibe_comfort/config.yaml` och skriv i
+   `nibe_comfort/CHANGELOG.md`.
+2. Skapa och pusha en tagg: `git tag v0.2.3 && git push origin v0.2.3`.
+3. GitHub Actions testar, bygger `nibe_comfort-<version>.zip` och skapar en
+   release med zip-filen och installationsinstruktioner.
+
+Tillägget är avsett för Home Assistant OS eller Supervised med Supervisor.
+Home Assistant Container/Core kan inte installera Supervisor-tillägg.

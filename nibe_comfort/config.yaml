@@ -1,0 +1,25 @@
+name: NIBE Comfort
+version: "0.2.3"
+slug: nibe_comfort
+stage: experimental
+description: Enkel temperaturstyrning med rumsgivare, väder och elpris via myUplink
+url: https://github.com/jesper1982atea/NIBE-F730
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: auto
+homeassistant_api: true
+ingress: true
+ingress_port: 8098
+panel_icon: mdi:heat-pump
+panel_title: NIBE Comfort
+ports:
+  8099/tcp: null
+ports_description:
+  8099/tcp: Valfritt lokalt REST API (kräver api_token och aktiverad port)
+options:
+  api_token: ""
+schema:
+  api_token: password

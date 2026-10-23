@@ -1,0 +1,12 @@
+{
+  "name": "nibe-comfort-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ui": "cd .. && node tools/ui-smoke.mjs",
+    "screenshots": "cd .. && SHOTS=$PWD/docs/screenshots node tools/ui-smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.0"
+  }
+}
