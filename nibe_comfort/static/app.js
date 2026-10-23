@@ -33,7 +33,7 @@ function notice(message, error = false) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`./api/${path}`, { ...options, signal: AbortSignal.timeout(20000) });
+  const response = await fetch(`./api/${path}`, { cache: "no-store", ...options, signal: AbortSignal.timeout(20000) });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
   return body;
@@ -172,7 +172,11 @@ function displayNumber(value) {
   return typeof value === "number" ? value.toLocaleString("sv-SE", { maximumFractionDigits: 2 }) : "—";
 }
 
+let statusBusy = false;
+
 async function refreshStatus() {
+  if (statusBusy) return;
+  statusBusy = true;
   try {
     const state = await api("status");
     if (typeof state.enabled === "boolean") {
@@ -185,12 +189,17 @@ async function refreshStatus() {
     $("current-offset").textContent = displayNumber(state.current_offset);
     $("hero-offset").textContent = displayNumber(state.current_offset);
     $("hero-offset-base").textContent = typeof settings?.base_offset === "number" ? ` · grundvärde ${displayNumber(settings.base_offset)}` : "";
+    $("outdoor-now").textContent = displayNumber(state.outdoor);
+    $("outdoor-now").title = state.reading_errors?.outdoor || "";
+    $("indoor").title = state.reading_errors?.indoor || "";
+    $("hero-offset").title = state.reading_errors?.current_offset || "";
     $("desired-offset").textContent = displayNumber(state.desired_offset);
     $("next-offset").textContent = displayNumber(state.next_offset);
     $("status-title").textContent = state.error_message ? "Styrningen är pausad" : state.enabled ? "Värmen följer dina inställningar" : "Se förslaget innan du styr";
     $("status-message").textContent = state.error_message || state.message;
     const checked = state.checked_at ? new Date(state.checked_at * 1000).toLocaleTimeString("sv-SE") : "väntar";
-    $("updated").textContent = `Senast avläst: ${checked}${state.wait_seconds ? ` · Nästa ändring tidigast om ${Math.ceil(state.wait_seconds / 60)} min` : ""}`;
+    const stale = !state.checked_at || Date.now() / 1000 - state.checked_at > 180;
+    $("updated").textContent = `${stale ? "Avläsningen är inte aktuell. " : ""}Senast avläst: ${checked} · Uppdateras automatiskt${state.wait_seconds ? ` · Nästa ändring tidigast om ${Math.ceil(state.wait_seconds / 60)} min` : ""}`;
     if (state.contributions) {
       const c = state.contributions;
       const shift = state.target_shift ? `${state.target_shift > 0 ? "Förvärmer före dyrt elpris" : "Dyrt elpris"}: målet är tillfälligt ${displayNumber(settings.target_temperature + state.target_shift)} °C. ` : "";
@@ -203,10 +212,12 @@ async function refreshStatus() {
     $("status-title").textContent = "Kontakt med tillägget saknas";
     $("status-message").textContent = error.message;
     lastStatus = null;
-    for (const id of ["indoor", "current-offset", "hero-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
+    for (const id of ["indoor", "outdoor-now", "current-offset", "hero-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
     $("hero-offset-base").textContent = "";
     $("indoor-diff").textContent = "Medel av dina valda rum";
     $("updated").textContent = "Visningen är inte aktuell.";
+  } finally {
+    statusBusy = false;
   }
 }
 
@@ -230,8 +241,6 @@ const valueAt = (points, time) => {
 };
 
 function renderSummary(data) {
-  const current = valueAt(data.outdoor.history, data.now) || data.outdoor.forecast?.[0];
-  $("outdoor-now").textContent = current ? displayNumber(Math.round(current[1] * 10) / 10) : "—";
   const coming = (data.outdoor.forecast || []).filter((point) => point[0] >= data.now && point[0] <= data.now + 86400 && point[1] !== null);
   if (coming.length) {
     const coldest = coming.reduce((a, b) => (b[1] < a[1] ? b : a));
@@ -1048,8 +1057,10 @@ async function init() {
     await findPump();
     renderSettings();
     $("save").disabled = $("pause").disabled = false;
+    $("notice").hidden = true;
   } catch (error) {
-    notice(`Kunde inte läsa inställningar och entiteter: ${error.message}. Ladda om sidan för att försöka igen.`, true);
+    notice(`Kunde inte läsa inställningar och entiteter: ${error.message}. Försöker igen automatiskt om 15 sekunder.`, true);
+    window.setTimeout(init, 15000);
     return;
   }
   $("settings").addEventListener("submit", (event) => {
@@ -1104,6 +1115,17 @@ async function init() {
   window.setInterval(refreshHistory, 300000);
   window.setInterval(refreshForecast, 1800000);
   window.setInterval(refreshPlan, 300000);
+  const resumeDashboard = () => {
+    if (document.visibilityState === "hidden") return;
+    void refreshStatus();
+    void refreshDashboard();
+    void refreshPlan();
+    void refreshHotWater();
+    void refreshTest();
+  };
+  document.addEventListener("visibilitychange", resumeDashboard);
+  window.addEventListener("pageshow", resumeDashboard);
+  window.addEventListener("online", resumeDashboard);
   let lastWidth = window.innerWidth, resizeTimer;
   window.addEventListener("resize", () => {
     window.clearTimeout(resizeTimer);

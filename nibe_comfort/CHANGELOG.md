@@ -1,5 +1,15 @@
 # Ändringslogg
 
+## 0.2.12
+
+- Startsidan uppdateras direkt när appen blir synlig igen eller nätverket
+  återkommer, utöver den löpande statusuppdateringen var 15:e sekund.
+  Överlappande statusanrop undviks och gamla avläsningar markeras tydligt.
+- Giltiga temperaturer och kurvförskjutning visas oberoende av andra
+  mätfel. Ett fel på pumpanslutningen tömmer inte längre rumstemperaturen.
+  Automatiken pausar fortfarande vid fel; ogiltiga mätvärden visas inte.
+- Utetemperaturen högst upp kommer från aktuell avläsning, inte prognosen.
+
 ## 0.2.11
 
 - Aktuell kurvförskjutning och grundvärde visas tydligt högst upp i rutan

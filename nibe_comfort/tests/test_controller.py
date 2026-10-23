@@ -355,6 +355,58 @@ class ControllerTests(unittest.TestCase):
         self.controller.tick()
         self.ha.set_offset.assert_not_called()
 
+    def test_unavailable_offset_keeps_fresh_temperatures_and_recovers(self):
+        self.controller.save(config(enabled=True, target_temperature=23, outdoor_entity="sensor.outdoor"))
+        self.allow_write()
+        self.ha.states.side_effect = lambda: [
+            *fixtures()[:-1], entity("number.offset", "unavailable", min=-10, max=10, step=1),
+        ]
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        status = self.controller.snapshot()
+        self.assertEqual((status["indoor"], status["outdoor"]), (21, -10))
+        self.assertIsNone(status["current_offset"])
+        self.assertIn("current_offset", status["reading_errors"])
+        self.assertNotIn("next_offset", status)
+        self.ha.set_offset.assert_not_called()
+        self.ha.states.side_effect = lambda: fixtures()
+        self.controller.tick()
+        self.assertIsNone(self.controller.snapshot()["error_message"])
+        self.assertEqual(self.controller.snapshot()["current_offset"], 0)
+
+    def test_unavailable_room_does_not_use_partial_average(self):
+        self.enable()
+        self.allow_write()
+        self.ha.states.side_effect = lambda: [
+            entity("sensor.living", "unavailable", unit_of_measurement="°C"), *fixtures()[1:],
+        ]
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        status = self.controller.snapshot()
+        self.assertIsNone(status["indoor"])
+        self.assertEqual(status["current_offset"], 0)
+        self.assertIn("indoor", status["reading_errors"])
+        self.ha.set_offset.assert_not_called()
+
+    def test_stale_readings_are_not_displayed_as_current(self):
+        self.controller.save(config(outdoor_entity="sensor.outdoor"))
+        self.ha.states.side_effect = lambda: fixtures(time.time() - 86400)
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        status = self.controller.snapshot()
+        for key in ("indoor", "outdoor", "current_offset"):
+            self.assertIsNone(status[key])
+            self.assertIn(key, status["reading_errors"])
+
+    def test_ha_failure_does_not_keep_old_readings(self):
+        self.controller.save(config())
+        self.controller.tick()
+        self.ha.states.side_effect = ControlError("Ingen kontakt")
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        self.assertNotIn("indoor", self.controller.snapshot())
+        self.assertNotIn("current_offset", self.controller.snapshot())
+
     def test_startup_cooldown_then_write_and_wait(self):
         self.enable()
         self.controller.tick()
