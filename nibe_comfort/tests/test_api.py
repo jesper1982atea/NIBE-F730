@@ -87,6 +87,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(plan["offset"]["planned"], [])
         self.ha.set_offset.assert_not_called()
 
+    def test_learning_is_read_only_and_wires_preheat_provider(self):
+        self.ha.request.return_value = []
+        self.controller.save(config())
+        status, data = self.request("/api/learning")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["model"]["status"], "learning")
+        self.assertFalse(data["preheat"]["enabled"])
+        self.assertIsNotNone(self.controller.preheat_provider)
+        self.ha.set_offset.assert_not_called()
+
     def test_hot_water_is_read_only_and_explains_missing_sensors(self):
         status, data = self.request("/api/hotwater")
         self.assertEqual(status, 200)

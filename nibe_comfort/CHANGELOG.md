@@ -1,5 +1,22 @@
 # Ändringslogg
 
+## 0.2.7
+
+- Nytt kort **Ditt hus lär sig** efter värmeplanen. Tillägget sparar timvisa
+  medelvärden för rum, ute och kurvförskjutning i `/data/learning.sqlite` (180
+  dygn) och lär sig hur huset svarar: hur många grader ett kurvsteg ger på
+  sikt, hur snabbt det märks och hur träffsäker modellen är. Status visas
+  ärligt som *Lär sig*, *Grov bild* eller *Känner huset väl*.
+- Graf över innetemperaturen senaste dygnet och modellens förutsägelse för
+  nästa dygn längs värmeplanen och väderprognosen.
+- **Förvärmning före dyra timmar** (av från början). Före tydligt dyra timmar
+  enligt Tibber höjs måltemperaturen tillfälligt och under de dyra timmarna
+  får det bli lika mycket svalare (0,1–1,5 °C, standard 0,5). Tills modellen
+  är säker börjar förvärmningen 3 timmar före. Saknas priser eller blir något
+  fel styrs huset som vanligt mot måltemperaturen.
+- Förvärmning och sparläge syns i värmeplanen, i statusförklaringen och i
+  ändringsloggen.
+
 ## 0.2.6
 
 - Nytt kort **Varmvatten** direkt efter värmeplanen. En tank visar ungefär hur

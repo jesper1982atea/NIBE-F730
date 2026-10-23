@@ -32,11 +32,39 @@ justering** (när värmekurvan ändras, åt vilket håll och varför). Är autom
 av visas justeringen som ett förslag. Därunder visas elpriset just nu och
 värmekurvans förskjutning.
 
-Längre ner finns värmeplanen med grafer, varmvatten, temperaturhistorik och
-pumpens drift.
+Längre ner finns värmeplanen med grafer, husmodellen (*Ditt hus lär sig*),
+varmvatten, temperaturhistorik och pumpens drift.
 **Inställningar** och **Ändringslogg** ligger längst ner och fälls ut med ett
 tryck. Inställningarna är utfällda från början tills rum och pumpanslutning
 är valda.
+
+### Ditt hus lär sig och förvärmning
+
+Tillägget lär sig hur ditt hus reagerar på värmekurvan. Varje timme sparas
+medelvärdet för de valda rummen, utegivaren och kurvförskjutningen i
+`/data/learning.sqlite` (högst 180 dygn), så inlärningen fortsätter även när
+Home Assistants Recorder bara sparar en vecka. En enkel värmebalans per timme
+anpassas till mätvärdena:
+
+- **Ett steg på kurvan ger** – hur mycket varmare det blir inne på sikt per
+  steg förskjutning.
+- **Halva effekten märks efter** – hur trögt huset är.
+- **Status**: *Lär sig* (under 3 dygn eller för lite variation), *Grov bild*
+  och *Känner huset väl* (minst 7 dygn, 6 kurvändringar och att modellen
+  förutsäger 6 timmar framåt bättre än att anta oförändrat).
+
+Grafen visar innetemperaturen senaste dygnet och vad modellen tror händer
+nästa dygn med den planerade värmekurvan och väderprognosen.
+
+**Förvärmning före dyra timmar** är av från början och kräver Tibber-priser.
+Timmar minst 25 % över dygnets mittpris räknas som dyra. Före dem höjs
+måltemperaturen tillfälligt med vald mängd (0,1–1,5 °C, standard 0,5), om
+timmarna innan är minst 20 % billigare. Under de dyra timmarna får det bli
+lika mycket svalare. Förvärmningen börjar 3 timmar före tills modellen *känner
+huset väl*; därefter räknas tiden ut från modellen (1–6 timmar). Ändringen går
+genom vanliga rumsregeln, så alla gränser, steglängd och minsta tid mellan
+ändringar gäller. Saknas priser eller blir något fel används vanlig
+måltemperatur och orsaken visas i statusförklaringen.
 
 ### Varmvatten
 
@@ -225,8 +253,9 @@ Vid eller under lågprisgränsen läggs vald höjning till. Vid eller över
 högprisgränsen dras vald sänkning av. Mellan gränserna är påverkan 0.
 Prisoptimering får inte sänka när medeltemperaturen ligger under
 komfortbandet, eller höja när den ligger över. Säkerhetsgränserna gäller alltid.
-Påverkan 0 inaktiverar elprisstyrningen. Framtida priser, optimerad
-dygnsplanering, varmvattenstyrning och faktisk besparingsberäkning ingår inte.
+Påverkan 0 inaktiverar elprisstyrningen. Framtida priser används bara av
+förvärmningen (se *Ditt hus lär sig och förvärmning*). Varmvattenstyrning och
+faktisk besparingsberäkning ingår inte.
 
 ## Skydd och fel
 

@@ -100,6 +100,20 @@ const server = createServer(async (request, response) => {
       draw_offs: draws, charges: draws.map((event) => ({ start: event.end + 60, end: event.end + 2400 })), error: null,
     };
   }
+  else if (path === "/api/learning") {
+    const hour = 3600;
+    data = {
+      now, error: null, target: settings.target_temperature,
+      model: { status: "rough", hours: 159, days: 6.6, changes: 4, needed_hours: 168, needed_changes: 6, lag: 0, skill: 0.21, r2: 0.06,
+        facts: { time_constant_hours: 10.2, degrees_per_step: 0.19, outdoor_effect: 0, lag_hours: 0, step_after_3h: 0.05, step_after_6h: 0.08, half_response_hours: 7.1 },
+        message: "Grov uppskattning (6,6 av 7 dygn, 4 av 6 kurvändringar). Förvärmningen använder försiktiga standardvärden (3 timmar innan) tills modellen är säker." },
+      history: Array.from({ length: 24 }, (_, i) => [now - (24 - i) * hour, 21.7 + Math.sin(i / 4) * 0.3]),
+      prediction: Array.from({ length: 25 }, (_, i) => [now + i * hour, 21.9 + (i > 6 && i < 10 ? 0.3 : 0) - (i >= 10 && i < 13 ? 0.2 : 0)]),
+      preheat: { enabled: settings.preheat_enabled, degrees: settings.preheat_degrees, lead_hours: 3, lead_source: "default", note: null,
+        windows: [{ kind: "preheat", start: now + 7 * hour, end: now + 10 * hour, shift: 0.5, price: 0.9 },
+                  { kind: "coast", start: now + 10 * hour, end: now + 13 * hour, shift: -0.5, price: 2.4 }] },
+    };
+  }
   else if (path === "/api/events") data = events;
   else if (path === "/api/history") {
     if (failHistory) { response.writeHead(502); response.end('{"error":"Recorder saknas"}'); return; }
@@ -156,7 +170,17 @@ try {
   assert.match(await page.locator("#next-change-why").textContent(), /Höjer värmen ett steg \(2→3\) · billigt elpris/);
   assert.match(await page.locator("#hero-extra").textContent(), /Elpris nu .* SEK\/kWh \((billigt|normalt|dyrt)\)/);
   await page.waitForFunction(() => document.getElementById("hw-status").textContent.startsWith("Uppdaterad"));
-  assert.equal(await page.locator("#hot-water-card").evaluate((card) => card.previousElementSibling.querySelector("#plan-changes") !== null), true, "Hot water card follows the plan");
+  await page.waitForFunction(() => document.getElementById("learn-status").textContent.startsWith("Grov bild"));
+  assert.equal(await page.locator("#learning-card").evaluate((card) => card.previousElementSibling.querySelector("#plan-changes") !== null), true, "Learning card follows the plan");
+  assert.equal(await page.locator("#hot-water-card").evaluate((card) => card.previousElementSibling.id), "learning-card");
+  assert.match(await page.locator("#learn-progress").textContent(), /6,6 av 7 dygn.*4 av 6/);
+  assert.match(await page.locator("#learn-facts").textContent(), /\+0,19 °C inne på sikt.*≈ 7,1 timmar/);
+  assert.equal(await page.locator("#learn-chart path").count(), 2);
+  assert.equal(await page.locator("#learn-chart .chart-band.preheat").count(), 1);
+  assert.equal(await page.locator("#learn-chart .chart-band.coast").count(), 1);
+  assert.match(await page.locator("#learn-windows").textContent(), /Förvärmning är av.*3 timmar före \(standard.*förvärm \+0,5°.*0,5° svalare/);
+  assert.equal(await page.locator("#preheat_enabled").isChecked(), false, "Pre-heating starts off");
+  assert.equal(await page.locator("#preheat_degrees").inputValue(), "0.5");
   assert.equal(await page.locator("#hw-verdict").textContent(), "Varmvattnet räcker bra");
   assert.match(await page.locator("#hw-tank").textContent(), /50%/);
   assert.match(await page.locator("#hw-verdict-text").textContent(), /ungefär 14 minuter.*Senast laddat/);
@@ -198,6 +222,7 @@ try {
   assert.equal(settings.price_entity, price);
   assert.equal(settings.weather_gain, 0);
   assert.equal(settings.expensive_reduction, 0);
+  assert.equal(settings.preheat_enabled, false);
   assert.ok(settings.room_sensors.includes(thermostat));
   assert.equal(writes, 1);
   await page.locator("#history-entity").selectOption(thermostat);
@@ -215,7 +240,8 @@ try {
     const cards = page.locator("main > section.card");
     await page.evaluate(() => { document.querySelector("header").scrollIntoView(); document.scrollingElement.scrollTop = 0; }); await page.waitForTimeout(300);
     await page.screenshot({ path: `${shots}/oversikt.png` });
-    await cards.nth(3).screenshot({ path: `${shots}/temperaturer.png` });
+    await cards.nth(4).screenshot({ path: `${shots}/temperaturer.png` });
+    await page.locator("#learning-card").screenshot({ path: `${shots}/husmodell.png` });
     await page.locator("#hot-water-card").screenshot({ path: `${shots}/varmvatten.png` });
     await cards.nth(1).screenshot({ path: `${shots}/varmeplan.png` });
     await page.locator(".grid").first().screenshot({ path: `${shots}/installningar.png` });
@@ -225,6 +251,7 @@ try {
     await page.screenshot({ path: `${shots}/mobil.png` });
     await cards.nth(1).screenshot({ path: `${shots}/mobil-varmeplan.png` });
     await page.locator("#hot-water-card").screenshot({ path: `${shots}/mobil-varmvatten.png` });
+    await page.locator("#learning-card").screenshot({ path: `${shots}/mobil-husmodell.png` });
     await page.setViewportSize({ width: 1440, height: 1100 });
     await page.waitForTimeout(800);
   }
@@ -258,6 +285,7 @@ try {
     await page.screenshot({ path: `${shots}/morkt-lage.png` });
     await page.locator("main > section.card").nth(1).screenshot({ path: `${shots}/morkt-varmeplan.png` });
     await page.locator("#hot-water-card").screenshot({ path: `${shots}/morkt-varmvatten.png` });
+    await page.locator("#learning-card").screenshot({ path: `${shots}/morkt-husmodell.png` });
     await page.setViewportSize({ width: 1440, height: 1100 });
   }
   await page.locator("#theme-toggle").click();

@@ -191,7 +191,9 @@ async function refreshStatus() {
     $("updated").textContent = `Senast avläst: ${checked}${state.wait_seconds ? ` · Nästa ändring tidigast om ${Math.ceil(state.wait_seconds / 60)} min` : ""}`;
     if (state.contributions) {
       const c = state.contributions;
-      $("explanation").textContent = `Bas + rum (${displayNumber(c.room)}) + väder (${displayNumber(c.weather)}) + elpris (${displayNumber(c.price)}) → begränsat mål ${displayNumber(state.desired_offset)}. Nästa steg anpassas till pumpens steglängd och dina gränser.`;
+      const shift = state.target_shift ? `${state.target_shift > 0 ? "Förvärmer före dyrt elpris" : "Dyrt elpris"}: målet är tillfälligt ${displayNumber(settings.target_temperature + state.target_shift)} °C. ` : "";
+      const note = state.preheat?.note ? `${state.preheat.note} ` : "";
+      $("explanation").textContent = `${shift}${note}Bas + rum (${displayNumber(c.room)}) + väder (${displayNumber(c.weather)}) + elpris (${displayNumber(c.price)}) → begränsat mål ${displayNumber(state.desired_offset)}. Nästa steg anpassas till pumpens steglängd och dina gränser.`;
     } else {
       $("explanation").textContent = "Inget aktuellt förslag. Kontrollera inställningarna och statusmeddelandet.";
     }
@@ -277,6 +279,7 @@ async function save(config) {
     void refreshHistory();
     void refreshForecast();
     void refreshPlan();
+    void refreshLearning();
   } catch (error) {
     notice(`Kunde inte spara: ${error.message}`, true);
   } finally {
@@ -809,6 +812,76 @@ async function refreshHotWater() {
   } finally { $("refresh-hot-water").disabled = false; }
 }
 
+function progressRow(label, value, needed, text) {
+  const row = document.createElement("div");
+  row.className = "learn-row";
+  const title = document.createElement("span");
+  title.textContent = label;
+  const bar = document.createElement("div");
+  bar.className = "learn-bar";
+  const fill = document.createElement("i");
+  fill.style.width = `${Math.round(Math.max(0, Math.min(1, value / needed)) * 100)}%`;
+  bar.append(fill);
+  const small = document.createElement("small");
+  small.textContent = text;
+  row.append(title, bar, small);
+  return row;
+}
+
+async function refreshLearning() {
+  $("refresh-learning").disabled = true;
+  try {
+    const data = await api("learning");
+    const model = data.model;
+    const titles = { learning: "Lär sig fortfarande", rough: "Grov bild av huset", good: "Känner huset väl" };
+    $("learn-status").textContent = data.error || (model ? `${titles[model.status]} · uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE")}` : "Ingen modell ännu.");
+    $("learn-message").textContent = model?.message || "";
+    $("learn-message").hidden = !model?.message;
+    $("learn-progress").replaceChildren(...(model ? [
+      progressRow("Mätvärden", model.hours, model.needed_hours, `${displayNumber(model.days)} av 7 dygn`),
+      progressRow("Kurvändringar att lära av", model.changes, model.needed_changes, `${model.changes} av ${model.needed_changes}`),
+    ] : []));
+    const facts = model?.facts;
+    $("learn-facts").replaceChildren(...(facts ? [
+      { label: "Ett steg på kurvan ger", value: `${facts.degrees_per_step >= 0 ? "+" : ""}${displayNumber(facts.degrees_per_step)}`, unit: "°C inne på sikt" },
+      { label: "Halva effekten märks efter", value: `≈ ${displayNumber(facts.half_response_hours)}`, unit: "timmar" },
+      { label: "Efter 3 timmar", value: `${displayNumber(facts.step_after_3h)}`, unit: "°C per steg" },
+    ].map(metric) : []));
+
+    const preheat = data.preheat;
+    const windows = preheat.windows || [];
+    const start = data.now - 24 * 3600, end = data.now + 24 * 3600;
+    const series = [
+      { name: "Inne, medel av rummen (timvis)", points: data.history, color: 0, step: false },
+      { name: "Förutsägelse", points: data.prediction, color: 2, dashed: true, step: false },
+    ].filter((line) => line.points.length);
+    const clock = (stamp) => new Date(stamp * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+    drawChart($("learn-chart"), series, {
+      start, end, now: data.now, integer: false, pad: 0.3,
+      empty: model?.status === "learning" ? "Förutsägelsen visas när modellen har lärt sig tillräckligt." : "Ingen innetemperatur att visa ännu.",
+      guides: [{ value: data.target, label: `Mål ${displayNumber(data.target)}°` }],
+      bands: windows.map((w) => ({ start: w.start, end: w.end, className: w.kind === "preheat" ? "preheat" : "coast",
+        title: `${w.kind === "preheat" ? "Förvärmning" : "Dyrt elpris"} ${clock(w.start)}–${clock(w.end)}` })),
+    });
+    legend($("learn-legend"), series);
+    const items = windows.map((w) => {
+      const item = document.createElement("li");
+      item.className = w.kind === "preheat" ? "preheat" : "coast";
+      const strong = document.createElement("strong");
+      strong.textContent = `${timeLabel(w.start, 86400 * 2)}–${clock(w.end)}: ${w.kind === "preheat" ? `förvärm +${displayNumber(w.shift)}°` : `låt bli ${displayNumber(-w.shift)}° svalare`}`;
+      item.append(strong, ` · elpris ${displayNumber(w.price)}`);
+      return item;
+    });
+    const lead = preheat.lead_hours ? `Förvärmningen börjar ${preheat.lead_hours} timmar före${preheat.lead_source === "learned" ? " (inlärt)" : " (standard tills modellen är säker)"}.` : "";
+    const state = preheat.enabled ? "Förvärmning är på." : "Förvärmning är av – så här skulle den göra:";
+    if (!items.length) items.push(Object.assign(document.createElement("li"), { className: "muted", textContent: preheat.note || "Inga förvärmningar planerade." }));
+    const head = Object.assign(document.createElement("li"), { className: "plan-heading", textContent: `${state} ${lead}`.trim() });
+    $("learn-windows").replaceChildren(head, ...items);
+  } catch (error) {
+    $("learn-status").textContent = `Kunde inte läsa husmodellen: ${error.message}`;
+  } finally { $("refresh-learning").disabled = false; }
+}
+
 const fieldLabels = {
   target_temperature: "Måltemperatur", room_sensors: "Rumsgivare", enabled: "Automatik",
   offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare",
@@ -817,6 +890,7 @@ const fieldLabels = {
   price_low: "Lågprisgräns", price_high: "Högprisgräns", cheap_boost: "Höjning vid lågt pris",
   expensive_reduction: "Sänkning vid högt pris", deadband: "Toleransband",
   min_interval_minutes: "Minsta ändringsintervall", max_step: "Största steg", max_age_minutes: "Högsta mätvärdesålder",
+  preheat_enabled: "Förvärmning", preheat_degrees: "Förvärmning · grader",
 };
 
 function logValue(value) {
@@ -837,7 +911,7 @@ function renderEvents() {
     const data = event.details;
     const lines = [];
     for (const [key, change] of Object.entries(data.changes || {})) lines.push(`${fieldLabels[key] || key}: ${logValue(change.from)} → ${logValue(change.to)}`);
-    if (event.kind === "write_attempt") lines.push(`Förskjutning ${data.previous} → ${data.value}. Rum ${displayNumber(data.indoor)} °C, mål ${displayNumber(data.target_temperature)} °C. Rumspåverkan ${displayNumber(data.contributions.room)}, väder ${displayNumber(data.contributions.weather)}, pris ${displayNumber(data.contributions.price)}.`);
+    if (event.kind === "write_attempt") lines.push(`Förskjutning ${data.previous} → ${data.value}. Rum ${displayNumber(data.indoor)} °C, mål ${displayNumber(data.target_temperature)} °C. Rumspåverkan ${displayNumber(data.contributions.room)}, väder ${displayNumber(data.contributions.weather)}, pris ${displayNumber(data.contributions.price)}.${data.target_shift ? ` Mål tillfälligt ${data.target_shift > 0 ? "+" : ""}${displayNumber(data.target_shift)}° (${data.preheat === "preheat" ? "förvärmning" : "dyrt elpris"}).` : ""}`);
     if (data.requested !== undefined) lines.push(`Begärt: ${data.requested}. Återläst: ${data.observed}.`);
     if (event.kind === "offset_observed") lines.push(`${data.previous} → ${data.value}. ${data.note}`);
     if (data.error) lines.push(data.error);
@@ -919,6 +993,7 @@ async function init() {
   $("history-entity").addEventListener("change", () => { if (historyData) renderHistory(); });
   $("refresh-plan").addEventListener("click", () => void refreshPlan());
   $("refresh-hot-water").addEventListener("click", () => void refreshHotWater());
+  $("refresh-learning").addEventListener("click", () => void refreshLearning());
   $("refresh-events").addEventListener("click", () => void refreshEvents());
   $("older-events").addEventListener("click", () => void refreshEvents(true));
   await refreshStatus();
@@ -927,7 +1002,9 @@ async function init() {
   void refreshForecast();
   void refreshPlan();
   void refreshHotWater();
+  void refreshLearning();
   window.setInterval(refreshStatus, 15000);
+  window.setInterval(refreshLearning, 900000);
   window.setInterval(refreshHotWater, 120000);
   window.setInterval(refreshDashboard, 60000);
   window.setInterval(refreshHistory, 300000);
@@ -942,6 +1019,7 @@ async function init() {
       void refreshHistory();
       void refreshPlan();
       void refreshHotWater();
+      void refreshLearning();
     }, 400);
   });
 }
