@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from controller import ControlError
-from insights import (Insights, actual_changes, curve_points, discover_tibber, fit_curve, history_series, overview,
+from insights import (Insights, charge_periods, draw_offs, hot_water, actual_changes, curve_points, discover_tibber, fit_curve, history_series, overview,
                       planned_offsets, supply_entity, tibber_prices)
 from test_controller import config, entity
 
@@ -366,3 +366,80 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan["offset"]["history"][-1][1], 2)
         self.assertIn("Välj en väderentitet", plan["outdoor"]["error"])
         ha.set_offset.assert_not_called()
+
+
+class HotWaterTests(unittest.TestCase):
+    def setUp(self):
+        self.now = time.time()
+        self.config = config(offset_entity="number.pump_heating_offset_climate_system_1")
+        self.states = [
+            entity(self.config["offset_entity"], 0, self.now),
+            entity("sensor.pump_hot_water_top_bt7", 50.4, self.now, unit_of_measurement="°C"),
+            entity("sensor.pump_hot_water_charging_bt6", 50, self.now, unit_of_measurement="°C"),
+            entity("sensor.pump_hot_water_amount", 12, self.now, unit_of_measurement="min"),
+            entity("select.pump_hot_water_amount", "Normal", self.now),
+            entity("sensor.pump_status", "Hot water", self.now),
+            entity("sensor.other_hot_water_top_bt7", 10, self.now, unit_of_measurement="°C"),
+        ]
+        self.registry = [{"entity_id": s["entity_id"], "platform": "myuplink",
+                          "device_id": "other" if "other" in s["entity_id"] else "pump"} for s in self.states]
+
+    def row(self, entity_id, value, ago):
+        return {"entity_id": entity_id, "state": str(value),
+                "last_changed": datetime.fromtimestamp(self.now - ago, timezone.utc).isoformat()}
+
+    def test_shower_is_found_but_standby_loss_is_not(self):
+        t = self.now - 86400
+        points = [[t, 50.0], [t + 7200, 49.5], [t + 14400, 49.0],  # slow standby loss
+                  [t + 20000, 45.0], [t + 20300, 38.0], [t + 20600, 33.0],  # shower
+                  [t + 30000, 50.0], [t + 50000, 48.0]]  # long gap but single 2 degree step
+        events = draw_offs(points, self.now)
+        self.assertEqual([e["size"] for e in events], ["stor", "liten"])
+        self.assertEqual(events[0]["drop"], 16.0)
+        self.assertEqual(events[0]["start"], t + 20000 - 900)
+
+    def test_charge_periods_join_and_run_until_now(self):
+        rows = [[0, "Heating"], [100, "Hot water"], [400, "Heating"], [900, "Hot water"]]
+        self.assertEqual(charge_periods(rows, 1000), [{"start": 100, "end": 400}, {"start": 900, "end": 1000}])
+
+    def test_level_uses_pump_minutes_and_ignores_other_device(self):
+        groups = {
+            "sensor.pump_hot_water_amount": [self.row("sensor.pump_hot_water_amount", 24, 3600),
+                                             self.row("sensor.pump_hot_water_amount", 12, 600)],
+            "sensor.pump_status": [self.row("sensor.pump_status", "Heating", 3600),
+                                   self.row("sensor.pump_status", "Hot water", 300)],
+        }
+        data = hot_water(self.states, self.registry, self.config, groups, self.now)
+        self.assertIsNone(data["error"])
+        self.assertEqual(data["top"], 50.4)
+        self.assertEqual(data["level_source"], "minutes")
+        self.assertAlmostEqual(data["level"], 0.5)
+        self.assertTrue(data["charging"])
+        self.assertEqual(data["demand"], "Normal")
+        self.assertEqual(len(data["charges"]), 1)
+        self.assertNotIn("other", json_dump(data["entities"]))
+
+    def test_level_falls_back_to_charge_sensor(self):
+        states = [s for s in self.states if s["entity_id"] != "sensor.pump_hot_water_amount"]
+        groups = {"sensor.pump_hot_water_charging_bt6": [self.row("sensor.pump_hot_water_charging_bt6", 55, 3600),
+                                                        self.row("sensor.pump_hot_water_charging_bt6", 50, 600)]}
+        data = hot_water(states, self.registry, self.config, groups, self.now)
+        self.assertEqual(data["level_source"], "charge")
+        self.assertAlmostEqual(data["level"], 25 / 30)
+
+    def test_stale_hot_water_values_are_not_shown(self):
+        old = self.now - 86400
+        states = [entity(s["entity_id"], s["state"], old, **s["attributes"]) for s in self.states]
+        data = hot_water(states, self.registry, self.config, {}, self.now)
+        self.assertIsNone(data["top"])
+        self.assertIsNone(data["charge"])
+        self.assertIsNone(data["charging"])
+
+    def test_missing_pump_gives_swedish_error(self):
+        data = hot_water(self.states, self.registry, config(offset_entity="number.unknown"), {}, self.now)
+        self.assertIn("varmvattengivare", data["error"])
+
+
+def json_dump(value):
+    import json
+    return json.dumps(value)

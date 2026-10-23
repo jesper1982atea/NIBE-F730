@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## 0.2.6
+
+- Nytt kort **Varmvatten** direkt efter värmeplanen. En tank visar ungefär hur
+  mycket varmvatten som finns kvar (pumpens egen uppskattning i minuter, annars
+  laddgivaren BT6), med temperatur i toppen (BT7) och BT6, inställt behov och
+  om pumpen laddar just nu eller när den laddade senast.
+- Statistik över senaste veckan: hur många tappningar, vilka tider på dygnet de
+  brukar ske (stapeldiagram per timme), stora tappningar som dusch eller bad
+  och hur lång tid det tar innan tanken är laddad igen.
+- Graf över tankens temperatur senaste två dygnen med markerade tappningar och
+  skuggade laddningar, samt en lista över de senaste tappningarna.
+- Varmvattennivån visas även på startsidan under de fyra rutorna.
+
 ## 0.2.5
 
 - Enklare startsida. Överst visas bara det viktigaste: **Inne nu**, **Du vill

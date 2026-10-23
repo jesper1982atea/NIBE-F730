@@ -86,6 +86,20 @@ const server = createServer(async (request, response) => {
     curve: { points: Array.from({ length: 60 }, (_, i) => [8 - i / 6, 28 + i / 5 + (i > 40 ? 0 : 1), i > 40 ? 1 : 2]), fit: { slope: -1.2, intercept: 38, min_outdoor: -2, max_outdoor: 8, count: 40, offset: 2 }, current: { outdoor: 1.5, supply: 33 }, forecast_range: [-2, 4], supply_entity: "sensor.x", error: null },
     notes: ["Väder- och elprispåverkan är 0, så planen följer bara rumstemperaturen."],
   };
+  else if (path === "/api/hotwater") {
+    const draws = [6, 5.5, 4.5, 3.5, 2.5, 1.5, 0.5].flatMap((day) => [
+      { start: now - day * 86400 - 3600, end: now - day * 86400 - 2700, from: 50, to: 33, drop: 17, size: "stor" },
+      { start: now - day * 86400 - 20000, end: now - day * 86400 - 19800, from: 50, to: 48, drop: 2, size: "liten" },
+    ]).filter((event) => event.start > now - 7 * 86400).sort((a, b) => a.start - b.start);
+    const charge = [[now - 7 * 86400, 50]];
+    for (const event of draws) charge.push([event.start, event.from], [event.end, event.to], [event.end + 2400, 50]);
+    data = {
+      now, start: now - 7 * 86400, days: 7, entities: {}, top: 50.4, charge: 44, minutes: 14, demand: "Normal", charging: false,
+      level: 0.5, level_source: "minutes", max_minutes: 28,
+      series: { top: [[now - 7 * 86400, 51], [now - 3600, 50.4]], charge, minutes: [[now - 7 * 86400, 28], [now - 3600, 14]] },
+      draw_offs: draws, charges: draws.map((event) => ({ start: event.end + 60, end: event.end + 2400 })), error: null,
+    };
+  }
   else if (path === "/api/events") data = events;
   else if (path === "/api/history") {
     if (failHistory) { response.writeHead(502); response.end('{"error":"Recorder saknas"}'); return; }
@@ -141,6 +155,17 @@ try {
   assert.match(await page.locator("#next-change").textContent(), /^(kl|i morgon) \d\d:\d\d$/);
   assert.match(await page.locator("#next-change-why").textContent(), /Höjer värmen ett steg \(2→3\) · billigt elpris/);
   assert.match(await page.locator("#hero-extra").textContent(), /Elpris nu .* SEK\/kWh \((billigt|normalt|dyrt)\)/);
+  await page.waitForFunction(() => document.getElementById("hw-status").textContent.startsWith("Uppdaterad"));
+  assert.equal(await page.locator("#hot-water-card").evaluate((card) => card.previousElementSibling.querySelector("#plan-changes") !== null), true, "Hot water card follows the plan");
+  assert.equal(await page.locator("#hw-verdict").textContent(), "Varmvattnet räcker bra");
+  assert.match(await page.locator("#hw-tank").textContent(), /50%/);
+  assert.match(await page.locator("#hw-verdict-text").textContent(), /ungefär 14 minuter.*Senast laddat/);
+  assert.match(await page.locator("#hw-pattern").textContent(), /Senaste 7 dygnen: \d+ tappningar .* stora som dusch eller bad\. Stora tappningar sker oftast kl \d\d–\d\d/);
+  assert.equal(await page.locator("#hw-hours rect.hw-bar").count() > 0, true);
+  assert.ok(await page.locator("#hw-chart .chart-event.hw-draw").count() >= 2);
+  assert.ok(await page.locator("#hw-chart .chart-band.hw-charge").count() >= 2);
+  assert.equal(await page.locator("#hw-list li").count(), 8);
+  assert.match(await page.locator("#hero-extra").textContent(), /Varmvatten 50% \(14 min\)/);
   assert.equal(await page.locator("#settings-panel").getAttribute("open"), null, "Configured settings start folded");
   assert.equal(await page.locator("#log-panel").getAttribute("open"), null);
   assert.equal(await page.locator("#save-target").isVisible(), false);
@@ -190,7 +215,8 @@ try {
     const cards = page.locator("main > section.card");
     await page.evaluate(() => { document.querySelector("header").scrollIntoView(); document.scrollingElement.scrollTop = 0; }); await page.waitForTimeout(300);
     await page.screenshot({ path: `${shots}/oversikt.png` });
-    await cards.nth(2).screenshot({ path: `${shots}/temperaturer.png` });
+    await cards.nth(3).screenshot({ path: `${shots}/temperaturer.png` });
+    await page.locator("#hot-water-card").screenshot({ path: `${shots}/varmvatten.png` });
     await cards.nth(1).screenshot({ path: `${shots}/varmeplan.png` });
     await page.locator(".grid").first().screenshot({ path: `${shots}/installningar.png` });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -198,6 +224,7 @@ try {
     await page.evaluate(() => { document.querySelector("header").scrollIntoView(); document.scrollingElement.scrollTop = 0; }); await page.waitForTimeout(300);
     await page.screenshot({ path: `${shots}/mobil.png` });
     await cards.nth(1).screenshot({ path: `${shots}/mobil-varmeplan.png` });
+    await page.locator("#hot-water-card").screenshot({ path: `${shots}/mobil-varmvatten.png` });
     await page.setViewportSize({ width: 1440, height: 1100 });
     await page.waitForTimeout(800);
   }
@@ -230,6 +257,7 @@ try {
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${shots}/morkt-lage.png` });
     await page.locator("main > section.card").nth(1).screenshot({ path: `${shots}/morkt-varmeplan.png` });
+    await page.locator("#hot-water-card").screenshot({ path: `${shots}/morkt-varmvatten.png` });
     await page.setViewportSize({ width: 1440, height: 1100 });
   }
   await page.locator("#theme-toggle").click();

@@ -68,6 +68,8 @@ def handler_for(controller, api_token=None):
                     self.respond(200, controller.ha.discover())
                 elif path == "/api/overview":
                     self.respond(200, insights.overview(controller.settings()))
+                elif path == "/api/hotwater":
+                    self.respond(200, insights.hot_water(controller.settings()))
                 elif path == "/api/history":
                     self.respond(200, insights.history(controller.settings()))
                 elif path == "/api/forecast":

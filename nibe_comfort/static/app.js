@@ -19,6 +19,11 @@ let discoveryError = "";
 let dashboardBusy = false;
 let eventRows = [];
 let lastStatus = null;
+const heroParts = { plan: [], hotWater: "" };
+
+function renderHeroExtra() {
+  $("hero-extra").textContent = [...heroParts.plan, heroParts.hotWater].filter(Boolean).join(" · ");
+}
 const SVG = "http://www.w3.org/2000/svg";
 
 function notice(message, error = false) {
@@ -253,7 +258,8 @@ function renderSummary(data) {
   }
   const offsetNow = lastStatus?.current_offset;
   if (typeof offsetNow === "number") extra.push(`Värmekurvans förskjutning ${displayNumber(offsetNow)}`);
-  $("hero-extra").textContent = extra.join(" · ");
+  heroParts.plan = extra;
+  renderHeroExtra();
 }
 
 async function save(config) {
@@ -313,7 +319,7 @@ function chartWidth(container) {
 const signed = (from, to) => `${to > from ? "▲" : "▼"} ${displayNumber(from)}→${displayNumber(to)}`;
 
 function drawChart(container, series, options) {
-  const { start, end, unit = "°", now = null, guides = [], markers = [], label } = options;
+  const { start, end, unit = "°", now = null, guides = [], markers = [], bands = [], label } = options;
   container.replaceChildren();
   const values = series.flatMap((line) => line.points.filter((point) => point[1] !== null).map((point) => point[1]));
   if (!values.length) {
@@ -341,6 +347,12 @@ function drawChart(container, series, options) {
     const time = start + (end - start) * index / ticks;
     svg.append(svgElement("text", { x: x(time), y: height - 9, "text-anchor": index === 0 ? "start" : index === ticks ? "end" : "middle" },
       timeLabel(time, end - start)));
+  }
+  for (const band of bands) {
+    if (band.end < start || band.start > end) continue;
+    const rect = svgElement("rect", { x: x(band.start), y: top, width: Math.max(2, x(band.end) - x(band.start)), height: height - top - bottom, class: `chart-band ${band.className || ""}` });
+    if (band.title) rect.append(svgElement("title", {}, band.title));
+    svg.append(rect);
   }
   for (const guide of guides) {
     svg.append(svgElement("line", { x1: left, x2: width - right, y1: y(guide.value), y2: y(guide.value), class: `chart-target ${guide.className || ""}` }));
@@ -643,6 +655,160 @@ async function refreshPlan() {
   } finally { $("refresh-plan").disabled = false; }
 }
 
+const hourRange = (from, to) => `${String(from).padStart(2, "0")}–${String((to + 1) % 24).padStart(2, "0")}`;
+
+// Hours that together hold most events, merged into readable ranges like "05–07".
+function busyHours(events) {
+  const counts = Array(24).fill(0);
+  for (const event of events) counts[new Date(event.start * 1000).getHours()]++;
+  const threshold = Math.max(2, Math.max(...counts) / 2);
+  const ranges = [];
+  for (let hour = 0; hour < 24; hour++) {
+    if (counts[hour] < threshold && !(counts[hour] && (counts[hour - 1] >= threshold || counts[hour + 1] >= threshold))) continue;
+    const last = ranges.at(-1);
+    if (last && last[1] === hour - 1) last[1] = hour; else ranges.push([hour, hour]);
+  }
+  return ranges.map(([from, to]) => hourRange(from, to));
+}
+
+function drawTank(container, data) {
+  container.replaceChildren();
+  const width = 130, height = 230, inner = { x: 22, y: 26, w: 86, h: 182 };
+  const svg = svgElement("svg", { viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true" });
+  svg.append(svgElement("rect", { x: inner.x - 6, y: inner.y - 8, width: inner.w + 12, height: inner.h + 16, rx: 26, class: "hw-shell" }));
+  const level = typeof data.level === "number" ? data.level : null;
+  const clip = svgElement("clipPath", { id: "hw-clip" });
+  clip.append(svgElement("rect", { x: inner.x, y: inner.y, width: inner.w, height: inner.h, rx: 20 }));
+  svg.append(clip);
+  svg.append(svgElement("rect", { x: inner.x, y: inner.y, width: inner.w, height: inner.h, rx: 20, class: "hw-empty" }));
+  if (level !== null) {
+    const fill = inner.h * level;
+    const tone = level >= 0.5 ? "hw-hot" : level >= 0.25 ? "hw-warm" : "hw-cold";
+    svg.append(svgElement("rect", { x: inner.x, y: inner.y + inner.h - fill, width: inner.w, height: fill, class: `hw-fill ${tone}`, "clip-path": "url(#hw-clip)" }));
+    svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h / 2 + 8, "text-anchor": "middle", class: "hw-percent" }, `${Math.round(level * 100)}%`));
+  } else {
+    svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h / 2 + 6, "text-anchor": "middle", class: "hw-percent small" }, "okänt"));
+  }
+  if (typeof data.top === "number") svg.append(svgElement("text", { x: width / 2, y: inner.y + 22, "text-anchor": "middle", class: "hw-label" }, `topp ${displayNumber(data.top)}°`));
+  if (typeof data.charge === "number") svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h - 14, "text-anchor": "middle", class: "hw-label" }, `BT6 ${displayNumber(data.charge)}°`));
+  if (data.charging) svg.append(svgElement("text", { x: width / 2, y: 16, "text-anchor": "middle", class: "hw-charging" }, "⚡ laddar"));
+  container.append(svg);
+}
+
+function drawHourBars(container, events) {
+  container.replaceChildren();
+  if (!events.length) { container.textContent = "Inga tappningar hittades senaste veckan."; return; }
+  const big = Array(24).fill(0), small = Array(24).fill(0);
+  for (const event of events) (event.size === "stor" ? big : small)[new Date(event.start * 1000).getHours()]++;
+  const maximum = Math.max(1, ...big.map((value, hour) => value + small[hour]));
+  const width = chartWidth(container), narrow = width < 520, height = narrow ? 150 : 170;
+  const left = narrow ? 26 : 32, right = 6, top = 10, bottom = 24;
+  const slot = (width - left - right) / 24, bar = Math.max(3, slot - (narrow ? 2 : 4));
+  const y = (value) => top + (1 - value / maximum) * (height - top - bottom);
+  const svg = svgElement("svg", { viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true" });
+  for (const value of [0, maximum]) {
+    svg.append(svgElement("line", { x1: left, x2: width - right, y1: y(value), y2: y(value), class: "chart-grid" }));
+    svg.append(svgElement("text", { x: left - 5, y: y(value) + 4, "text-anchor": "end" }, String(value)));
+  }
+  for (let hour = 0; hour < 24; hour++) {
+    const x = left + hour * slot + (slot - bar) / 2;
+    if (small[hour]) svg.append(svgElement("rect", { x, y: y(small[hour] + big[hour]), width: bar, height: y(big[hour]) - y(small[hour] + big[hour]), rx: 2, class: "hw-bar small" }));
+    if (big[hour]) svg.append(svgElement("rect", { x, y: y(big[hour]), width: bar, height: y(0) - y(big[hour]), rx: 2, class: "hw-bar big" }));
+    const total = big[hour] + small[hour];
+    if (total) svg.lastChild.append(svgElement("title", {}, `kl ${hourRange(hour, hour)}: ${total} tappningar`));
+    if (hour % (narrow ? 6 : 3) === 0) svg.append(svgElement("text", { x: left + hour * slot + slot / 2, y: height - 7, "text-anchor": "middle" }, String(hour).padStart(2, "0")));
+  }
+  container.append(svg);
+}
+
+async function refreshHotWater() {
+  $("refresh-hot-water").disabled = true;
+  try {
+    const data = await api("hotwater");
+    if (data.error) {
+      $("hw-status").textContent = data.error;
+      for (const id of ["hw-tank", "hw-metrics", "hw-hours", "hw-chart", "hw-legend", "hw-list"]) $(id).replaceChildren();
+      $("hw-verdict").textContent = "Varmvatten saknas";
+      $("hw-verdict-text").textContent = $("hw-pattern").textContent = "";
+      heroParts.hotWater = "";
+      renderHeroExtra();
+      return;
+    }
+    drawTank($("hw-tank"), data);
+    const level = data.level;
+    const verdict = level === null ? "Nivån går inte att bedöma" : level >= 0.8 ? "Gott om varmvatten"
+      : level >= 0.5 ? "Varmvattnet räcker bra" : level >= 0.25 ? "Varmvattnet börjar ta slut" : "Nästan slut på varmvatten";
+    $("hw-verdict").textContent = verdict;
+    const charges = data.charges || [];
+    const lastCharge = charges.filter((charge) => charge.end < data.now - 60).at(-1);
+    const clock = (stamp) => timeLabel(stamp, 86400 * 2);
+    const facts = [];
+    if (data.level_source === "minutes") facts.push(`Pumpen uppskattar ungefär ${displayNumber(data.minutes)} minuter varmvatten kvar (fullt brukar vara ${displayNumber(data.max_minutes)}).`);
+    else if (data.level_source === "charge") facts.push(`Bedömt från laddgivaren BT6 (${displayNumber(data.charge)} °C) jämfört med hur varm tanken brukar bli.`);
+    facts.push(data.charging ? "Pumpen laddar varmvatten just nu." : lastCharge ? `Senast laddat ${clock(lastCharge.end)}.` : "");
+    if (!data.charging && level !== null && level < 0.35) facts.push("Pumpen brukar börja ladda när det behövs.");
+    $("hw-verdict-text").textContent = facts.filter(Boolean).join(" ");
+    const metrics = [
+      { label: "Toppen (BT7)", value: typeof data.top === "number" ? displayNumber(data.top) : null, unit: "°C" },
+      { label: "Laddgivare (BT6)", value: typeof data.charge === "number" ? displayNumber(data.charge) : null, unit: "°C" },
+      { label: "Kvar enligt pumpen", value: typeof data.minutes === "number" ? displayNumber(data.minutes) : null, unit: "min" },
+      { label: "Inställt behov", value: data.demand ?? null, unit: "" },
+    ].filter((item) => item.value !== null);
+    $("hw-metrics").replaceChildren(...metrics.map(metric));
+    heroParts.hotWater = level === null ? "" : `Varmvatten ${Math.round(level * 100)}%${typeof data.minutes === "number" ? ` (${displayNumber(data.minutes)} min)` : ""}`;
+    renderHeroExtra();
+
+    const events = data.draw_offs || [];
+    const days = data.days || 7;
+    const bigOnes = events.filter((event) => event.size === "stor");
+    const pattern = [];
+    if (events.length) {
+      pattern.push(`Senaste ${days} dygnen: ${events.length} tappningar (cirka ${displayNumber(Math.round(events.length / days * 10) / 10)} per dygn), varav ${bigOnes.length} stora som dusch eller bad.`);
+      const bigHours = busyHours(bigOnes);
+      if (bigHours.length) pattern.push(`Stora tappningar sker oftast kl ${bigHours.join(" och ")}.`);
+      const allHours = busyHours(events);
+      if (allHours.length && allHours.join() !== bigHours.join()) pattern.push(`Alla tappningar: oftast kl ${allHours.join(", ")}.`);
+      const recovery = bigOnes.map((event) => charges.find((charge) => charge.end > event.end && charge.start - event.end < 4 * 3600))
+        .map((charge, index) => charge && (charge.end - bigOnes[index].end) / 60).filter((value) => value > 0).sort((a, b) => a - b);
+      if (recovery.length) pattern.push(`Efter en stor tappning är tanken normalt laddad igen inom ungefär ${Math.round(recovery[Math.floor(recovery.length / 2)])} minuter.`);
+    } else {
+      pattern.push(`Inga tydliga tappningar hittades senaste ${days} dygnen.`);
+    }
+    if (charges.length) pattern.push(`Pumpen laddade varmvatten ${charges.length} gånger (cirka ${displayNumber(Math.round(charges.length / days * 10) / 10)} per dygn).`);
+    $("hw-pattern").textContent = pattern.join(" ");
+    drawHourBars($("hw-hours"), events);
+
+    const start = data.now - 2 * 86400;
+    const clip = (points) => points.filter((point, index) => point[0] >= start || points[index + 1]?.[0] > start).map(([t, v]) => [Math.max(start, t), v]);
+    const series = [
+      { name: "Toppen (BT7)", points: clip(data.series.top || []), until: data.now, color: 1 },
+      { name: "Laddgivare (BT6)", points: clip(data.series.charge || []), until: data.now, color: 4 },
+    ].filter((line) => line.points.length);
+    const shortTime = (stamp) => new Date(stamp * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+    drawChart($("hw-chart"), series, {
+      start, end: data.now, now: data.now, empty: "Ingen historik för varmvattnet.",
+      bands: charges.map((charge) => ({ start: charge.start, end: charge.end, className: "hw-charge", title: `Laddar ${shortTime(charge.start)}–${shortTime(charge.end)}` })),
+      markers: events.filter((event) => event.drop >= 4).map((event) => ({
+        time: event.start, className: "hw-draw", label: `${shortTime(event.start)} −${displayNumber(event.drop)}°`, short: `−${Math.round(event.drop)}°`,
+        title: `${event.size} tappning: BT6 ${displayNumber(event.from)} → ${displayNumber(event.to)} °C`,
+      })),
+    });
+    legend($("hw-legend"), series);
+    const recent = events.slice(-8).reverse();
+    $("hw-list").replaceChildren(...(recent.length ? recent.map((event) => {
+      const item = document.createElement("li");
+      item.className = `hw-${event.size === "stor" ? "big" : "small"}`;
+      const strong = document.createElement("strong");
+      strong.textContent = `${timeLabel(event.start, 86400 * 2)}: ${event.size} tappning`;
+      item.append(strong, ` · BT6 ${displayNumber(event.from)} → ${displayNumber(event.to)} °C`);
+      return item;
+    }) : [Object.assign(document.createElement("li"), { className: "muted", textContent: "Inga tappningar hittade." })]));
+    $("hw-status").textContent = `Uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE")}. Bedömningen bygger på pumpens givare och är ungefärlig.`;
+  } catch (error) {
+    $("hw-status").textContent = `Kunde inte läsa varmvattnet: ${error.message}`;
+  } finally { $("refresh-hot-water").disabled = false; }
+}
+
 const fieldLabels = {
   target_temperature: "Måltemperatur", room_sensors: "Rumsgivare", enabled: "Automatik",
   offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare",
@@ -752,6 +918,7 @@ async function init() {
   $("refresh-history").addEventListener("click", () => void refreshHistory());
   $("history-entity").addEventListener("change", () => { if (historyData) renderHistory(); });
   $("refresh-plan").addEventListener("click", () => void refreshPlan());
+  $("refresh-hot-water").addEventListener("click", () => void refreshHotWater());
   $("refresh-events").addEventListener("click", () => void refreshEvents());
   $("older-events").addEventListener("click", () => void refreshEvents(true));
   await refreshStatus();
@@ -759,7 +926,9 @@ async function init() {
   void refreshHistory();
   void refreshForecast();
   void refreshPlan();
+  void refreshHotWater();
   window.setInterval(refreshStatus, 15000);
+  window.setInterval(refreshHotWater, 120000);
   window.setInterval(refreshDashboard, 60000);
   window.setInterval(refreshHistory, 300000);
   window.setInterval(refreshForecast, 1800000);
@@ -772,6 +941,7 @@ async function init() {
       lastWidth = window.innerWidth;
       void refreshHistory();
       void refreshPlan();
+      void refreshHotWater();
     }, 400);
   });
 }

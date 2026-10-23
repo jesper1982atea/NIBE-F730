@@ -20,9 +20,13 @@ skrivförsök sparas i en beständig ändringslogg.
 | --- | --- | --- |
 | ![Temperaturgraf med uppmätt och inställd temperatur](docs/screenshots/temperaturer.png) | ![Måltemperatur, rumsgivare, väder och elpris](docs/screenshots/installningar.png) | ![Mobilvy i Home Assistant-appen](docs/screenshots/mobil.png) |
 
-| Mörkt läge (följer Home Assistant) | Värmeplan i mörkt läge |
+| Varmvatten | Varmvatten på mobil |
 | --- | --- |
-| ![Översikt i mörkt läge](docs/screenshots/morkt-lage.png) | ![Värmeplan i mörkt läge](docs/screenshots/morkt-varmeplan.png) |
+| ![Varmvattentank med nivå, tappningar per timme och tankens temperatur](docs/screenshots/varmvatten.png) | ![Varmvatten i mobilvy](docs/screenshots/mobil-varmvatten.png) |
+
+| Mörkt läge (följer Home Assistant) | Värmeplan i mörkt läge | Varmvatten i mörkt läge |
+| --- | --- | --- |
+| ![Översikt i mörkt läge](docs/screenshots/morkt-lage.png) | ![Värmeplan i mörkt läge](docs/screenshots/morkt-varmeplan.png) | ![Varmvatten i mörkt läge](docs/screenshots/morkt-varmvatten.png) |
 
 Skärmbilderna är tagna med testdata.
 
@@ -93,7 +97,7 @@ npm run screenshots  # uppdaterar docs/screenshots
 
 1. Höj `version` i `nibe_comfort/config.yaml` och skriv i
    `nibe_comfort/CHANGELOG.md`.
-2. Skapa och pusha en tagg: `git tag v0.2.5 && git push origin v0.2.5`.
+2. Skapa och pusha en tagg: `git tag v0.2.6 && git push origin v0.2.6`.
 3. GitHub Actions testar, bygger `nibe_comfort-<version>.zip` och skapar en
    release med zip-filen och installationsinstruktioner.
 
