@@ -14,7 +14,7 @@ skrivförsök sparas i en beständig ändringslogg.
 
 | Översikt | Värmeplan med justeringar |
 | --- | --- |
-| ![Översikt med temperatur, pumpstatus och el](docs/screenshots/oversikt.png) | ![Värmeplan med utetemperatur, elpris och planerade justeringar](docs/screenshots/varmeplan.png) |
+| ![Startsida med inne, önskad, ute och nästa justering](docs/screenshots/oversikt.png) | ![Värmeplan med utetemperatur, elpris och planerade justeringar](docs/screenshots/varmeplan.png) |
 
 | Temperatur per rum | Inställningar | Mobil |
 | --- | --- | --- |
@@ -93,7 +93,7 @@ npm run screenshots  # uppdaterar docs/screenshots
 
 1. Höj `version` i `nibe_comfort/config.yaml` och skriv i
    `nibe_comfort/CHANGELOG.md`.
-2. Skapa och pusha en tagg: `git tag v0.2.4 && git push origin v0.2.4`.
+2. Skapa och pusha en tagg: `git tag v0.2.5 && git push origin v0.2.5`.
 3. GitHub Actions testar, bygger `nibe_comfort-<version>.zip` och skapar en
    release med zip-filen och installationsinstruktioner.
 

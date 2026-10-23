@@ -133,6 +133,21 @@ try {
   assert.match(changes, /Gjorda ändringar.*▼ 3→2 · automatik \(rum -1\)/);
   assert.match(changes, /▲ 2→3 · manuell eller annan automation/);
   assert.match(await page.locator("#plan-curve-status").textContent(), /0 °C ute/);
+  // Simple summary first: inside, wanted, outside and next adjustment.
+  assert.notEqual(await page.locator("#indoor").textContent(), "—");
+  assert.match(await page.locator("#indoor-diff").textContent(), /(under|över) det du vill ha|Precis/);
+  assert.match(await page.locator("#outdoor-now").textContent(), /^\d/);
+  assert.match(await page.locator("#outdoor-forecast").textContent(), /Närmaste dygnet .* °C · kallast/);
+  assert.match(await page.locator("#next-change").textContent(), /^(kl|i morgon) \d\d:\d\d$/);
+  assert.match(await page.locator("#next-change-why").textContent(), /Höjer värmen ett steg \(2→3\) · billigt elpris/);
+  assert.match(await page.locator("#hero-extra").textContent(), /Elpris nu .* SEK\/kWh \((billigt|normalt|dyrt)\)/);
+  assert.equal(await page.locator("#settings-panel").getAttribute("open"), null, "Configured settings start folded");
+  assert.equal(await page.locator("#log-panel").getAttribute("open"), null);
+  assert.equal(await page.locator("#save-target").isVisible(), false);
+  await page.locator("#target-up").click();
+  assert.equal(await page.locator("#save-target").isVisible(), true);
+  await page.locator("#target-down").click();
+  assert.equal(await page.locator("#save-target").isVisible(), false);
   assert.equal(await page.locator("#enabled").isChecked(), true);
   assert.equal(await page.locator("#price_entity").inputValue(), price);
   assert.equal(await page.locator("#manual-price").getAttribute("open"), null);
@@ -145,6 +160,8 @@ try {
   assert.match(await page.locator("#electricity-note").textContent(), /hela huset/);
   assert.match(await page.locator("#events-list").textContent(), /Förskjutning 3 → 2/);
   assert.match(await page.locator("#events-list").textContent(), /Automatik: av → på/);
+  await page.locator("#settings-panel > summary").click();
+  await page.locator("#log-panel > summary").click();
   const climateInput = page.locator(`#room_sensors input[value="${thermostat}"]`);
   assert.equal(await climateInput.count(), 1);
   assert.match(await climateInput.locator("..").textContent(), /22,2 °C/);
@@ -174,13 +191,13 @@ try {
     await page.evaluate(() => { document.querySelector("header").scrollIntoView(); document.scrollingElement.scrollTop = 0; }); await page.waitForTimeout(300);
     await page.screenshot({ path: `${shots}/oversikt.png` });
     await cards.nth(2).screenshot({ path: `${shots}/temperaturer.png` });
-    await cards.nth(3).screenshot({ path: `${shots}/varmeplan.png` });
+    await cards.nth(1).screenshot({ path: `${shots}/varmeplan.png` });
     await page.locator(".grid").first().screenshot({ path: `${shots}/installningar.png` });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(1200);
     await page.evaluate(() => { document.querySelector("header").scrollIntoView(); document.scrollingElement.scrollTop = 0; }); await page.waitForTimeout(300);
     await page.screenshot({ path: `${shots}/mobil.png` });
-    await cards.nth(3).screenshot({ path: `${shots}/mobil-varmeplan.png` });
+    await cards.nth(1).screenshot({ path: `${shots}/mobil-varmeplan.png` });
     await page.setViewportSize({ width: 1440, height: 1100 });
     await page.waitForTimeout(800);
   }
@@ -212,7 +229,7 @@ try {
     await page.evaluate(() => { document.querySelector("header").scrollIntoView(); document.scrollingElement.scrollTop = 0; });
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${shots}/morkt-lage.png` });
-    await page.locator("main > section.card").nth(3).screenshot({ path: `${shots}/morkt-varmeplan.png` });
+    await page.locator("main > section.card").nth(1).screenshot({ path: `${shots}/morkt-varmeplan.png` });
     await page.setViewportSize({ width: 1440, height: 1100 });
   }
   await page.locator("#theme-toggle").click();
