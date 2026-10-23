@@ -1,0 +1,8 @@
+configuration:
+  api_token:
+    name: API-nyckel
+    description: >-
+      Valfri. Krävs bara om du vill använda det lokala REST-API:t på port 8099.
+      Lämna tom för att använda tillägget enbart via sidopanelen.
+network:
+  8099/tcp: Valfritt lokalt REST-API (kräver API-nyckel)

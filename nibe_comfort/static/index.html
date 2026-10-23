@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NIBE Comfort</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <header>
+    <div><span class="eyebrow">DIN VÄRME, BEGRIPLIG</span><h1>NIBE <span>Comfort</span></h1></div>
+    <span id="mode" class="badge">Ansluter…</span>
+  </header>
+  <main>
+    <div id="notice" role="status" hidden></div>
+    <section class="hero card">
+      <div>
+        <span class="eyebrow">HEMMA JUST NU</span>
+        <div class="temperature"><span id="indoor">—</span><small>°C</small></div>
+        <p>Medeltemperatur från dina valda rumsgivare.</p>
+      </div>
+      <div class="hero-status"><h2 id="status-title">Välkommen till enklare värme</h2><p id="status-message">Välj givare och ställ in din måltemperatur nedan.</p><p id="updated" class="muted"></p></div>
+    </section>
+
+    <section class="card dashboard">
+      <span class="section-number">PUMPEN JUST NU</span>
+      <h2>Värme, drift och el</h2>
+      <p id="overview-status" role="status">Hämtar pumpstatus…</p>
+      <div id="pump-metrics" class="live-grid"></div>
+      <h3>Elförbrukning</h3>
+      <div id="electricity-metrics" class="live-grid"></div>
+      <p id="electricity-note" class="hint"></p>
+      <p class="hint">Värden rapporterade via Home Assistant. Saknade eller gamla uppgifter visas inte som noll eller ”av”.</p>
+    </section>
+
+    <section class="card dashboard">
+      <div class="section-heading"><div><span class="section-number">SENASTE DYGNET</span><h2>Temperaturen över tid</h2></div><button type="button" id="refresh-history" class="secondary">Uppdatera graf</button></div>
+      <label for="history-entity">Visa</label>
+      <select id="history-entity" class="compact-select"><option value="">Alla rum</option></select>
+      <p id="history-status" role="status">Hämtar temperaturhistorik…</p>
+      <div id="temperature-chart" class="chart" role="img" aria-label="Rumstemperaturer under senaste dygnet"></div>
+      <div id="temperature-legend" class="chart-legend"></div>
+      <p class="hint">Välj ett rum för att se det ensamt. För golvvärme och termostater visas både uppmätt temperatur (heldragen) och vad termostaten är inställd att värma till (streckad). Givare rapporterar bara när värdet ändras, så ett värde gäller tills nästa rapport. Luckor betyder att givaren var otillgänglig.</p>
+      <details><summary>Visa mätpunkter som tabell</summary><div id="history-table" class="table-scroll"></div></details>
+    </section>
+
+    <section class="card dashboard">
+      <div class="section-heading"><div><span class="section-number">IGÅR, I DAG OCH I MORGON</span><h2>Värmeplan · väder och elpris</h2></div><button type="button" id="refresh-plan" class="secondary">Uppdatera plan</button></div>
+      <p id="plan-status" role="status">Hämtar värmeplan…</p>
+      <p id="plan-notes" class="explanation"></p>
+      <h3>Utetemperatur</h3>
+      <div id="plan-outdoor" class="chart" role="img" aria-label="Utetemperatur senaste dygnet och prognos"></div>
+      <div id="plan-outdoor-legend" class="chart-legend"></div>
+      <p id="plan-outdoor-status" class="hint"></p>
+      <h3>Elpris</h3>
+      <div id="plan-price" class="chart" role="img" aria-label="Elpris per kvart"></div>
+      <div id="plan-price-legend" class="chart-legend"></div>
+      <p id="plan-price-status" class="hint"></p>
+      <h3>Kurvförskjutning · faktisk och planerad</h3>
+      <div id="plan-offset" class="chart" role="img" aria-label="Kurvförskjutning historik och plan"></div>
+      <div id="plan-offset-legend" class="chart-legend"></div>
+      <p class="hint chart-key"><span class="key planned">Streckad lila</span> = kommande justering, <span class="key done-auto">grön</span> = ändrad av automatiken, <span class="key done-other">orange</span> = ändrad manuellt eller av annan automation. ▲ höjning, ▼ sänkning.</p>
+      <h3>Justeringar</h3>
+      <ul id="plan-changes" class="plan-changes"></ul>
+      <h3>Värmekurvan som den är inställd nu</h3>
+      <p class="hint">Uppskattad från pumpens egen beräknade framledning de senaste 7 dygnen. Gröna punkter och linjen gäller nuvarande förskjutning, grå punkter andra förskjutningar. Stor ring = just nu. Det skuggade fältet är utetemperaturen i prognosen.</p>
+      <div id="plan-curve" class="chart" role="img" aria-label="Framledningstemperatur mot utetemperatur"></div>
+      <p id="plan-curve-status" class="hint"></p>
+    </section>
+
+    <form id="settings">
+      <div class="grid">
+        <section class="card">
+          <span class="section-number">01 / KOMFORT</span>
+          <h2>Hur varmt vill du ha?</h2>
+          <p>Pumpens grundkurva finns kvar. Vi justerar förskjutningen försiktigt för att närma oss din måltemperatur.</p>
+          <label for="target_temperature">Önskad inomhustemperatur · °C</label>
+          <div class="target-control">
+            <button type="button" id="target-down" aria-label="Sänk måltemperaturen">−</button>
+            <input id="target_temperature" name="target_temperature" type="number" min="10" max="30" step="0.1" required>
+            <button type="button" id="target-up" aria-label="Höj måltemperaturen">+</button>
+          </div>
+          <label for="room_sensors">Rumsgivare</label>
+          <p class="hint" id="room-help">Markera de rum som ska påverka värmen. Även golvvärme (climate) kan väljas: vi läser uppmätt temperatur, inte termostatens börvärde. Undvik att välja både en termostat och dess separata givare för samma rum. Alla val väger lika.</p>
+          <div id="room_sensors" class="sensor-list" role="group" aria-describedby="room-help"></div>
+        </section>
+
+        <section class="card">
+          <span class="section-number">02 / ANSLUTNING</span>
+          <h2>Din värmepump</h2>
+          <p>Använder myUplink via Home Assistant. Du behöver inte lämna ut ditt myUplink-lösenord.</p>
+          <p id="discovery-message" role="status">Letar efter din NIBE-pump…</p>
+          <p id="pump-connection" class="explanation"></p>
+          <details id="manual-pump">
+            <summary>Ändra pumpanslutning manuellt</summary>
+            <label for="offset_entity">Entitet för kurvförskjutning</label>
+            <select id="offset_entity" name="offset_entity"></select>
+            <p class="hint warning">Välj bara värmekurvans förskjutning, inte grundkurva eller annan pumpinställning. Vid automatisk upptäckt används NIBEs klimatsystem 1.</p>
+          </details>
+          <p id="offset-details" class="hint"></p>
+          <div class="metrics">
+            <div><span>Nuvarande förskjutning</span><strong id="current-offset">—</strong></div>
+            <div><span>Beräknat mål</span><strong id="desired-offset">—</strong></div>
+            <div><span>Nästa steg</span><strong id="next-offset">—</strong></div>
+          </div>
+          <div class="explanation" id="explanation">När givarna är valda visas hur rum, väder och elpris påverkar förslaget.</div>
+        </section>
+
+        <section class="card">
+          <span class="section-number">03 / VÄDER</span>
+          <h2>Ta hänsyn till kylan</h2>
+          <p>Valfri extra kompensation från aktuell utetemperatur. Pumpens grundkurva kompenserar redan för väder, så börja med påverkan 0.</p>
+          <p id="outdoor-connection" class="explanation"></p>
+          <details id="manual-outdoor">
+            <summary>Ändra utegivare manuellt</summary>
+            <label for="outdoor_entity">Utomhusgivare eller väderentitet</label>
+            <select id="outdoor_entity" name="outdoor_entity"></select>
+          </details>
+          <div class="field-pair">
+            <div><label for="weather_gain">Påverkan · steg/°C</label><input id="weather_gain" name="weather_gain" type="number" min="0" max="0.5" step="0.01" required></div>
+            <div><label for="weather_reference">Referenstemperatur · °C</label><input id="weather_reference" name="weather_reference" type="number" min="-30" max="30" step="0.1" required></div>
+          </div>
+          <p class="hint">Kallare än referensen höjer förskjutningen; varmare sänker den. Använder aktuellt väder, inte prognos.</p>
+          <h3>Väderprognos</h3>
+          <label for="forecast_entity">Prognoskälla</label>
+          <select id="forecast_entity" name="forecast_entity"></select>
+          <p id="forecast-status" role="status">Hämtar prognos…</p>
+          <div id="forecast-chart" class="chart" role="img" aria-label="Prognos för utetemperaturen"></div>
+          <div id="forecast-points" class="forecast-list"></div>
+          <p id="forecast-note" class="hint"></p>
+        </section>
+
+        <section class="card">
+          <span class="section-number">04 / ELPRIS</span>
+          <h2>Flytta värme till billigare tid</h2>
+          <p>Välj exempelvis en givare för aktuellt Nord Pool-pris. Sätt påverkan till 0 för att stänga av.</p>
+          <p id="price-discovery" role="status"></p>
+          <details id="manual-price">
+            <summary>Ändra elprisgivare manuellt</summary>
+            <label for="price_entity">Elprisgivare · aktuellt pris</label>
+            <select id="price_entity" name="price_entity"></select>
+          </details>
+          <p id="price-unit" class="hint"></p>
+          <div class="field-pair">
+            <div><label for="price_low">Billigt vid eller under</label><input id="price_low" name="price_low" type="number" min="-10000" max="10000" step="any" required></div>
+            <div><label for="price_high">Dyrt vid eller över</label><input id="price_high" name="price_high" type="number" min="-10000" max="10000" step="any" required></div>
+            <div><label for="cheap_boost">Höjning vid lågt pris · steg</label><input id="cheap_boost" name="cheap_boost" type="number" min="0" max="3" step="0.1" required></div>
+            <div><label for="expensive_reduction">Sänkning vid högt pris · steg</label><input id="expensive_reduction" name="expensive_reduction" type="number" min="0" max="3" step="0.1" required></div>
+          </div>
+          <p class="hint">Prisgränser anges i givarens enhet, utan omräkning. Elpriset får inte sänka värmen när hemmet redan är för kallt eller höja den när det är för varmt. Detta är inte prognosbaserad schemaläggning.</p>
+        </section>
+      </div>
+
+      <section class="card advanced">
+        <details>
+          <summary>Säkerhet och finjustering</summary>
+          <p>En förskjutningsenhet är inte samma sak som en grads rumstemperatur. Golvvärme och radiatorer reagerar långsamt. Ändra lite och följ resultatet över tid.</p>
+          <div class="advanced-grid" id="advanced-fields"></div>
+        </details>
+      </section>
+      <section class="card actions">
+        <div><label class="toggle"><input type="checkbox" id="enabled" name="enabled"> Aktivera automatisk styrning</label><p class="hint">Avmarkerat = övervakning. Att stänga av återställer inte pumpens senaste förskjutning.</p></div>
+        <div class="buttons"><button id="pause" type="button" class="secondary">Stoppa automatiken</button><button id="save" type="submit">Spara inställningar</button></div>
+      </section>
+    </form>
+    <section class="card dashboard">
+      <div class="section-heading"><div><span class="section-number">SPÅRBAR STYRNING</span><h2>Ändringslogg</h2></div><button type="button" id="refresh-events" class="secondary">Uppdatera logg</button></div>
+      <p>Se inställningsändringar, automatiska styrförsök, fel och återlästa värden. Ett accepterat serviceanrop är inte samma sak som en bekräftad ändring på pumpen.</p>
+      <p id="events-status" role="status">Hämtar ändringslogg…</p>
+      <div id="events-list" class="events-list"></div>
+      <button type="button" id="older-events" class="secondary" hidden>Visa äldre händelser</button>
+      <p class="hint">Loggen sparas lokalt och överlever omstart. Händelser före denna uppdatering kan inte återskapas. Manuella ändringar på pumpen kan upptäckas vid nästa avläsning men deras upphov kan inte fastställas.</p>
+    </section>
+    <footer>Via Home Assistant · Avläsning varje minut · Pumpens egna skydd och reglering är alltid kvar.</footer>
+  </main>
+</body>
+</html>

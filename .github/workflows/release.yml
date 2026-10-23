@@ -1,0 +1,58 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test
+        run: python -m unittest discover -s nibe_comfort/tests
+      - name: Read version
+        id: version
+        run: |
+          version=$(sed -n 's/^version: "\(.*\)"/\1/p' nibe_comfort/config.yaml)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$version" ]; then
+            echo "::error::Taggen ${GITHUB_REF_NAME} matchar inte config.yaml ($version)"; exit 1
+          fi
+      - name: Build zip
+        run: |
+          zip -rq "nibe_comfort-${{ steps.version.outputs.version }}.zip" nibe_comfort \
+            -x 'nibe_comfort/tests/*' '*/__pycache__/*' '*.pyc'
+          unzip -l "nibe_comfort-${{ steps.version.outputs.version }}.zip"
+      - name: Release notes
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          {
+            awk -v v="## $version" '$0==v{f=1;next} /^## /{f=0} f' nibe_comfort/CHANGELOG.md
+            cat <<'NOTES'
+
+          ## Installera manuellt (zip)
+
+          1. Ladda ner `nibe_comfort-*.zip` nedan och packa upp den. Du får mappen `nibe_comfort`.
+          2. Kopiera mappen till `/addons` i Home Assistant, t.ex. via tillägget **Samba share** (`\\homeassistant\addons`) eller **Studio Code Server**/SSH. Resultatet ska vara `/addons/nibe_comfort/config.yaml`.
+          3. **Inställningar → Tillägg → Tilläggsbutik → ⋮ → Sök efter uppdateringar.**
+          4. Installera **NIBE Comfort** under *Lokala tillägg*, starta det och öppna det från sidopanelen.
+
+          Kräver Home Assistant OS/Supervised och myUplink-integrationen.
+          NOTES
+          } | sed 's/^          //' > notes.md
+          cat notes.md
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if gh release view "v$version" >/dev/null 2>&1; then
+            gh release upload "v$version" "nibe_comfort-$version.zip" --clobber
+          else
+            gh release create "v$version" "nibe_comfort-$version.zip" --title "NIBE Comfort $version" --notes-file notes.md --target "$GITHUB_SHA"
+          fi

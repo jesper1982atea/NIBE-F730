@@ -1,0 +1,8 @@
+configuration:
+  api_token:
+    name: API token
+    description: >-
+      Optional. Only needed for the local REST API on port 8099.
+      Leave empty to use the add-on from the sidebar only.
+network:
+  8099/tcp: Optional local REST API (requires API token)

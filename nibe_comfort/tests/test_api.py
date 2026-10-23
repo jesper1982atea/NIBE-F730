@@ -1,0 +1,139 @@
+import json
+import sys
+import tempfile
+import threading
+import unittest
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+from unittest.mock import Mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app import handler_for
+from controller import ControlError, Controller
+from test_controller import config, fixtures
+
+
+class ApiTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.ha = Mock()
+        self.ha.states.side_effect = lambda: fixtures()
+        self.ha.integration_registry.return_value = []
+        self.controller = Controller(self.ha, self.temp.name)
+        self.token = "a" * 32
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(self.controller, self.token))
+        self.server.daemon_threads = True
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.close_server)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+
+    def close_server(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+    def request(self, path, method="GET", body=None, token=True, content_type="application/json"):
+        headers = {"Content-Type": content_type}
+        if token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        request = Request(self.url + path, data=None if body is None else json.dumps(body).encode(), method=method, headers=headers)
+        try:
+            with urlopen(request, timeout=3) as response:
+                return response.status, json.load(response)
+        except HTTPError as exc:
+            with exc:
+                return exc.code, json.load(exc)
+
+    def test_authentication_required_for_reads_and_writes(self):
+        self.assertEqual(self.request("/api/settings", token=False)[0], 401)
+        self.assertEqual(self.request("/api/settings", method="PUT", body=config(), token=False)[0], 401)
+
+    def test_plan_is_read_only_and_reports_missing_sources(self):
+        self.ha.request.return_value = []
+        status, plan = self.request("/api/plan")
+        self.assertEqual(status, 200)
+        self.assertIn("Ingen Tibber", plan["prices"]["error"])
+        self.assertEqual(plan["offset"]["planned"], [])
+        self.ha.set_offset.assert_not_called()
+
+    def test_settings_round_trip(self):
+        status, original = self.request("/api/settings")
+        self.assertEqual(status, 200)
+        original["target_temperature"] = 22
+        self.assertEqual(self.request("/api/settings", "PUT", original)[0], 200)
+        self.assertEqual(self.request("/api/settings")[1]["target_temperature"], 22)
+
+    def test_bad_json_shape_and_content_type_rejected(self):
+        self.assertEqual(self.request("/api/settings", "PUT", {})[0], 400)
+        self.assertEqual(self.request("/api/settings", "PUT", config(), content_type="text/plain")[0], 415)
+
+    def test_activation_preflight_failure_is_not_saved(self):
+        self.ha.states.side_effect = ControlError("Ingen kontakt")
+        status, body = self.request("/api/settings", "PUT", config(enabled=True))
+        self.assertEqual(status, 400)
+        self.assertIn("Ingen kontakt", body["error"])
+        self.assertFalse(self.controller.settings()["enabled"])
+
+    def test_entities_are_filtered_and_no_token_is_returned(self):
+        status, entities = self.request("/api/entities")
+        self.assertEqual(status, 200)
+        self.assertIn("number.offset", [item["entity_id"] for item in entities])
+        self.assertNotIn("Authorization", json.dumps(entities))
+        self.assertNotIn("last_updated", entities[0])
+
+    def test_ha_failure_has_explicit_response(self):
+        self.ha.states.side_effect = ControlError("Ingen kontakt")
+        status, body = self.request("/api/entities")
+        self.assertEqual(status, 502)
+        self.assertEqual(body["error"], "Ingen kontakt")
+
+    def test_discovery_is_read_only_and_authenticated(self):
+        result = {"offset_entity": "number.pump", "outdoor_entity": "sensor.bt1", "message": "NIBE hittad"}
+        self.ha.discover.return_value = result
+        self.assertEqual(self.request("/api/discovery"), (200, result))
+        self.assertFalse(self.controller.settings()["offset_entity"])
+        self.ha.set_offset.assert_not_called()
+        self.assertEqual(self.request("/api/discovery", token=False)[0], 401)
+
+    def test_discovery_failure_is_visible(self):
+        self.ha.discover.side_effect = ControlError("Upptäckten misslyckades")
+        status, body = self.request("/api/discovery")
+        self.assertEqual(status, 502)
+        self.assertEqual(body["error"], "Upptäckten misslyckades")
+
+    def test_events_are_authenticated_and_paginated(self):
+        self.controller.save(config())
+        status, events = self.request("/api/events")
+        self.assertEqual(status, 200)
+        self.assertIn("settings_saved", [item["kind"] for item in events])
+        self.assertEqual(self.request("/api/events", token=False)[0], 401)
+        self.assertEqual(self.request("/api/events?before=not-an-id")[0], 400)
+        self.assertEqual(self.request("/api/events?before=1"), (200, []))
+
+    def test_climate_entitites_include_measured_temperature_for_room_picker(self):
+        self.ha.states.side_effect = None
+        self.ha.states.return_value = [{
+            "entity_id": "climate.lk_allrum_thermostat", "state": "heat",
+            "attributes": {"current_temperature": 22.2, "temperature": 29, "temperature_unit": "°C"},
+        }]
+        status, entities = self.request("/api/entities")
+        self.assertEqual(status, 200)
+        self.assertEqual(entities[0]["current_temperature"], 22.2)
+        self.assertIsNone(entities[0]["temperature_error"])
+
+    def test_local_api_does_not_serve_ui_or_arbitrary_paths(self):
+        self.assertEqual(self.request("/")[0], 404)
+        self.assertEqual(self.request("/../controller.py")[0], 404)
+        self.assertEqual(self.request("/api/services")[0], 404)
+
+    def test_ingress_rejects_non_supervisor_clients(self):
+        self.server.RequestHandlerClass = handler_for(self.controller)
+        self.assertEqual(self.request("/api/settings")[0], 403)
+
+
+if __name__ == "__main__":
+    unittest.main()
