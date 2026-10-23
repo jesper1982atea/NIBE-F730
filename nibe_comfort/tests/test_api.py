@@ -87,6 +87,13 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(plan["offset"]["planned"], [])
         self.ha.set_offset.assert_not_called()
 
+    def test_hot_water_is_read_only_and_explains_missing_sensors(self):
+        status, data = self.request("/api/hotwater")
+        self.assertEqual(status, 200)
+        self.assertIn("varmvattengivare", data["error"])
+        self.assertIsNone(data["level"])
+        self.ha.set_offset.assert_not_called()
+
     def test_settings_round_trip(self):
         status, original = self.request("/api/settings")
         self.assertEqual(status, 200)

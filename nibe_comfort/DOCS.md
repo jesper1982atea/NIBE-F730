@@ -32,10 +32,37 @@ justering** (när värmekurvan ändras, åt vilket håll och varför). Är autom
 av visas justeringen som ett förslag. Därunder visas elpriset just nu och
 värmekurvans förskjutning.
 
-Längre ner finns värmeplanen med grafer, temperaturhistorik och pumpens drift.
+Längre ner finns värmeplanen med grafer, varmvatten, temperaturhistorik och
+pumpens drift.
 **Inställningar** och **Ändringslogg** ligger längst ner och fälls ut med ett
 tryck. Inställningarna är utfällda från början tills rum och pumpanslutning
 är valda.
+
+### Varmvatten
+
+Kortet **Varmvatten** läser givarna från samma myUplink-enhet som den valda
+kurvförskjutningen (`…_hot_water_top_bt7`, `…_hot_water_charging_bt6`,
+`…_hot_water_amount`, `select.…_hot_water_amount` och `…_status`). Inget styrs
+härifrån; kortet är bara information.
+
+- **Tanken** visar en uppskattad nivå. Finns pumpens givare för varmvattenmängd
+  (minuter kvar) jämförs värdet med det högsta under senaste veckan. Annars
+  bedöms nivån från laddgivaren BT6. Det är en uppskattning, inte en mätning av
+  liter.
+- **Tappningar** hittas när laddgivaren BT6 längre ner i tanken sjunker snabbt
+  (minst 1 °C mellan två rapporter och totalt minst 1,5 °C) när kallt vatten
+  strömmar in. Långsam avsvalning i halva grader över flera timmar räknas inte.
+  Minst 10 °C räknas som *stor* (dusch eller bad), 4–10 °C som *mellan* och
+  mindre som *liten*. BT7 i toppen ändras ofta bara lite vid en tappning.
+- **När används varmvattnet?** visar antal tappningar per timme på dygnet för
+  senaste 7 dygnen, vanligaste tider och hur snabbt tanken brukar vara laddad
+  igen efter en stor tappning. Laddningar räknas när pumpens status är
+  *Hot water*.
+- Grafen visar BT7 och BT6 senaste två dygnen med tappningar markerade och
+  laddningar skuggade. Kortet uppdateras varannan minut.
+
+Saknas givarna, eller har pumpens entiteter döpts om, visas ett tydligt
+meddelande i stället för gissningar. Värden som slutat rapporteras visas inte.
 
 ### Golvvärme och climate-entiteter
 
@@ -254,6 +281,7 @@ Token ger behörighet att både läsa och ändra alla styrinställningar.
 | GET | `/api/overview` | Pumpdrift, larm och åtskilda pump-/huselmätvärden |
 | GET | `/api/history` | Senaste dygnets temperaturhistorik för sparade givare |
 | GET | `/api/forecast` | Prognos från vald eller entydigt upptäckt HA-väderkälla |
+| GET | `/api/hotwater` | Varmvattnets nivå, temperaturer, tappningar och laddningar senaste 7 dygnen (endast läsning) |
 | GET | `/api/plan` | Utetemperatur, Tibber-priser, faktisk/planerad förskjutning och uppskattad värmekurva (endast läsning) |
 | GET | `/api/events` | Senaste 100 logghändelser; `?before=<id>` hämtar äldre |
 | GET | `/api/settings` | Komplett sparad styrkonfiguration |

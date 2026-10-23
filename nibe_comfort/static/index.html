@@ -66,6 +66,29 @@
       <p id="plan-curve-status" class="hint"></p>
     </section>
 
+    <section class="card dashboard" id="hot-water-card">
+      <div class="section-heading"><div><span class="section-number">TANKEN JUST NU OCH SENASTE VECKAN</span><h2>Varmvatten</h2></div><button type="button" id="refresh-hot-water" class="secondary">Uppdatera</button></div>
+      <p id="hw-status" role="status">Hämtar varmvatten…</p>
+      <div class="hw-top">
+        <div id="hw-tank" class="hw-tank" role="img" aria-label="Varmvattentank"></div>
+        <div class="hw-facts">
+          <h3 id="hw-verdict">—</h3>
+          <p id="hw-verdict-text"></p>
+          <div id="hw-metrics" class="live-grid"></div>
+        </div>
+      </div>
+      <h3>När används varmvattnet?</h3>
+      <p id="hw-pattern" class="explanation"></p>
+      <div id="hw-hours" class="chart" role="img" aria-label="Tappningar per timme på dygnet"></div>
+      <p class="hint chart-key"><span class="key hw-big">Stark färg</span> = stor tappning (dusch eller bad), <span class="key hw-small">blek</span> = mindre tappning. Räknat på senaste 7 dygnen.</p>
+      <h3>Temperatur i tanken · senaste 2 dygnen</h3>
+      <div id="hw-chart" class="chart" role="img" aria-label="Varmvattnets temperatur"></div>
+      <div id="hw-legend" class="chart-legend"></div>
+      <p class="hint">Tappningar syns som snabba fall i laddgivaren BT6 längre ner i tanken när kallt vatten strömmar in. BT7 i toppen ändras mindre. Skuggade fält = pumpen laddar varmvatten.</p>
+      <h3>Senaste tappningarna</h3>
+      <ul id="hw-list" class="plan-changes"></ul>
+    </section>
+
     <section class="card dashboard">
       <div class="section-heading"><div><span class="section-number">SENASTE DYGNET</span><h2>Temperaturen över tid</h2></div><button type="button" id="refresh-history" class="secondary">Uppdatera graf</button></div>
       <label for="history-entity">Visa</label>

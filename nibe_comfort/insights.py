@@ -137,6 +137,125 @@ def overview(states, registry, config, now):
     }
 
 
+HOT_WATER = {
+    "top": ("sensor.", "_hot_water_top_bt7"),
+    "charge": ("sensor.", "_hot_water_charging_bt6"),
+    "minutes": ("sensor.", "_hot_water_amount"),
+    "demand": ("select.", "_hot_water_amount"),
+    "status": ("sensor.", "_status"),
+}
+DEMAND = {"Small": "Liten", "Normal": "Normal", "Large": "Stor", "Smart control": "Smart styrning"}
+
+
+def pump_device_entities(registry, offset_entity):
+    selected = next((r for r in registry if r["entity_id"] == offset_entity and r.get("platform") == "myuplink"), None)
+    if not selected or not selected.get("device_id"):
+        return set()
+    return {r["entity_id"] for r in registry if r.get("platform") == "myuplink" and r.get("device_id") == selected["device_id"]}
+
+
+def hot_water_entities(registry, offset_entity):
+    ids = pump_device_entities(registry, offset_entity)
+    found = {}
+    for key, (prefix, suffix) in HOT_WATER.items():
+        matches = [e for e in ids if e.startswith(prefix) and e.endswith(suffix)]
+        if len(matches) == 1:
+            found[key] = matches[0]
+    return found
+
+
+def draw_offs(points, now):
+    """Hot water use: fast drops in the lower tank sensor (BT6) as cold water flows in.
+
+    Standby losses move the 0.5 °C-resolution sensor by single half-degree steps over hours,
+    while taps drop it by a degree or more between reports. Close drops are one event."""
+    valid = [(t, v) for t, v in points if v is not None]
+    steps = []
+    for (t0, v0), (t1, v1) in zip(valid, valid[1:]):
+        drop = v0 - v1
+        if drop >= 1.0 and (t1 - t0 <= 3600 or drop >= 1.5):
+            steps.append([max(t0, t1 - 900), t1, v0, v1])
+    events = []
+    for step in steps:
+        if events and step[0] - events[-1][1] <= 1800:
+            events[-1][1], events[-1][3] = step[1], step[3]
+        else:
+            events.append(step)
+    result = []
+    for start, end, before, after in events:
+        drop = round(before - after, 1)
+        if drop < 1.5:
+            continue
+        size = "stor" if drop >= 10 else "mellan" if drop >= 4 else "liten"
+        result.append({"start": start, "end": end, "from": before, "to": after, "drop": drop, "size": size})
+    return result
+
+
+def charge_periods(rows, now):
+    periods = []
+    for index, (stamp, state) in enumerate(rows):
+        if state == "Hot water":
+            end = rows[index + 1][0] if index + 1 < len(rows) else now
+            if periods and stamp - periods[-1][1] <= 60:
+                periods[-1][1] = end
+            else:
+                periods.append([stamp, end])
+    return [{"start": a, "end": b} for a, b in periods]
+
+
+def hot_water(states, registry, config, groups, now, days=7):
+    by_id = {s["entity_id"]: s for s in states}
+    ids = hot_water_entities(registry, config["offset_entity"])
+    start = now - days * 86400
+    result = {
+        "now": now, "start": start, "days": days, "entities": ids,
+        "top": None, "charge": None, "minutes": None, "demand": None, "charging": None,
+        "level": None, "level_source": None, "max_minutes": None,
+        "series": {"top": [], "charge": [], "minutes": []},
+        "draw_offs": [], "charges": [], "error": None,
+    }
+    if "top" not in ids and "charge" not in ids:
+        result["error"] = ("Inga varmvattengivare hittades. Välj pumpens kurvförskjutning först; "
+                           "varmvattnet läses från samma myUplink-enhet (BT6/BT7).")
+        return result
+    peers = [by_id[e] for e in pump_device_entities(registry, config["offset_entity"]) if e in by_id]
+    for key in ("top", "charge", "minutes", "demand"):
+        if key in ids and ids[key] in by_id:
+            item = reading(by_id[ids[key]], key, config["max_age_minutes"], now, peers)
+            if key == "demand":
+                result[key] = DEMAND.get(item["value"], item["value"])
+                continue
+            try:
+                result[key] = number(item["value"], ids[key]) if item["value"] is not None else None
+            except ControlError:
+                result[key] = None
+    if "status" in ids and ids["status"] in by_id:
+        item = reading(by_id[ids["status"]], "status", config["max_age_minutes"], now, peers)
+        result["charging"] = None if item["value"] is None else item["value"] == "Hot water"
+    for key in ("top", "charge", "minutes"):
+        if key in ids and ids[key] in groups:
+            unit = by_id.get(ids[key], {}).get("attributes", {}).get("unit_of_measurement")
+            result["series"][key] = numeric_steps(groups[ids[key]], ids[key], start, unit == "°F")
+    if result["series"]["charge"]:
+        result["draw_offs"] = draw_offs(result["series"]["charge"], now)
+    if "status" in ids and ids["status"] in groups:
+        rows = sorted(([max(start, parse_time(r.get("last_changed") or r.get("last_updated"), ids["status"])), r.get("state")]
+                       for r in groups[ids["status"]] if r.get("state") not in ("unavailable", "unknown", None)),
+                      key=lambda row: row[0])
+        result["charges"] = charge_periods(rows, now)
+    minutes = [v for _, v in result["series"]["minutes"] if v is not None]
+    if result["minutes"] is not None and minutes and max(minutes) > 0:
+        result["max_minutes"] = max(minutes)
+        result["level"] = max(0.0, min(1.0, result["minutes"] / max(minutes)))
+        result["level_source"] = "minutes"
+    else:
+        temps = [v for _, v in result["series"]["charge"] if v is not None]
+        if result["charge"] is not None and temps and max(temps) > 30:
+            result["level"] = max(0.0, min(1.0, (result["charge"] - 25) / (max(temps) - 25)))
+            result["level_source"] = "charge"
+    return result
+
+
 def history_series(histories, config, states, unit, start, end):
     if not isinstance(histories, list) or any(
         not isinstance(group, list) or any(not isinstance(item, dict) for item in group)
@@ -453,6 +572,26 @@ class Insights:
     def overview(self, config):
         key = ("overview", config["offset_entity"], config["price_entity"], config["max_age_minutes"])
         return self.cached(key, 60, lambda: overview(self.ha.states(), self.registry(), config, time.time()))
+
+    def hot_water(self, config):
+        key = ("hot_water", config["offset_entity"], config["max_age_minutes"])
+
+        def load():
+            now = time.time()
+            registry = self.registry()
+            states = self.ha.states()
+            ids = [e for k, e in hot_water_entities(registry, config["offset_entity"]).items() if k != "demand"]
+            groups = {}
+            if ids:
+                query = urlencode({
+                    "filter_entity_id": ",".join(ids),
+                    "end_time": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+                    "minimal_response": "", "no_attributes": "", "significant_changes_only": "0",
+                })
+                stamp = datetime.fromtimestamp(now - 7 * 86400, timezone.utc).isoformat()
+                groups = history_groups(self.ha.request("/history/period/" + quote(stamp, safe="") + "?" + query))
+            return hot_water(states, registry, config, groups, now)
+        return self.cached(key, 120, load)
 
     def history(self, config):
         key = ("history", tuple(config["room_sensors"]), config["outdoor_entity"], config["target_temperature"])
