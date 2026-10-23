@@ -228,17 +228,27 @@
     <section class="card dashboard" id="test-card">
       <h2>Lyssnar pumpen?</h2>
       <p>Testet ändrar värmekurvans förskjutning <strong>ett steg i 10 minuter</strong> och ställer sedan automatiskt tillbaka den. Automatiken väntar under tiden. Så kort tid märks inte inomhus.</p>
+      <div id="test-check" class="test-check" hidden>
+        <p id="test-look" class="test-look"></p>
+        <div class="test-values">
+          <div><small>Före testet</small><strong id="test-before">—</strong></div>
+          <div><small>Under testet</small><strong id="test-during">—</strong></div>
+          <div><small>Pumpen rapporterar nu</small><strong id="test-now">—</strong></div>
+        </div>
+        <p id="test-base-note" class="hint" hidden></p>
+      </div>
       <ol id="test-steps" class="test-steps"></ol>
       <p id="test-status" role="status">Inget test har körts ännu.</p>
       <div class="buttons"><button type="button" id="test-start">Starta test</button><button type="button" id="test-stop" class="secondary" hidden>Avbryt och återställ nu</button></div>
-      <h3>Så kontrollerar du på pumpen</h3>
-      <ol class="test-howto">
-        <li><strong>Pumpens display:</strong> gå till meny <b>1.1 Temperatur</b> (Inomhusklimat). Värdet för värme, klimatsystem 1, är förskjutningen och ska visa <b class="test-new">det nya värdet</b> under testet. Samma värde syns i meny <b>1.9.1.1 Värmekurva</b>.</li>
-        <li><strong>myUplink-appen:</strong> öppna pumpen och leta upp <b>Förskjutning värmekurva</b> (klimatsystem 1).</li>
-        <li><strong>Efter några minuter:</strong> pumpens <b>beräknade framledningstemperatur</b> (meny 3.1 Driftinfo) ändras ett par grader åt samma håll.</li>
-        <li><strong>När testet är klart:</strong> förskjutningen ska vara tillbaka på <b class="test-old">ursprungsvärdet</b>.</li>
-      </ol>
-      <p class="hint">Menynamnen kan skilja något mellan programversioner. Om Home Assistant aldrig läser tillbaka det nya värdet når ändringen inte pumpen. Kontrollera då att myUplink-integrationen får ändra inställningar (det kan kräva myUplinks Premium-abonnemang) och att pumpen är ansluten.</p>
+      <details class="test-where">
+        <summary>Var hittar jag värdet på pumpen?</summary>
+        <ul class="test-howto">
+          <li><strong>myUplink-appen (enklast):</strong> öppna pumpen och leta upp <b>Förskjutning värmekurva</b> för klimatsystem 1.</li>
+          <li><strong>Pumpens display:</strong> meny <b>1.1 Temperatur</b>, raden för värme/klimatsystem 1. Samma siffra syns i meny <b>1.9.1.1 Värmekurva</b>.</li>
+          <li>Menynamnen kan skilja något mellan programversioner.</li>
+        </ul>
+        <p class="hint">Om Home Assistant aldrig läser tillbaka det nya värdet når ändringen inte pumpen. Kontrollera då att myUplink-integrationen får ändra inställningar (det kan kräva myUplinks Premium-abonnemang) och att pumpen är ansluten.</p>
+      </details>
     </section>
     </details>
     <details id="log-panel" class="fold">

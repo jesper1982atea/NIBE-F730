@@ -84,7 +84,7 @@ const server = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const { action } = JSON.parse(Buffer.concat(chunks)); testWrites++;
-    if (action === "start") pumpTest = { phase: "running", entity_id: offset, original: 3, value: 2, started_at: now, restore_at: now + 600, observed_at: now + 60, restored_at: null, finished_at: null, result: null };
+    if (action === "start") pumpTest = { phase: "running", entity_id: offset, original: 2, value: 3, started_at: now, restore_at: now + 600, observed_at: now + 60, restored_at: null, finished_at: null, result: null };
     else pumpTest = { ...pumpTest, phase: "done", restored_at: now + 120, finished_at: now + 180, result: "confirmed" };
     data = { now, duration_seconds: 600, test: pumpTest };
   }
@@ -230,14 +230,18 @@ try {
   page.once("dialog", (dialog) => dialog.accept());
   await page.locator("#test-start").click();
   await page.waitForFunction(() => document.getElementById("test-status").textContent.includes("Testet pågår"));
-  assert.match(await page.locator("#test-steps").textContent(), /3 → 2.*rapporterar 2.*förskjutningen visar 2.*automatiskt till 3/);
+  assert.match(await page.locator("#test-steps").textContent(), /2 → 3.*rapporterar 3.*förskjutningen visar 3.*automatiskt till 2/);
   assert.equal(await page.locator("#test-steps li.done").count(), 2);
-  assert.match(await page.locator(".test-howto").textContent(), /1\.1 Temperatur.*visa 2.*tillbaka på 3/s);
+  assert.match(await page.locator("#test-look").textContent(), /Titta på pumpen nu: förskjutningen ska visa 3/);
+  assert.match(await page.locator("#test-base-note").textContent(), /grundvärde är 3.*justerat förskjutningen till 2/);
+  assert.deepEqual(await page.locator(".test-values strong").allTextContents(), ["2", "3", "3"]);
+  assert.equal(await page.locator(".test-where").getAttribute("open"), null, "Pump menu details start folded");
   assert.equal(await page.locator("#test-start").isVisible(), false);
   await page.locator("#test-card").screenshot({ path: `${artifacts}/test-running.png` });
   await page.locator("#test-stop").click();
   await page.waitForFunction(() => document.getElementById("test-status").textContent.includes("Styrningen fungerar"));
   assert.equal(await page.locator("#test-steps li.done").count(), 4);
+  assert.match(await page.locator("#test-look").textContent(), /ska nu visa 2 igen/);
   assert.equal(testWrites, 2);
   assert.equal(writes, 0, "The pump test must not save settings");
   await page.locator("#settings-panel > summary").click();

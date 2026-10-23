@@ -959,8 +959,19 @@ function renderTest(data) {
   const active = Boolean(test && ["running", "restoring"].includes(test.phase));
   $("test-start").hidden = active;
   $("test-stop").hidden = !test || test.phase !== "running";
-  for (const node of document.querySelectorAll(".test-new")) node.textContent = test ? displayNumber(test.value) : "det nya värdet";
-  for (const node of document.querySelectorAll(".test-old")) node.textContent = test ? displayNumber(test.original) : "ursprungsvärdet";
+  $("test-check").hidden = !test || test.result === "failed";
+  if (test) {
+    const now = lastStatus?.current_offset;
+    $("test-before").textContent = displayNumber(test.original);
+    $("test-during").textContent = displayNumber(test.value);
+    $("test-now").textContent = now == null ? "—" : displayNumber(now);
+    $("test-look").innerHTML = test.phase === "running"
+      ? `Titta på pumpen nu: förskjutningen ska visa <b>${displayNumber(test.value)}</b>.`
+      : `Förskjutningen ska nu visa <b>${displayNumber(test.original)}</b> igen.`;
+    const base = settings?.base_offset;
+    $("test-base-note").hidden = base == null || Math.abs(base - test.original) < 1e-6;
+    $("test-base-note").textContent = `Ditt grundvärde är ${displayNumber(base)}, men automatiken hade justerat förskjutningen till ${displayNumber(test.original)} när testet startade. Därför utgår testet från ${displayNumber(test.original)}.`;
+  }
   if (!test) {
     $("test-steps").replaceChildren();
     $("test-status").textContent = "Inget test har körts ännu.";
@@ -1000,7 +1011,11 @@ function renderTest(data) {
 }
 
 async function refreshTest() {
-  try { renderTest(await api("test")); }
+  try {
+    const data = await api("test");
+    if (data.test && ["running", "restoring"].includes(data.test.phase)) await refreshStatus();
+    renderTest(data);
+  }
   catch (error) { $("test-status").textContent = `Kunde inte läsa teststatus: ${error.message}`; }
 }
 
