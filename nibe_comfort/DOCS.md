@@ -34,6 +34,13 @@ nu** från senaste avläsningen och ditt **grundvärde**, även när ingen
 justering behövs. Detta är förskjutningen, inte numret på pumpens grundkurva.
 Därunder visas elpriset just nu.
 
+Status och aktuella temperaturer hämtas automatiskt var 15:e sekund.
+Styrloopen läser Home Assistant ungefär varje minut. När du återvänder till
+appen eller får tillbaka nätverket hämtas status och översikt direkt.
+Giltiga temperaturer visas även om ett annat mätvärde pausar styrningen;
+saknade eller gamla värden visas som **—**, inte som aktuella. Kontaktfel
+och en avläsning som är äldre än tre minuter markeras tydligt.
+
 Längre ner finns värmeplanen med grafer, husmodellen (*Ditt hus lär sig*),
 varmvatten, temperaturhistorik och pumpens drift.
 **Inställningar** och **Ändringslogg** ligger längst ner och fälls ut med ett

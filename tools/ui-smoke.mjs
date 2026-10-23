@@ -75,7 +75,7 @@ const server = createServer(async (request, response) => {
     message: "NIBE hittad", price_message: "Tibbers aktuella elpris hittades automatiskt.",
   };
   else if (path === "/api/status") data = {
-    indoor: 22, current_offset: 3, desired_offset: 1.5, next_offset: 2,
+    indoor: 22, outdoor: 10, current_offset: 3, desired_offset: 1.5, next_offset: 2,
     enabled: settings.enabled, checked_at: now, wait_seconds: 1800,
     message: "Väntar på nästa tillåtna ändring.", contributions: { room: -1.5, weather: 0, price: 0 },
   };
@@ -156,8 +156,13 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
+  await page.route("**/api/entities", (route) => route.fulfill({
+    status: 502, json: { error: "Tillfälligt anslutningsfel" },
+  }), { times: 1 });
   await page.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await page.waitForFunction(() => document.getElementById("notice").textContent.includes("Försöker igen automatiskt"));
   await page.waitForFunction(() => document.getElementById("forecast-chart").querySelector("svg"));
+  assert.equal(await page.locator("#notice").isVisible(), false, "Initialization recovers without reloading");
   await page.waitForFunction(() => document.querySelectorAll("#events-list article").length === 4);
   await page.waitForFunction(() => document.getElementById("plan-curve").querySelector("svg"));
   assert.equal(await page.locator("#plan-outdoor path").count(), 2);
@@ -359,6 +364,35 @@ try {
   await page.waitForFunction(() => document.getElementById("next-change").textContent === "Ingen behövs");
   assert.equal(await page.locator("#hero-offset").textContent(), "3");
   assert.match(await page.locator("#next-change-why").textContent(), /Ingen ändring av förskjutningen planeras/);
+  let statusReads = 0;
+  let statusFailure = false;
+  await page.route("**/api/status", async (route) => {
+    statusReads++;
+    if (statusFailure) {
+      await route.fulfill({ status: 502, json: { error: "Anslutningen bröts" } });
+      return;
+    }
+    await route.fulfill({ json: {
+      indoor: 21.5, outdoor: 9, current_offset: null,
+      enabled: true, checked_at: Date.now() / 1000, reading_errors: { current_offset: "Pumpen är otillgänglig" },
+      error_message: "Pumpen är otillgänglig",
+    } });
+  });
+  await page.waitForFunction(() => document.getElementById("indoor").textContent === "21,5", null, { timeout: 20000 });
+  assert.ok(statusReads > 0, "Status is polled without interaction");
+  assert.equal(await page.locator("#hero-offset").textContent(), "—");
+  assert.equal(await page.locator("#outdoor-now").textContent(), "9");
+  assert.match(await page.locator("#status-message").textContent(), /otillgänglig/);
+  statusFailure = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await page.waitForFunction(() => document.getElementById("status-message").textContent === "Anslutningen bröts");
+  assert.equal(await page.locator("#indoor").textContent(), "—");
+  assert.match(await page.locator("#updated").textContent(), /inte aktuell/);
+  await page.unroute("**/api/status");
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.waitForFunction(() => document.getElementById("hero-offset").textContent === "3");
+  assert.equal(await page.locator("#indoor").textContent(), "22");
+  assert.match(await page.locator("#updated").textContent(), /Uppdateras automatiskt/);
   failHistory = true;
   await page.locator("#refresh-history").click();
   await page.waitForFunction(() => document.getElementById("history-status").textContent.includes("Recorder saknas"));

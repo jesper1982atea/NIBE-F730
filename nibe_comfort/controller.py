@@ -343,17 +343,41 @@ def price_contribution(config, price, error):
     return adjustment
 
 
-def evaluate(config, entities, now, peers=None, target_shift=0.0):
-    """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule."""
-    states = {entity["entity_id"]: entity for entity in entities}
-    peers = peers or {}
-    get = lambda key: fresh_entity(states, key, config["max_age_minutes"], now, peers.get(key, ()))
+def indoor_temperature(config, get):
     if not config["room_sensors"]:
         raise ControlError("Välj minst en rumsgivare.")
     rooms = [temperature(get(key)) for key in config["room_sensors"]]
     if any(not 5 <= value <= 40 for value in rooms):
         raise ControlError("En rumsgivare visar en orimlig inomhustemperatur (utanför 5–40 °C).")
-    indoor = sum(rooms) / len(rooms)
+    return sum(rooms) / len(rooms)
+
+
+def current_readings(config, entities, now, peers):
+    """Read dashboard values independently; unavailable inputs still block control."""
+    states = {entity["entity_id"]: entity for entity in entities}
+    get = lambda key: fresh_entity(states, key, config["max_age_minutes"], now, peers.get(key, ()))
+    readings = {"indoor": None, "outdoor": None, "current_offset": None, "reading_errors": {}}
+    sources = {
+        "indoor": lambda: round(indoor_temperature(config, get), 2),
+        "outdoor": lambda: temperature(get(config["outdoor_entity"])),
+        "current_offset": lambda: number(get(config["offset_entity"])["state"], "Kurvförskjutning"),
+    }
+    for key, read in sources.items():
+        if (key == "outdoor" and not config["outdoor_entity"]) or (key == "current_offset" and not config["offset_entity"]):
+            continue
+        try:
+            readings[key] = read()
+        except ControlError as exc:
+            readings["reading_errors"][key] = str(exc)
+    return readings
+
+
+def evaluate(config, entities, now, peers=None, target_shift=0.0):
+    """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule."""
+    states = {entity["entity_id"]: entity for entity in entities}
+    peers = peers or {}
+    get = lambda key: fresh_entity(states, key, config["max_age_minutes"], now, peers.get(key, ()))
+    indoor = indoor_temperature(config, get)
     target_shift = max(-config["preheat_degrees"], min(config["preheat_degrees"], target_shift)) if config["preheat_enabled"] else 0.0
     error = config["target_temperature"] + target_shift - indoor
     room_adjustment = 0 if abs(error) <= config["deadband"] else error * config["room_gain"]
@@ -697,14 +721,18 @@ class Controller:
         schedule = self.preheat_schedule()
         with self.lock:
             now = time.time()
+            readings = {}
             try:
                 entities = self.ha.states()
                 peers = self.peers()
+                readings = current_readings(self.config, entities, now, peers)
                 self.test_step(entities, now)
                 self.observe(entities, now, peers)
                 preheat = self.preheat(now, schedule)
                 result = evaluate(self.config, entities, now, peers, preheat["shift"])
                 result["preheat"] = preheat
+                result["outdoor"] = readings["outdoor"]
+                result["reading_errors"] = readings["reading_errors"]
                 if self.last_error:
                     self.events.add("resumed", "Giltiga mätvärden igen; styrningen kan fortsätta.")
                     self.last_error = None
@@ -751,6 +779,7 @@ class Controller:
                     self.events.add("paused", "Styrningen pausad på grund av fel.", error=str(exc))
                     self.last_error = str(exc)
                 self.status = {
+                    **readings,
                     "error_message": str(exc), "checked_at": now,
                     "enabled": self.config["enabled"],
                     "message": "Styrningen pausad: inga nya ändringar skickas.",
