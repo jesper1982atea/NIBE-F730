@@ -23,6 +23,20 @@ Upptäckten fyller bara tomma anslutningsfält i formuläret; tryck **Spara
 inställningar** för att behålla förslaget. Den aktiverar inte styrningen.
 Rumsgivare väljer du alltid själv.
 
+### Startsidan
+
+Överst finns fyra rutor: **Inne nu** (medel av dina valda rum och hur långt
+från ditt mål det är), **Du vill ha** (ändra med − och +, tryck sedan *Spara
+ny temperatur*), **Ute nu** (med prognosens spann närmaste dygnet) och **Nästa
+justering** (när värmekurvan ändras, åt vilket håll och varför). Är automatiken
+av visas justeringen som ett förslag. Därunder visas elpriset just nu och
+värmekurvans förskjutning.
+
+Längre ner finns värmeplanen med grafer, temperaturhistorik och pumpens drift.
+**Inställningar** och **Ändringslogg** ligger längst ner och fälls ut med ett
+tryck. Inställningarna är utfällda från början tills rum och pumpanslutning
+är valda.
+
 ### Golvvärme och climate-entiteter
 
 Välj exempelvis `climate.lk_allrum_thermostat` i samma lista som dina andra

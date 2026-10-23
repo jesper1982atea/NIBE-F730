@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## 0.2.5
+
+- Enklare startsida. Överst visas bara det viktigaste: **Inne nu**, **Du vill
+  ha** (ändra med − och + och tryck *Spara ny temperatur*), **Ute nu** med
+  prognos för närmaste dygnet och **Nästa justering** – när och varför
+  värmekurvan ändras. Under rutorna visas elpriset just nu och värmekurvans
+  förskjutning.
+- Värmeplanen börjar med listan över kommande och gjorda justeringar, följd av
+  graferna. Därefter temperaturgrafer och pumpens drift.
+- Inställningar (rum, pump, väder, elpris, automatik) och ändringsloggen ligger
+  längst ner i utfällbara delar. Inställningarna fälls ut automatiskt så länge
+  rum eller pumpanslutning saknas.
+
 ## 0.2.4
 
 - Mörkt läge. Knappen **Tema** uppe till höger växlar mellan *auto*, *ljust*

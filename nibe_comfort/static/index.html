@@ -19,24 +19,51 @@
   </header>
   <main>
     <div id="notice" role="status" hidden></div>
-    <section class="hero card">
-      <div>
+    <section class="hero card" aria-labelledby="status-title">
+      <div class="hero-head">
         <span class="eyebrow">HEMMA JUST NU</span>
-        <div class="temperature"><span id="indoor">—</span><small>°C</small></div>
-        <p>Medeltemperatur från dina valda rumsgivare.</p>
+        <h2 id="status-title">Välkommen till enklare värme</h2>
+        <p id="status-message">Välj rum och ställ in din temperatur.</p>
       </div>
-      <div class="hero-status"><h2 id="status-title">Välkommen till enklare värme</h2><p id="status-message">Välj givare och ställ in din måltemperatur nedan.</p><p id="updated" class="muted"></p></div>
+      <div class="now-grid">
+        <div class="now-tile"><span>Inne nu</span><strong><span id="indoor">—</span> °C</strong><small id="indoor-diff">Medel av dina valda rum</small></div>
+        <div class="now-tile target-tile">
+          <label for="target_temperature">Du vill ha · °C</label>
+          <div class="target-control">
+            <button type="button" id="target-down" aria-label="Sänk måltemperaturen">−</button>
+            <input id="target_temperature" name="target_temperature" form="settings" type="number" min="10" max="30" step="0.1" required>
+            <button type="button" id="target-up" aria-label="Höj måltemperaturen">+</button>
+          </div>
+          <button type="submit" form="settings" id="save-target" hidden>Spara ny temperatur</button>
+        </div>
+        <div class="now-tile"><span>Ute nu</span><strong><span id="outdoor-now">—</span> °C</strong><small id="outdoor-forecast">Hämtar prognos…</small></div>
+        <div class="now-tile next-tile"><span>Nästa justering</span><strong id="next-change">—</strong><small id="next-change-why">Hämtar plan…</small></div>
+      </div>
+      <p id="hero-extra" class="hero-extra"></p>
+      <p id="updated" class="muted"></p>
     </section>
 
     <section class="card dashboard">
-      <span class="section-number">PUMPEN JUST NU</span>
-      <h2>Värme, drift och el</h2>
-      <p id="overview-status" role="status">Hämtar pumpstatus…</p>
-      <div id="pump-metrics" class="live-grid"></div>
-      <h3>Elförbrukning</h3>
-      <div id="electricity-metrics" class="live-grid"></div>
-      <p id="electricity-note" class="hint"></p>
-      <p class="hint">Värden rapporterade via Home Assistant. Saknade eller gamla uppgifter visas inte som noll eller ”av”.</p>
+      <div class="section-heading"><div><span class="section-number">IGÅR, I DAG OCH I MORGON</span><h2>Värmeplan</h2></div><button type="button" id="refresh-plan" class="secondary">Uppdatera plan</button></div>
+      <p id="plan-status" role="status">Hämtar värmeplan…</p>
+      <ul id="plan-changes" class="plan-changes"></ul>
+      <p id="plan-notes" class="explanation"></p>
+      <h3>Utetemperatur</h3>
+      <div id="plan-outdoor" class="chart" role="img" aria-label="Utetemperatur senaste dygnet och prognos"></div>
+      <div id="plan-outdoor-legend" class="chart-legend"></div>
+      <p id="plan-outdoor-status" class="hint"></p>
+      <h3>Elpris</h3>
+      <div id="plan-price" class="chart" role="img" aria-label="Elpris per kvart"></div>
+      <div id="plan-price-legend" class="chart-legend"></div>
+      <p id="plan-price-status" class="hint"></p>
+      <h3>Kurvförskjutning · faktisk och planerad</h3>
+      <div id="plan-offset" class="chart" role="img" aria-label="Kurvförskjutning historik och plan"></div>
+      <div id="plan-offset-legend" class="chart-legend"></div>
+      <p class="hint chart-key"><span class="key planned">Streckad lila</span> = kommande justering, <span class="key done-auto">grön</span> = ändrad av automatiken, <span class="key done-other">orange</span> = ändrad manuellt eller av annan automation. ▲ höjning, ▼ sänkning.</p>
+      <h3>Värmekurvan som den är inställd nu</h3>
+      <p class="hint">Uppskattad från pumpens egen beräknade framledning de senaste 7 dygnen. Gröna punkter och linjen gäller nuvarande förskjutning, grå punkter andra förskjutningar. Stor ring = just nu. Det skuggade fältet är utetemperaturen i prognosen.</p>
+      <div id="plan-curve" class="chart" role="img" aria-label="Framledningstemperatur mot utetemperatur"></div>
+      <p id="plan-curve-status" class="hint"></p>
     </section>
 
     <section class="card dashboard">
@@ -51,41 +78,24 @@
     </section>
 
     <section class="card dashboard">
-      <div class="section-heading"><div><span class="section-number">IGÅR, I DAG OCH I MORGON</span><h2>Värmeplan · väder och elpris</h2></div><button type="button" id="refresh-plan" class="secondary">Uppdatera plan</button></div>
-      <p id="plan-status" role="status">Hämtar värmeplan…</p>
-      <p id="plan-notes" class="explanation"></p>
-      <h3>Utetemperatur</h3>
-      <div id="plan-outdoor" class="chart" role="img" aria-label="Utetemperatur senaste dygnet och prognos"></div>
-      <div id="plan-outdoor-legend" class="chart-legend"></div>
-      <p id="plan-outdoor-status" class="hint"></p>
-      <h3>Elpris</h3>
-      <div id="plan-price" class="chart" role="img" aria-label="Elpris per kvart"></div>
-      <div id="plan-price-legend" class="chart-legend"></div>
-      <p id="plan-price-status" class="hint"></p>
-      <h3>Kurvförskjutning · faktisk och planerad</h3>
-      <div id="plan-offset" class="chart" role="img" aria-label="Kurvförskjutning historik och plan"></div>
-      <div id="plan-offset-legend" class="chart-legend"></div>
-      <p class="hint chart-key"><span class="key planned">Streckad lila</span> = kommande justering, <span class="key done-auto">grön</span> = ändrad av automatiken, <span class="key done-other">orange</span> = ändrad manuellt eller av annan automation. ▲ höjning, ▼ sänkning.</p>
-      <h3>Justeringar</h3>
-      <ul id="plan-changes" class="plan-changes"></ul>
-      <h3>Värmekurvan som den är inställd nu</h3>
-      <p class="hint">Uppskattad från pumpens egen beräknade framledning de senaste 7 dygnen. Gröna punkter och linjen gäller nuvarande förskjutning, grå punkter andra förskjutningar. Stor ring = just nu. Det skuggade fältet är utetemperaturen i prognosen.</p>
-      <div id="plan-curve" class="chart" role="img" aria-label="Framledningstemperatur mot utetemperatur"></div>
-      <p id="plan-curve-status" class="hint"></p>
+      <span class="section-number">PUMPEN JUST NU</span>
+      <h2>Värme, drift och el</h2>
+      <p id="overview-status" role="status">Hämtar pumpstatus…</p>
+      <div id="pump-metrics" class="live-grid"></div>
+      <h3>Elförbrukning</h3>
+      <div id="electricity-metrics" class="live-grid"></div>
+      <p id="electricity-note" class="hint"></p>
+      <p class="hint">Värden rapporterade via Home Assistant. Saknade eller gamla uppgifter visas inte som noll eller ”av”.</p>
     </section>
 
+    <details id="settings-panel" class="fold">
+      <summary><span class="section-number">INSTÄLLNINGAR</span><strong>Rum, pump, väder och elpris</strong><small>Välj givare, gränser och om automatiken ska styra.</small></summary>
     <form id="settings">
       <div class="grid">
         <section class="card">
           <span class="section-number">01 / KOMFORT</span>
-          <h2>Hur varmt vill du ha?</h2>
-          <p>Pumpens grundkurva finns kvar. Vi justerar förskjutningen försiktigt för att närma oss din måltemperatur.</p>
-          <label for="target_temperature">Önskad inomhustemperatur · °C</label>
-          <div class="target-control">
-            <button type="button" id="target-down" aria-label="Sänk måltemperaturen">−</button>
-            <input id="target_temperature" name="target_temperature" type="number" min="10" max="30" step="0.1" required>
-            <button type="button" id="target-up" aria-label="Höj måltemperaturen">+</button>
-          </div>
+          <h2>Vilka rum räknas?</h2>
+          <p>Pumpens grundkurva finns kvar. Vi justerar förskjutningen försiktigt för att nå temperaturen du valt högst upp.</p>
           <label for="room_sensors">Rumsgivare</label>
           <p class="hint" id="room-help">Markera de rum som ska påverka värmen. Även golvvärme (climate) kan väljas: vi läser uppmätt temperatur, inte termostatens börvärde. Undvik att välja både en termostat och dess separata givare för samma rum. Alla val väger lika.</p>
           <div id="room_sensors" class="sensor-list" role="group" aria-describedby="room-help"></div>
@@ -169,6 +179,9 @@
         <div class="buttons"><button id="pause" type="button" class="secondary">Stoppa automatiken</button><button id="save" type="submit">Spara inställningar</button></div>
       </section>
     </form>
+    </details>
+    <details id="log-panel" class="fold">
+      <summary><span class="section-number">SPÅRBAR STYRNING</span><strong>Ändringslogg</strong><small>Allt automatiken och du har ändrat.</small></summary>
     <section class="card dashboard">
       <div class="section-heading"><div><span class="section-number">SPÅRBAR STYRNING</span><h2>Ändringslogg</h2></div><button type="button" id="refresh-events" class="secondary">Uppdatera logg</button></div>
       <p>Se inställningsändringar, automatiska styrförsök, fel och återlästa värden. Ett accepterat serviceanrop är inte samma sak som en bekräftad ändring på pumpen.</p>
@@ -177,6 +190,7 @@
       <button type="button" id="older-events" class="secondary" hidden>Visa äldre händelser</button>
       <p class="hint">Loggen sparas lokalt och överlever omstart. Händelser före denna uppdatering kan inte återskapas. Manuella ändringar på pumpen kan upptäckas vid nästa avläsning men deras upphov kan inte fastställas.</p>
     </section>
+    </details>
     <footer>Via Home Assistant · Avläsning varje minut · Pumpens egna skydd och reglering är alltid kvar.</footer>
   </main>
 </body>

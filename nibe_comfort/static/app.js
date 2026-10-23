@@ -18,6 +18,7 @@ let discovery = null;
 let discoveryError = "";
 let dashboardBusy = false;
 let eventRows = [];
+let lastStatus = null;
 const SVG = "http://www.w3.org/2000/svg";
 
 function notice(message, error = false) {
@@ -121,6 +122,9 @@ function renderSettings() {
   $("manual-pump").open = !settings.offset_entity;
   $("manual-outdoor").open = !settings.outdoor_entity;
   $("manual-price").open = !settings.price_entity;
+  if (!settings.room_sensors.length || !settings.offset_entity) $("settings-panel").open = true;
+  targetChanged();
+  renderIndoorDiff();
   $("price-discovery").textContent = discovery?.price_message || "Välj prisgivare manuellt om den inte hittas.";
   entityHints();
 }
@@ -170,7 +174,9 @@ async function refreshStatus() {
       $("mode").textContent = state.enabled ? "Automatik aktiverad" : "Övervakning";
       $("mode").classList.toggle("active", state.enabled);
     }
+    lastStatus = state;
     $("indoor").textContent = displayNumber(state.indoor);
+    renderIndoorDiff();
     $("current-offset").textContent = displayNumber(state.current_offset);
     $("desired-offset").textContent = displayNumber(state.desired_offset);
     $("next-offset").textContent = displayNumber(state.next_offset);
@@ -187,15 +193,73 @@ async function refreshStatus() {
   } catch (error) {
     $("status-title").textContent = "Kontakt med tillägget saknas";
     $("status-message").textContent = error.message;
+    lastStatus = null;
     for (const id of ["indoor", "current-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
+    $("indoor-diff").textContent = "Medel av dina valda rum";
     $("updated").textContent = "Visningen är inte aktuell.";
   }
+}
+
+function renderIndoorDiff() {
+  const indoor = lastStatus?.indoor, target = settings?.target_temperature;
+  if (typeof indoor !== "number" || typeof target !== "number") { $("indoor-diff").textContent = "Medel av dina valda rum"; return; }
+  const diff = indoor - target;
+  $("indoor-diff").textContent = Math.abs(diff) < 0.15 ? "Precis som du vill ha det"
+    : `${displayNumber(Math.abs(Math.round(diff * 10) / 10))}° ${diff < 0 ? "under" : "över"} det du vill ha`;
+}
+
+function targetChanged() {
+  const value = $("target_temperature").valueAsNumber;
+  $("save-target").hidden = !settings || !Number.isFinite(value) || Math.abs(value - settings.target_temperature) < 0.01;
+}
+
+const valueAt = (points, time) => {
+  let found = null;
+  for (const point of points || []) { if (point[0] <= time && point[1] !== null) found = point; }
+  return found;
+};
+
+function renderSummary(data) {
+  const current = valueAt(data.outdoor.history, data.now) || data.outdoor.forecast?.[0];
+  $("outdoor-now").textContent = current ? displayNumber(Math.round(current[1] * 10) / 10) : "—";
+  const coming = (data.outdoor.forecast || []).filter((point) => point[0] >= data.now && point[0] <= data.now + 86400 && point[1] !== null);
+  if (coming.length) {
+    const coldest = coming.reduce((a, b) => (b[1] < a[1] ? b : a));
+    const warmest = coming.reduce((a, b) => (b[1] > a[1] ? b : a));
+    $("outdoor-forecast").textContent = `Närmaste dygnet ${displayNumber(Math.round(coldest[1]))} till ${displayNumber(Math.round(warmest[1]))} °C · kallast ${timeLabel(coldest[0], 86400 * 2)}`;
+  } else {
+    $("outdoor-forecast").textContent = data.outdoor.error ? "Prognos saknas" : "Ingen prognos vald";
+  }
+  const next = (data.offset.changes || [])[0];
+  const enabled = lastStatus?.enabled ?? settings?.enabled;
+  if (next) {
+    const now = Math.abs(next.timestamp - data.now) < 120;
+    const sameDay = new Date(next.timestamp * 1000).toDateString() === new Date(data.now * 1000).toDateString();
+    const clock = new Date(next.timestamp * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+    $("next-change").textContent = now ? "Nu" : sameDay ? `kl ${clock}` : `i morgon ${clock}`;
+    const steps = Math.abs(next.offset - next.previous);
+    const what = `${next.offset > next.previous ? "Höjer" : "Sänker"} värmen ${steps === 1 ? "ett steg" : `${displayNumber(steps)} steg`} (${next.previous}→${next.offset})`;
+    $("next-change-why").textContent = `${enabled ? "" : "Förslag – automatiken är av. "}${what}${next.reasons.length ? ` · ${next.reasons.join(", ")}` : ""}`;
+  } else {
+    $("next-change").textContent = "Ingen behövs";
+    const level = valueAt(data.offset.history, data.now)?.[1] ?? lastStatus?.current_offset;
+    $("next-change-why").textContent = `Värmekurvan ligger kvar${typeof level === "number" ? ` på ${displayNumber(level)}` : ""} närmaste dygnet`;
+  }
+  const extra = [];
+  const price = valueAt(data.prices.points, data.now);
+  if (price) {
+    const level = price[1] <= data.prices.low ? "billigt" : price[1] >= data.prices.high ? "dyrt" : "normalt";
+    extra.push(`Elpris nu ${displayNumber(price[1])}${data.prices.unit ? ` ${data.prices.unit}` : ""} (${level})`);
+  }
+  const offsetNow = lastStatus?.current_offset;
+  if (typeof offsetNow === "number") extra.push(`Värmekurvans förskjutning ${displayNumber(offsetNow)}`);
+  $("hero-extra").textContent = extra.join(" · ");
 }
 
 async function save(config) {
   if (busy) return;
   busy = true;
-  $("save").disabled = $("pause").disabled = true;
+  $("save").disabled = $("pause").disabled = $("save-target").disabled = true;
   try {
     settings = await api("settings", {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config),
@@ -211,7 +275,7 @@ async function save(config) {
     notice(`Kunde inte spara: ${error.message}`, true);
   } finally {
     busy = false;
-    $("save").disabled = $("pause").disabled = false;
+    $("save").disabled = $("pause").disabled = $("save-target").disabled = false;
   }
 }
 
@@ -564,6 +628,7 @@ async function refreshPlan() {
     }
     $("plan-changes").replaceChildren(...items);
     $("plan-notes").textContent = data.notes.join(" ");
+    renderSummary(data);
 
     drawCurve($("plan-curve"), data.curve);
     const fit = data.curve.fit;
@@ -677,8 +742,10 @@ async function init() {
       const input = $("target_temperature");
       const value = Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : settings.target_temperature;
       input.value = Math.max(10, Math.min(30, value + direction * 0.5)).toFixed(1);
+      targetChanged();
     });
   }
+  $("target_temperature").addEventListener("input", targetChanged);
   $("offset_entity").addEventListener("change", entityHints);
   $("outdoor_entity").addEventListener("change", entityHints);
   $("price_entity").addEventListener("change", entityHints);
