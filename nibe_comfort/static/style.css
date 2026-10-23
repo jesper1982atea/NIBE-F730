@@ -20,6 +20,7 @@
 .hero .now-tile .target-control button{font-size:24px;padding:6px 14px;background:rgba(255,255,255,.14);color:#fff;flex-shrink:0}
 .hero .now-tile #save-target{margin-top:6px;background:#e3a947;color:#18352f;font-weight:750}
 .hero-extra{margin:16px 0 0;font-size:14px;color:#dbe8e1}
+.now-tile .offset-now{border-top:1px solid rgba(255,255,255,.2);padding-top:10px;margin-top:8px;font-size:14px}.offset-now b{color:#fff;font-size:22px}
 .hero-extra:empty{display:none}
 .hero #updated{margin:6px 0 0;font-size:12px;color:#9fbcae}
 .fold{margin-top:24px}

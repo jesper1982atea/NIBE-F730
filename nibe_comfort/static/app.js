@@ -183,6 +183,8 @@ async function refreshStatus() {
     $("indoor").textContent = displayNumber(state.indoor);
     renderIndoorDiff();
     $("current-offset").textContent = displayNumber(state.current_offset);
+    $("hero-offset").textContent = displayNumber(state.current_offset);
+    $("hero-offset-base").textContent = typeof settings?.base_offset === "number" ? ` · grundvärde ${displayNumber(settings.base_offset)}` : "";
     $("desired-offset").textContent = displayNumber(state.desired_offset);
     $("next-offset").textContent = displayNumber(state.next_offset);
     $("status-title").textContent = state.error_message ? "Styrningen är pausad" : state.enabled ? "Värmen följer dina inställningar" : "Se förslaget innan du styr";
@@ -201,7 +203,8 @@ async function refreshStatus() {
     $("status-title").textContent = "Kontakt med tillägget saknas";
     $("status-message").textContent = error.message;
     lastStatus = null;
-    for (const id of ["indoor", "current-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
+    for (const id of ["indoor", "current-offset", "hero-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
+    $("hero-offset-base").textContent = "";
     $("indoor-diff").textContent = "Medel av dina valda rum";
     $("updated").textContent = "Visningen är inte aktuell.";
   }
@@ -249,8 +252,7 @@ function renderSummary(data) {
     $("next-change-why").textContent = `${enabled ? "" : "Förslag – automatiken är av. "}${what}${next.reasons.length ? ` · ${next.reasons.join(", ")}` : ""}`;
   } else {
     $("next-change").textContent = "Ingen behövs";
-    const level = valueAt(data.offset.history, data.now)?.[1] ?? lastStatus?.current_offset;
-    $("next-change-why").textContent = `Värmekurvan ligger kvar${typeof level === "number" ? ` på ${displayNumber(level)}` : ""} närmaste dygnet`;
+    $("next-change-why").textContent = "Ingen ändring av förskjutningen planeras närmaste dygnet";
   }
   const extra = [];
   const price = valueAt(data.prices.points, data.now);
@@ -258,8 +260,6 @@ function renderSummary(data) {
     const level = price[1] <= data.prices.low ? "billigt" : price[1] >= data.prices.high ? "dyrt" : "normalt";
     extra.push(`Elpris nu ${displayNumber(price[1])}${data.prices.unit ? ` ${data.prices.unit}` : ""} (${level})`);
   }
-  const offsetNow = lastStatus?.current_offset;
-  if (typeof offsetNow === "number") extra.push(`Värmekurvans förskjutning ${displayNumber(offsetNow)}`);
   heroParts.plan = extra;
   renderHeroExtra();
 }

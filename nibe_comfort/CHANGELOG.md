@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 0.2.11
+
+- Aktuell kurvförskjutning och grundvärde visas tydligt högst upp i rutan
+  **Nästa justering**, även när ingen justering behövs. Värdet uppdateras
+  med senaste statusavläsningen.
+
 ## 0.2.10
 
 - **Testa styrningen** är enklare att följa: en stor ruta säger vilket värde

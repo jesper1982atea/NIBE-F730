@@ -180,6 +180,9 @@ try {
   assert.match(await page.locator("#outdoor-forecast").textContent(), /Närmaste dygnet .* °C · kallast/);
   assert.match(await page.locator("#next-change").textContent(), /^(kl|i morgon) \d\d:\d\d$/);
   assert.match(await page.locator("#next-change-why").textContent(), /Höjer värmen ett steg \(2→3\) · billigt elpris/);
+  assert.equal(await page.locator("#hero-offset").textContent(), "3");
+  assert.equal(await page.locator("#hero-offset").isVisible(), true);
+  assert.match(await page.locator("#hero-offset-base").textContent(), /grundvärde 3/);
   assert.match(await page.locator("#hero-extra").textContent(), /Elpris nu .* SEK\/kWh \((billigt|normalt|dyrt)\)/);
   await page.waitForFunction(() => document.getElementById("hw-status").textContent.startsWith("Uppdaterad"));
   await page.waitForFunction(() => document.getElementById("learn-status").textContent.startsWith("Grov bild"));
@@ -346,6 +349,16 @@ try {
   await haPage.evaluate(() => { document.documentElement.style.setProperty("--primary-background-color", "#fafafa"); document.body.style.background = "#fafafa"; });
   await frame.waitForFunction(() => document.documentElement.dataset.theme === "light");
   await haPage.close();
+  await page.route("**/api/plan", async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    data.offset.changes = [];
+    await route.fulfill({ json: data });
+  });
+  await page.locator("#refresh-plan").click();
+  await page.waitForFunction(() => document.getElementById("next-change").textContent === "Ingen behövs");
+  assert.equal(await page.locator("#hero-offset").textContent(), "3");
+  assert.match(await page.locator("#next-change-why").textContent(), /Ingen ändring av förskjutningen planeras/);
   failHistory = true;
   await page.locator("#refresh-history").click();
   await page.waitForFunction(() => document.getElementById("history-status").textContent.includes("Recorder saknas"));
