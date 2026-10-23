@@ -1,5 +1,10 @@
 # Ändringslogg
 
+## 0.2.8
+
+- Versionsnumret visas längst ned i gränssnittet, så att det syns att en
+  uppdatering från Home Assistant har installerats.
+
 ## 0.2.7
 
 - Nytt kort **Ditt hus lär sig** efter värmeplanen. Tillägget sparar timvisa

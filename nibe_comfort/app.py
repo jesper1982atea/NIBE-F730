@@ -64,6 +64,8 @@ def handler_for(controller, api_token=None):
             try:
                 if path == "/api/settings":
                     self.respond(200, controller.settings())
+                elif path == "/api/version":
+                    self.respond(200, {"version": os.environ.get("NIBE_COMFORT_VERSION", "dev")})
                 elif path == "/api/status":
                     self.respond(200, controller.snapshot())
                 elif path == "/api/discovery":

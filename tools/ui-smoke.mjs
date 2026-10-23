@@ -77,6 +77,7 @@ const server = createServer(async (request, response) => {
     enabled: settings.enabled, checked_at: now, wait_seconds: 1800,
     message: "Väntar på nästa tillåtna ändring.", contributions: { room: -1.5, weather: 0, price: 0 },
   };
+  else if (path === "/api/version") data = { version: "0.2.8" };
   else if (path === "/api/overview") data = overview;
   else if (path === "/api/plan") data = {
     start: now - 86400, end: now + 36 * 3600, now,
@@ -171,6 +172,7 @@ try {
   assert.match(await page.locator("#hero-extra").textContent(), /Elpris nu .* SEK\/kWh \((billigt|normalt|dyrt)\)/);
   await page.waitForFunction(() => document.getElementById("hw-status").textContent.startsWith("Uppdaterad"));
   await page.waitForFunction(() => document.getElementById("learn-status").textContent.startsWith("Grov bild"));
+  await page.waitForFunction(() => document.getElementById("version").textContent === " · Version 0.2.8");
   assert.equal(await page.locator("#learning-card").evaluate((card) => card.previousElementSibling.querySelector("#plan-changes") !== null), true, "Learning card follows the plan");
   assert.equal(await page.locator("#hot-water-card").evaluate((card) => card.previousElementSibling.id), "learning-card");
   assert.match(await page.locator("#learn-progress").textContent(), /6,6 av 7 dygn.*4 av 6/);

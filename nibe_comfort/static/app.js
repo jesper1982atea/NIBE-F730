@@ -949,6 +949,15 @@ async function refreshDashboard() {
   finally { dashboardBusy = false; }
 }
 
+async function showVersion() {
+  try {
+    const { version } = await api("version");
+    $("version").textContent = ` · Version ${version}`;
+  } catch {
+    $("version").textContent = "";
+  }
+}
+
 async function init() {
   makeAdvanced();
   $("save").disabled = $("pause").disabled = true;
@@ -997,6 +1006,7 @@ async function init() {
   $("refresh-events").addEventListener("click", () => void refreshEvents());
   $("older-events").addEventListener("click", () => void refreshEvents(true));
   await refreshStatus();
+  void showVersion();
   void refreshDashboard();
   void refreshHistory();
   void refreshForecast();
