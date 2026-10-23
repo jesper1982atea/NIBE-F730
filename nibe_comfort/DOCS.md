@@ -29,8 +29,10 @@ Rumsgivare väljer du alltid själv.
 från ditt mål det är), **Du vill ha** (ändra med − och +, tryck sedan *Spara
 ny temperatur*), **Ute nu** (med prognosens spann närmaste dygnet) och **Nästa
 justering** (när värmekurvan ändras, åt vilket håll och varför). Är automatiken
-av visas justeringen som ett förslag. Därunder visas elpriset just nu och
-värmekurvans förskjutning.
+av visas justeringen som ett förslag. I samma ruta visas **Kurvförskjutning
+nu** från senaste avläsningen och ditt **grundvärde**, även när ingen
+justering behövs. Detta är förskjutningen, inte numret på pumpens grundkurva.
+Därunder visas elpriset just nu.
 
 Längre ner finns värmeplanen med grafer, husmodellen (*Ditt hus lär sig*),
 varmvatten, temperaturhistorik och pumpens drift.
