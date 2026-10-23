@@ -18,6 +18,7 @@ let discovery = null;
 let discoveryError = "";
 let dashboardBusy = false;
 let eventRows = [];
+let eventsError = "";
 let lastStatus = null;
 let summaryPlan = null;
 const heroParts = { plan: [], hotWater: "" };
@@ -227,6 +228,67 @@ function renderRoomImpact() {
     const item = document.createElement("li");
     item.textContent = `${room.name}: ${displayNumber(room.temperature)} °C · ${displayNumber(room.temperature - settings.target_temperature)}° över målet · ${roomTrend(room)}`;
     return item;
+  }));
+  renderComfort();
+}
+
+function renderComfort() {
+  const rooms = lastStatus?.rooms || [];
+  const controlling = settings?.priority_sensors.length ? settings.priority_sensors : settings?.room_sensors || [];
+  const cold = rooms.filter((room) => controlling.includes(room.entity_id) && room.temperature != null
+    && room.temperature < settings.target_temperature - settings.deadband);
+  const items = [];
+  $("comfort-status").textContent = !rooms.length ? "Aktuella rumstemperaturer saknas."
+    : cold.length ? "Dessa styrande rum ligger under målet:"
+      : rooms.some((room) => controlling.includes(room.entity_id) && room.temperature == null)
+        ? "En styrande givare saknar giltigt mätvärde. Kontrollera anslutningen."
+        : "De styrande rummens temperaturer ligger inte under toleransbandet.";
+  for (const room of cold) {
+    const prefix = `${room.name}: ${displayNumber(room.temperature)} °C, mål ${displayNumber(settings.target_temperature)} °C. `;
+    if (room.thermostat_error) items.push(prefix + `Termostatens inställning kan inte bedömas: ${room.thermostat_error}`);
+    else if (room.thermostat_mode === "off") items.push(prefix + "Termostaten är avstängd. Kontrollera den innan du höjer värmen till hela huset.");
+    else if (typeof room.setpoint === "number" && room.setpoint < settings.target_temperature - 0.1)
+      items.push(prefix + `Termostaten är inställd på ${displayNumber(room.setpoint)} °C, under ditt mål. Den kan begränsa värmen. Kontrollera dess inställning innan du höjer förskjutningen.`);
+    else if (typeof room.setpoint === "number")
+      items.push(prefix + `Termostaten är inställd på ${displayNumber(room.setpoint)} °C. Det visar inte att ventilen är öppen eller att flödet är tillräckligt.`);
+    else items.push(prefix + "Termostatens börvärde saknas eller kan inte kopplas entydigt till givaren. Kontrollera radiatorn eller golvvärmen lokalt.");
+  }
+  if (cold.length && lastStatus?.warm_rooms?.length)
+    items.push("Andra rum är redan minst 2 °C över målet. Kontrollera de kalla rummens termostater innan du tillåter mer värme till hela huset.");
+  if (cold.length && lastStatus?.control_limit?.direction === "upper")
+    items.push("Övre säkerhetsgränsen begränsar förskjutningen. En höjd gräns värmer hela huset och garanterar inte att just detta rum når målet.");
+  $("comfort-advice").replaceChildren(...items.map((text) => {
+    const li = document.createElement("li"); li.textContent = text; return li;
+  }));
+  const changes = eventRows.filter((event) => event.kind === "offset_observed"
+    && event.details?.entity_id === settings?.offset_entity)
+    .sort((a, b) => b.timestamp - a.timestamp);
+  const latest = changes[0];
+  $("comfort-response").replaceChildren();
+  if (eventsError) {
+    $("comfort-change").textContent = `Ändringsloggen kunde inte hämtas: ${eventsError}`;
+    return;
+  }
+  if (!latest || latest.details.value <= latest.details.previous) {
+    $("comfort-change").textContent = latest
+      ? "Senaste bekräftade ändringen var en sänkning. Väntar på nästa höjning för en ny jämförelse."
+      : "Ingen bekräftad höjning finns i den hämtade loggen. Ett skickat kommando räcker inte som bekräftelse.";
+    return;
+  }
+  const minutes = Math.max(0, Math.floor((Date.now() / 1000 - latest.timestamp) / 60));
+  $("comfort-change").textContent = `Förskjutningen ändrades ${displayNumber(latest.details.previous)} → ${displayNumber(latest.details.value)} kl ${clock(latest.timestamp)} (${minutes} minuter sedan). ${minutes < 120 ? "Det är tidigt att bedöma effekten; radiatorer och golvvärme reagerar långsamt." : "Jämför uppmätta temperaturer nedan."}`;
+  $("comfort-response").replaceChildren(...rooms.map((room) => {
+    const line = historyData?.series.find((line) => line.entity_id === room.entity_id);
+    const before = historyData && historyData.start <= latest.timestamp && historyData.end >= latest.timestamp
+      ? line?.points.findLast((point) => point[0] <= latest.timestamp)?.[1] : null;
+    const li = document.createElement("li");
+    if (room.temperature == null || typeof before !== "number" || lastStatus.checked_at < latest.timestamp)
+      li.textContent = `${room.name}: jämförelse saknas (${room.error || "historik eller en aktuell avläsning efter höjningen saknas"}).`;
+    else {
+      const delta = Math.round((room.temperature - before) * 100) / 100;
+      li.textContent = `${room.name}: ${displayNumber(before)} → ${displayNumber(room.temperature)} °C (${delta > 0 ? "+" : ""}${displayNumber(delta)} °C sedan höjningen)${room.priority ? " · prioriterat" : ""}.`;
+    }
+    return li;
   }));
 }
 
@@ -1023,10 +1085,14 @@ async function refreshEvents(older = false) {
     const query = older && eventRows.length ? `?before=${eventRows.at(-1).id}` : "";
     const rows = await api(`events${query}`);
     eventRows = older ? [...eventRows, ...rows] : rows;
+    eventsError = "";
     renderEvents();
+    renderComfort();
     $("events-status").textContent = eventRows.length ? `${eventRows.length} händelser visas, nyaste först.` : "Inga händelser sparade ännu.";
     $("older-events").hidden = rows.length < 100;
   } catch (error) {
+    eventsError = error.message;
+    renderComfort();
     $("events-status").textContent = `Kunde inte läsa ändringsloggen: ${error.message}`;
   } finally { $("refresh-events").disabled = $("older-events").disabled = false; }
 }

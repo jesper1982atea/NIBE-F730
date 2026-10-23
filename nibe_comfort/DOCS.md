@@ -82,6 +82,33 @@ med något annat rum. Övriga rum kan sakna mätvärde utan att stoppa
 prioriterad styrning. Då visas inte ett missvisande delsnitt för hela huset:
 **Alla valda givare** visar **—** och felet anges på berört rum.
 
+### Komfortkort: varför blir inte rummet varmt?
+
+Under startsidan visas ett rådgivande kort för de rum som styr värmen
+(prioriterade rum om sådana valts, annars alla valda rum). Ett rum räknas
+som kallt när det ligger under målet med mer än toleransbandet.
+
+För termostater läses driftläge och börvärde. För separata temperaturgivare
+kopplas endast en entydig termostat på exakt samma HA-enhet. En avstängd
+termostat eller ett börvärde under målet markeras som något att kontrollera
+innan mer värme tillåts i hela huset. Otillgängliga, ogiltiga, saknade eller
+flertydiga inställningar anges uttryckligen. Ett börvärde på 22 °C bevisar
+inte att en ventil är öppen eller att flödet räcker.
+
+Kortet visar också hur varje valt rums uppmätta temperatur förändrats sedan
+senaste bekräftade höjningen av den valda pumpens förskjutning. Jämförelsen
+använder `offset_observed` i den hämtade ändringsloggen, inte enbart ett
+skickat kommando, och Recorder-värdet vid återläsningen. Om senaste ändringen
+var en sänkning inväntas nästa höjning. Saknas historik eller aktuellt värde
+visas ingen beräknad förändring. Under de första två timmarna anges att det
+är tidigt att bedöma effekten.
+
+Temperaturförändringen är **inte ett säkert orsakssamband**. Väder, sol,
+ventilation och användning påverkar också. När andra rum redan är minst
+2 °C över målet rekommenderas lokal kontroll före ytterligare höjning.
+Kortet kan inte diagnostisera flöde, injustering eller ventilfel och ändrar
+inte pumpen, termostaterna eller dina säkerhetsgränser.
+
 ### Ditt hus lär sig och förvärmning
 
 Tillägget lär sig hur ditt hus reagerar på värmekurvan. Varje timme sparas

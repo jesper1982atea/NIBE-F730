@@ -386,6 +386,24 @@ def current_readings(config, entities, now, peers):
             room["temperature"] = round(value, 2)
         except ControlError as exc:
             room["error"] = str(exc)
+        room.update(thermostat=None, setpoint=None, thermostat_mode=None, thermostat_error=None)
+        candidates = [key] if key.startswith("climate.") else [
+            eid for eid in peers.get(key, ()) if eid.startswith("climate.")
+        ]
+        if len(candidates) == 1:
+            room["thermostat"] = candidates[0]
+            try:
+                thermostat = get(candidates[0])
+                room["thermostat_mode"] = thermostat["state"]
+                attrs = thermostat["attributes"]
+                if attrs.get("temperature") is not None:
+                    room["setpoint"] = round(temperature({
+                        **thermostat, "attributes": {**attrs, "current_temperature": attrs["temperature"]},
+                    }), 2)
+            except ControlError as exc:
+                room["thermostat_error"] = str(exc)
+        elif candidates:
+            room["thermostat_error"] = "Flera termostater på samma enhet; ingen väljs automatiskt."
         rooms.append(room)
     readings["rooms"] = rooms
     readings["house_indoor"] = round(sum(r["temperature"] for r in rooms) / len(rooms), 2) if rooms and all(r["temperature"] is not None for r in rooms) else None

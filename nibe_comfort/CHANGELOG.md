@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## 0.2.16
+
+- Nytt komfortkort **Varför blir inte rummet varmt?** under startsidan.
+  Visar kalla styrande rum och om en kopplad termostat är avstängd eller
+  inställd under ditt mål. Saknade eller flertydiga börvärden anges tydligt.
+  Koppling sker bara direkt eller till en entydig termostat på samma HA-enhet.
+- Efter en bekräftad höjning jämförs rumstemperaturerna vid höjningen med
+  aktuella värden. Tidiga observationer markeras; historikluckor, sänkning
+  efter höjning och loggfel hanteras utan påhittade resultat.
+- Råd att kontrollera kalla rums termostater när andra rum redan är varma,
+  samt förklaring om säkerhetsgränsen begränsar mer värme. Kortet är
+  rådgivande och ändrar inte styrning, ventiler eller inställningar.
+
 ## 0.2.15
 
 - Varning högst upp om ett annat valt rum når 2 °C över målet vid prioriterad
