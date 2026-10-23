@@ -303,6 +303,11 @@ faktisk besparingsberäkning ingår inte.
   samma pump** har rapporterats inom åldersgränsen. Det visar att
   integrationen fortfarande levererar data. Tystnar hela pumpen, eller blir
   värdet otillgängligt, pausas styrningen som tidigare.
+- Samma kontroll gäller rumstermostater (`climate`), till exempel LK:
+  en färsk rapport från en annan entitet på exakt samma HA-enhet kan
+  bekräfta en oförändrad termostat. Givare från andra enheter används
+  inte som bevis. Termostaten måste fortfarande ha en giltig temperatur
+  och får inte vara otillgänglig.
 - Start och omstart innebär minst ett helt inställt intervall utan skrivning.
   Tidpunkten för skrivförsök sparas **innan** anropet till Home Assistant:
   även ett timeoutfel ger väntetid eftersom pumpen kan ha tagit emot ändringen.
