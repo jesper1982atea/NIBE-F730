@@ -289,6 +289,13 @@ säkerhetsgränser. Nästa skrivning begränsas dessutom av maximal ändring per
 gång och kvantiseras till entitetens giltiga steg, räknat från dess minimum.
 Små skillnader kan därför ge oförändrad förskjutning.
 
+Om exempelvis grundvärdet är 3 och rumspåverkan +1,35 begär regleringen
+4,35. Med en maxgräns på 3 tillåts ingen höjning från 3. Startsidan visar
+då **Övre gränsen nådd**, inte att rummet redan nått målet. Gränsen måste
+ändras medvetet i inställningarna; den höjs aldrig automatiskt.
+En höjning påverkar även redan varma rum och ger ingen garanti för en
+viss inomhustemperatur.
+
 Medeltemperaturen avser prioriterade givare om sådana valts, annars alla
 valda rumsgivare. Varje styrande givare väger lika.
 

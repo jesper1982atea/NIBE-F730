@@ -389,9 +389,21 @@ try {
   assert.equal(await page.locator("#indoor").textContent(), "—");
   assert.match(await page.locator("#updated").textContent(), /inte aktuell/);
   await page.unroute("**/api/status");
+  await page.route("**/api/status", (route) => route.fulfill({ json: {
+    indoor: 21.1, outdoor: 10, current_offset: 3, next_offset: 3, enabled: true,
+    checked_at: Date.now() / 1000, control_limit: { direction: "upper", value: 3, requested: 4.35 },
+  } }));
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await page.waitForFunction(() => document.getElementById("next-change").textContent === "Övre gränsen nådd");
+  assert.match(await page.locator("#next-change-why").textContent(), /4,35.*säkerhetsgräns är 3/);
+  await page.locator("#refresh-plan").click();
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator("#next-change").textContent(), "Övre gränsen nådd");
+  await page.unroute("**/api/status");
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await page.waitForFunction(() => document.getElementById("hero-offset").textContent === "3");
   assert.equal(await page.locator("#indoor").textContent(), "22");
+  assert.equal(await page.locator("#next-change").textContent(), "Ingen behövs");
   assert.match(await page.locator("#updated").textContent(), /Uppdateras automatiskt/);
   failHistory = true;
   await page.locator("#refresh-history").click();

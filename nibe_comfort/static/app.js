@@ -19,6 +19,7 @@ let discoveryError = "";
 let dashboardBusy = false;
 let eventRows = [];
 let lastStatus = null;
+let summaryPlan = null;
 const heroParts = { plan: [], hotWater: "" };
 
 function renderHeroExtra() {
@@ -245,6 +246,8 @@ async function refreshStatus() {
     $("next-offset").textContent = displayNumber(state.next_offset);
     $("status-title").textContent = state.error_message ? "Styrningen är pausad" : state.enabled ? "Värmen följer dina inställningar" : "Se förslaget innan du styr";
     $("status-message").textContent = state.error_message || state.message;
+    if (summaryPlan) renderSummary(summaryPlan);
+    else renderControlLimit();
     const checked = state.checked_at ? new Date(state.checked_at * 1000).toLocaleTimeString("sv-SE") : "väntar";
     const stale = !state.checked_at || Date.now() / 1000 - state.checked_at > 180;
     $("updated").textContent = `${stale ? "Avläsningen är inte aktuell. " : ""}Senast avläst: ${checked} · Uppdateras automatiskt${state.wait_seconds ? ` · Nästa ändring tidigast om ${Math.ceil(state.wait_seconds / 60)} min` : ""}`;
@@ -290,7 +293,15 @@ const valueAt = (points, time) => {
   return found;
 };
 
+function renderControlLimit() {
+  const limit = lastStatus?.control_limit;
+  if (!limit || lastStatus.error_message || lastStatus.next_offset !== lastStatus.current_offset) return;
+  $("next-change").textContent = limit.direction === "upper" ? "Övre gränsen nådd" : "Nedre gränsen nådd";
+  $("next-change-why").textContent = `Beräknad förskjutning ${displayNumber(limit.requested)}, men din säkerhetsgräns är ${displayNumber(limit.value)}. Ingen ytterligare justering tillåts.`;
+}
+
 function renderSummary(data) {
+  summaryPlan = data;
   const coming = (data.outdoor.forecast || []).filter((point) => point[0] >= data.now && point[0] <= data.now + 86400 && point[1] !== null);
   if (coming.length) {
     const coldest = coming.reduce((a, b) => (b[1] < a[1] ? b : a));
@@ -321,6 +332,7 @@ function renderSummary(data) {
   }
   heroParts.plan = extra;
   renderHeroExtra();
+  renderControlLimit();
 }
 
 async function save(config) {

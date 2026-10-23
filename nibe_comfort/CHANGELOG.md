@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 0.2.15
+
+- När mer eller mindre värme begärs men säkerhetsgränsen stoppar nästa
+  steg visas **Övre gränsen nådd** eller **Nedre gränsen nådd**, i stället
+  för det missvisande **Ingen behövs**. Beräknad förskjutning före
+  begränsning och aktuell gräns visas. Gränser ändras aldrig automatiskt.
+
 ## 0.2.14
 
 - Välj valfritt 1–2 **prioriterade rumsgivare** i inställningarna. Deras
