@@ -190,6 +190,31 @@ ackumulerade förbrukning visas separat. De är inte pumpens förbrukning.
 Vid flera hem/mätare väljs ingen godtyckligt. Värdena visas i källans enhet,
 med rapporteringstid och synliga fel. Översikten uppdateras varje minut.
 
+### Testa styrningen
+
+Under **Testa styrningen** längst ned kan du kontrollera att pumpen verkligen
+tar emot ändringar. *Starta test* ändrar kurvförskjutningen ett steg (uppåt,
+eller nedåt om din övre gräns är nådd) i 10 minuter och ställer sedan
+tillbaka ursprungsvärdet automatiskt. Under tiden gör automatiken inga egna
+ändringar. Testet fungerar även när automatiken är avstängd, men kräver att
+en kurvförskjutning är vald, att värdet är aktuellt och att dina min/max
+lämnar plats för ett steg.
+
+Stegen i kortet visar att ändringen skickades, att Home Assistant läser
+tillbaka det nya värdet från pumpen (brukar ta 1–5 minuter via myUplink) och
+att ursprungsvärdet är återställt. Kontrollera samtidigt på pumpen:
+
+- **Pumpens display:** meny 1.1 Temperatur (Inomhusklimat), värme för
+  klimatsystem 1, eller meny 1.9.1.1 Värmekurva.
+- **myUplink-appen:** *Förskjutning värmekurva* för klimatsystem 1.
+- Efter några minuter ändras pumpens beräknade framledningstemperatur.
+
+Menynamnen kan skilja mellan programversioner. Läser Home Assistant aldrig
+tillbaka testvärdet når ändringen inte pumpen; kontrollera myUplink-
+integrationens skrivrättigheter (kan kräva myUplinks Premium-abonnemang).
+*Avbryt och återställ nu* ställer tillbaka direkt. Om förskjutningen ändras
+av något annat under testet lämnas den orörd. Testet loggas i ändringsloggen.
+
 ## Börja här
 
 1. Anslut NIBE via Home Assistants myUplink-integration och säkerställ att
@@ -315,6 +340,8 @@ Token ger behörighet att både läsa och ändra alla styrinställningar.
 | GET | `/api/events` | Senaste 100 logghändelser; `?before=<id>` hämtar äldre |
 | GET | `/api/settings` | Komplett sparad styrkonfiguration |
 | PUT | `/api/settings` | Ersätt komplett konfiguration med JSON |
+| GET | `/api/test` | Status för testet av styrningen |
+| PUT | `/api/test` | `{"action": "start"}` startar testet, `{"action": "stop"}` återställer direkt |
 
 Hämta inställningarna först, ändra önskade fält och skicka tillbaka hela
 objektet med `Content-Type: application/json`. Okända eller saknade fält

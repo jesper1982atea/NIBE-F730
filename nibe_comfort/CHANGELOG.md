@@ -1,5 +1,15 @@
 # Ändringslogg
 
+## 0.2.9
+
+- Ny utfällbar sektion **Testa styrningen** (KONTROLL). Knappen *Starta test*
+  ändrar kurvförskjutningen ett steg i 10 minuter, visar steg för steg att
+  Home Assistant skickat ändringen och att pumpen rapporterar tillbaka det nya
+  värdet, och ställer sedan automatiskt tillbaka ursprungsvärdet. Automatiken
+  väntar under testet. Instruktioner visar var du ser värdet på pumpens
+  display och i myUplink-appen. Testet överlever omstart och skriver aldrig
+  över ett värde som någon annan har ändrat under tiden.
+
 ## 0.2.8
 
 - Versionsnumret visas längst ned i gränssnittet, så att det syns att en

@@ -59,6 +59,10 @@ LIMITS = {
 }
 
 
+TEST_SECONDS = 600
+RESTORE_CONFIRM_SECONDS = 900
+
+
 class ControlError(Exception):
     pass
 
@@ -462,6 +466,11 @@ class Controller:
             state = json.loads(self.state_path.read_text())
             self.last_write = max(self.last_write, number(state["last_attempt"], "Senaste skrivförsök"))
             self.pending = state.get("pending")
+        self.test_path = Path(data_dir) / "test-state.json"
+        self.test = None
+        if self.test_path.exists():
+            saved_test = json.loads(self.test_path.read_text())
+            self.test = saved_test if isinstance(saved_test, dict) and saved_test.get("phase") else None
         self.events.add("startup", "Tillägget startat. Minsta ändringsintervall gäller efter omstart.", settings=self.config)
         self.status = {"message": "Väntar på första avläsningen.", "error_message": None}
         self.peer_cache = (0, {})
@@ -563,6 +572,127 @@ class Controller:
             self.preheat_kind = result["kind"]
         return result
 
+    def save_test(self):
+        atomic_json(self.test_path, self.test or {})
+
+    def test_status(self):
+        with self.lock:
+            return {"now": time.time(), "duration_seconds": TEST_SECONDS, "test": copy.deepcopy(self.test)}
+
+    def offset_state(self):
+        """Fresh offset entity, its value and limits, for a manual test write."""
+        if not self.config["offset_entity"]:
+            raise ControlError("Ingen kurvförskjutning är vald. Välj din pump under Inställningar först.")
+        now = time.time()
+        entities = self.ha.states()
+        peers = self.peers()
+        states = {entity["entity_id"]: entity for entity in entities}
+        offset_id = self.config["offset_entity"]
+        entity = fresh_entity(states, offset_id, self.config["max_age_minutes"], now, peers.get(offset_id, ()))
+        attrs = entity.get("attributes", {})
+        current = number(entity["state"], "Kurvförskjutning")
+        minimum = number(attrs.get("min"), "Entitetens minimum")
+        maximum = number(attrs.get("max"), "Entitetens maximum")
+        step = number(attrs.get("step"), "Entitetens steglängd")
+        if step <= 0 or minimum >= maximum or not minimum <= current <= maximum:
+            raise ControlError("Kurvförskjutningens intervall eller steglängd är ogiltig.")
+        return now, offset_id, current, max(minimum, self.config["min_offset"]), min(maximum, self.config["max_offset"]), step
+
+    def start_test(self):
+        """Move the offset one step for TEST_SECONDS so the user can see the pump react, then restore it."""
+        with self.lock:
+            if self.test and self.test["phase"] in ("running", "restoring"):
+                raise ControlError("Ett test pågår redan.")
+            if self.pending:
+                raise ControlError("En ändring från automatiken väntar fortfarande på återläsning. Försök igen om en stund.")
+            now, offset_id, current, low, high, step = self.offset_state()
+            value = round(current + step, 6) if current + step <= high + 1e-6 else round(current - step, 6)
+            if not low - 1e-6 <= value <= high + 1e-6:
+                raise ControlError("Säkerhetsgränserna lämnar inget utrymme för ett teststeg. Vidga min/max under Säkerhet och finjustering.")
+            request_id = self.events.add(
+                "test_write", "Test: kurvförskjutningen ändras tillfälligt ett steg.",
+                entity_id=offset_id, previous=current, value=value, restore_after_minutes=TEST_SECONDS // 60,
+            )
+            self.test = {
+                "phase": "running", "entity_id": offset_id, "original": current, "value": value,
+                "started_at": now, "restore_at": now + TEST_SECONDS, "observed_at": None,
+                "restored_at": None, "finished_at": None, "result": None, "request_id": request_id,
+            }
+            self.save_test()
+            self.last_write = now
+            atomic_json(self.state_path, {"last_attempt": now, "pending": None})
+            try:
+                self.ha.set_offset(offset_id, value)
+            except ControlError as exc:
+                self.test.update(phase="done", finished_at=now, result="failed", error=str(exc))
+                self.save_test()
+                self.events.add("test_failed", "Test: Home Assistant tog inte emot ändringen.", request_id=request_id, error=str(exc))
+                raise
+            self.events.add("test_sent", "Test: Home Assistant accepterade ändringen; inväntar återläsning.", request_id=request_id)
+            return copy.deepcopy(self.test)
+
+    def stop_test(self):
+        with self.lock:
+            if not self.test or self.test["phase"] != "running":
+                raise ControlError("Inget test pågår.")
+            now, offset_id, current, *_ = self.offset_state()
+            self.restore_test(current if offset_id == self.test["entity_id"] else None, now, "Du avbröt testet.")
+            return copy.deepcopy(self.test)
+
+    def restore_test(self, current, now, reason):
+        test = self.test
+        test["restored_at"] = now
+        if current is None or (abs(current - test["value"]) > 1e-6 and abs(current - test["original"]) > 1e-6):
+            test.update(phase="done", finished_at=now, result="changed")
+            self.events.add("test_done", "Test: värdet ändrades av något annat under testet och lämnades orört.",
+                            request_id=test["request_id"], observed=current)
+        elif abs(current - test["original"]) <= 1e-6:
+            test.update(phase="done", finished_at=now, result="confirmed" if test["observed_at"] else "unconfirmed")
+            self.events.add("test_done", "Test: förskjutningen är redan tillbaka på ursprungsvärdet.", request_id=test["request_id"])
+        else:
+            test["phase"] = "restoring"
+            self.events.add("test_restore", f"Test: återställer kurvförskjutningen. {reason}",
+                            request_id=test["request_id"], value=test["original"])
+            self.last_write = now
+            atomic_json(self.state_path, {"last_attempt": now, "pending": None})
+            try:
+                self.ha.set_offset(test["entity_id"], test["original"])
+            except ControlError as exc:
+                test["phase"] = "running"
+                self.save_test()
+                self.events.add("test_failed", "Test: återställningen misslyckades; nytt försök vid nästa avläsning.",
+                                request_id=test["request_id"], error=str(exc))
+                raise
+        self.save_test()
+
+    def test_step(self, entities, now):
+        """Follow an active test: confirm readback, restore when due and confirm the restore."""
+        test = self.test
+        if not test or test["phase"] not in ("running", "restoring"):
+            return
+        entity = next((e for e in entities if e["entity_id"] == test["entity_id"]), None)
+        try:
+            current = number(entity["state"], "Kurvförskjutning") if entity else None
+        except ControlError:
+            current = None
+        if test["phase"] == "running":
+            if current is not None and not test["observed_at"] and abs(current - test["value"]) <= 1e-6:
+                test["observed_at"] = now
+                self.events.add("test_observed", "Test: Home Assistant läser tillbaka det nya värdet från pumpen.",
+                                request_id=test["request_id"], observed=current)
+                self.save_test()
+            if now >= test["restore_at"]:
+                self.restore_test(current, now, "Testtiden är slut.")
+        elif current is not None and abs(current - test["original"]) <= 1e-6:
+            test.update(phase="done", finished_at=now, result="confirmed" if test["observed_at"] else "unconfirmed")
+            self.events.add("test_done", "Test: ursprungsvärdet återläst. Testet är klart.", request_id=test["request_id"])
+            self.save_test()
+        elif now - test["restored_at"] >= RESTORE_CONFIRM_SECONDS:
+            test.update(phase="done", finished_at=now, result="restore_unconfirmed")
+            self.events.add("test_done", "Test: återställningen kunde inte bekräftas. Kontrollera förskjutningen på pumpen.",
+                            request_id=test["request_id"], observed=current)
+            self.save_test()
+
     def tick(self):
         schedule = self.preheat_schedule()
         with self.lock:
@@ -570,6 +700,7 @@ class Controller:
             try:
                 entities = self.ha.states()
                 peers = self.peers()
+                self.test_step(entities, now)
                 self.observe(entities, now, peers)
                 preheat = self.preheat(now, schedule)
                 result = evaluate(self.config, entities, now, peers, preheat["shift"])
@@ -583,7 +714,10 @@ class Controller:
                     wait_seconds=math.ceil(remaining),
                     message="Övervakning: inga ändringar skickas.",
                 )
-                if self.config["enabled"]:
+                testing = bool(self.test and self.test["phase"] in ("running", "restoring"))
+                if testing:
+                    result["message"] = "Test av styrningen pågår: automatiken väntar tills testet är klart."
+                elif self.config["enabled"]:
                     result["message"] = "Ingen ändring behövs."
                     if abs(result["next_offset"] - result["current_offset"]) > 1e-6:
                         result["message"] = "Väntar på nästa tillåtna ändring."

@@ -14,6 +14,8 @@ const price = "sensor.electricity_price_home";
 const thermostat = "climate.lk_allrum_thermostat";
 let settings = { ...defaults, enabled: true, room_sensors: ["sensor.living"], offset_entity: offset, outdoor_entity: outdoor, base_offset: 3 };
 let writes = 0;
+let pumpTest = null;
+let testWrites = 0;
 let failHistory = false;
 const now = Date.now() / 1000;
 const entities = [
@@ -78,6 +80,15 @@ const server = createServer(async (request, response) => {
     message: "Väntar på nästa tillåtna ändring.", contributions: { room: -1.5, weather: 0, price: 0 },
   };
   else if (path === "/api/version") data = { version: "0.2.8" };
+  else if (path === "/api/test" && request.method === "PUT") {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const { action } = JSON.parse(Buffer.concat(chunks)); testWrites++;
+    if (action === "start") pumpTest = { phase: "running", entity_id: offset, original: 3, value: 2, started_at: now, restore_at: now + 600, observed_at: now + 60, restored_at: null, finished_at: null, result: null };
+    else pumpTest = { ...pumpTest, phase: "done", restored_at: now + 120, finished_at: now + 180, result: "confirmed" };
+    data = { now, duration_seconds: 600, test: pumpTest };
+  }
+  else if (path === "/api/test") data = { now, duration_seconds: 600, test: pumpTest };
   else if (path === "/api/overview") data = overview;
   else if (path === "/api/plan") data = {
     start: now - 86400, end: now + 36 * 3600, now,
@@ -211,6 +222,24 @@ try {
   assert.match(await page.locator("#electricity-note").textContent(), /hela huset/);
   assert.match(await page.locator("#events-list").textContent(), /Förskjutning 3 → 2/);
   assert.match(await page.locator("#events-list").textContent(), /Automatik: av → på/);
+  assert.equal(await page.locator("#test-panel").getAttribute("open"), null);
+  assert.equal(await page.locator("#test-panel").evaluate((panel) => panel.nextElementSibling.id), "log-panel");
+  await page.locator("#test-panel > summary").click();
+  assert.match(await page.locator("#test-status").textContent(), /Inget test/);
+  assert.equal(await page.locator("#test-stop").isVisible(), false);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("#test-start").click();
+  await page.waitForFunction(() => document.getElementById("test-status").textContent.includes("Testet pågår"));
+  assert.match(await page.locator("#test-steps").textContent(), /3 → 2.*rapporterar 2.*förskjutningen visar 2.*automatiskt till 3/);
+  assert.equal(await page.locator("#test-steps li.done").count(), 2);
+  assert.match(await page.locator(".test-howto").textContent(), /1\.1 Temperatur.*visa 2.*tillbaka på 3/s);
+  assert.equal(await page.locator("#test-start").isVisible(), false);
+  await page.locator("#test-card").screenshot({ path: `${artifacts}/test-running.png` });
+  await page.locator("#test-stop").click();
+  await page.waitForFunction(() => document.getElementById("test-status").textContent.includes("Styrningen fungerar"));
+  assert.equal(await page.locator("#test-steps li.done").count(), 4);
+  assert.equal(testWrites, 2);
+  assert.equal(writes, 0, "The pump test must not save settings");
   await page.locator("#settings-panel > summary").click();
   await page.locator("#log-panel > summary").click();
   const climateInput = page.locator(`#room_sensors input[value="${thermostat}"]`);
