@@ -8,7 +8,7 @@ const advanced = [
   ["room_gain", "Rumspåverkan · steg/°C", 0, 5, 0.1, "Hur mycket en grads avvikelse påverkar förskjutningen."],
   ["deadband", "Tolerans runt målet · °C", 0, 2, 0.1, "Inom detta band ger rummen ingen extra kompensation."],
   ["max_step", "Maximal ändring per gång", 0.1, 2, 0.1, "Måste vara minst entitetens steglängd."],
-  ["min_interval_minutes", "Minst mellan ändringar · minuter", 10, 1440, 1, "Väntetid gäller även efter omstart och misslyckade skrivförsök."],
+  ["min_interval_minutes", "Minst mellan ändringar · minuter", 10, 1440, 1, "Räknas från senaste sparade styrförsök, även efter timeout. Omstart börjar inte om väntetiden."],
   ["max_age_minutes", "Högsta ålder på mätvärden · minuter", 5, 1440, 1, "För gamla eller saknade värden pausar automatiken."],
 ];
 let settings;

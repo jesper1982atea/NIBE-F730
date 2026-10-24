@@ -588,15 +588,68 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("indoor", self.controller.snapshot())
         self.assertNotIn("current_offset", self.controller.snapshot())
 
-    def test_startup_cooldown_then_write_and_wait(self):
+    def test_startup_reads_then_writes_without_extra_wait(self):
         self.enable()
-        self.controller.tick()
-        self.ha.set_offset.assert_not_called()
-        self.allow_write()
         self.controller.tick()
         self.ha.set_offset.assert_called_once_with("number.offset", 1)
         self.controller.tick()
         self.ha.set_offset.assert_called_once()
+
+    def test_restart_preserves_remaining_interval_without_resetting_it(self):
+        self.enable()
+        now = time.time()
+        self.controller.state_path.write_text(json.dumps({"last_attempt": now - 1700, "pending": None}))
+        restored = Controller(self.ha, self.temp.name)
+        restored.tick()
+        self.assertTrue(95 <= restored.snapshot()["wait_seconds"] <= 100)
+        self.ha.set_offset.assert_not_called()
+        restored = Controller(self.ha, self.temp.name)
+        self.assertEqual(restored.last_write, now - 1700)
+        with patch("controller.time.time", return_value=now + 99):
+            restored.tick()
+        self.ha.set_offset.assert_not_called()
+        with patch("controller.time.time", return_value=now + 100):
+            restored.tick()
+        self.ha.set_offset.assert_called_once_with("number.offset", 1)
+
+    def test_invalid_saved_attempt_stops_startup(self):
+        for timestamp in (-1, "NaN", "Infinity"):
+            with self.subTest(timestamp=timestamp):
+                self.controller.state_path.write_text(json.dumps({"last_attempt": timestamp, "pending": None}))
+                with self.assertRaises(ControlError):
+                    Controller(self.ha, self.temp.name)
+        self.ha.set_offset.assert_not_called()
+
+    def test_restart_old_attempt_does_not_wait_again(self):
+        self.enable()
+        self.controller.state_path.write_text(json.dumps({"last_attempt": time.time() - 3600, "pending": None}))
+        restored = Controller(self.ha, self.temp.name)
+        restored.tick()
+        self.ha.set_offset.assert_called_once_with("number.offset", 1)
+
+    def test_restart_after_timeout_retains_interval_even_if_value_not_received(self):
+        self.enable()
+        self.ha.set_offset.side_effect = ControlError("Timeout")
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        attempted_at = self.controller.last_write
+        restored = Controller(self.ha, self.temp.name)
+        restored.tick()
+        self.assertEqual(restored.last_write, attempted_at)
+        self.assertIsNotNone(restored.pending)
+        self.ha.set_offset.assert_called_once()
+
+    def test_restart_confirms_pending_without_shortening_interval(self):
+        self.enable()
+        self.controller.tick()
+        before = self.controller.last_write
+        restored = Controller(self.ha, self.temp.name)
+        self.ha.states.side_effect = lambda: [*fixtures()[:-1], entity("number.offset", 1, min=-10, max=10, step=1)]
+        restored.tick()
+        self.assertIsNone(restored.pending)
+        self.assertEqual(restored.last_write, before)
+        self.ha.set_offset.assert_called_once()
+        self.assertIn("write_observed", [e["kind"] for e in restored.events.recent()])
 
     def test_failed_write_is_rate_limited_and_visible(self):
         self.enable()

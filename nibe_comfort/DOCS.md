@@ -243,8 +243,11 @@ osparade fält, sparresultat och fel. **Spara ändringar** använder samma
 validering och bekräftelser som knappen längst ner. Ändringar sparas inte
 automatiskt.
 
-Det görs högst ett försök per varm period, med minst **30 minuter** efter
-start/omstart och mellan försök. En ny varm period tillåts först efter att
+Det görs högst ett försök per varm period, med minst **30 minuter**
+mellan försök. Efter omstart återläses värden och återstående tid räknas från
+senaste sparade försök för just termostaten; ingen extra startväntan läggs på.
+Finns inget tidigare försök kan första giltiga avläsningen leda till ändring.
+En ny varm period tillåts först efter att
 rummet svalnat till högst **0,2 °C över målet** och intervallet passerat.
 Om du manuellt höjer börvärdet under samma varma period sänks det inte igen.
 Egna scheman kan ändra börvärdet; undvik konkurrerande automationer.
@@ -495,9 +498,14 @@ faktisk besparingsberäkning ingår inte.
   bekräfta en oförändrad termostat. Givare från andra enheter används
   inte som bevis. Termostaten måste fortfarande ha en giltig temperatur
   och får inte vara otillgänglig.
-- Start och omstart innebär minst ett helt inställt intervall utan skrivning.
-  Tidpunkten för skrivförsök sparas **innan** anropet till Home Assistant:
-  även ett timeoutfel ger väntetid eftersom pumpen kan ha tagit emot ändringen.
+- Vid start och omstart återläses HA-värden och pågående begäranden följs upp.
+  Väntetiden för pumpen räknas från senaste sparade styrförsök, inte omstarten.
+  Har intervallet passerat, eller finns inget tidigare försök, kan en giltig
+  första avläsning leda till ändring. Huvudstopp, pumptest och alla vanliga
+  kontroller gäller fortfarande. Tidpunkten sparas **innan** HA-anropet:
+  även timeout ger väntetid eftersom pumpen kan ha tagit emot ändringen.
+  Återläst börvärde eller förskjutning tar inte bort intervallet: det visar
+  integrationens rapport, inte att huset redan hunnit reagera på värmen.
 - Ett lyckat serviceanrop betyder bara att Home Assistant accepterat anropet.
   Nästa avläsning visar vad integrationen faktiskt rapporterar; UI:t låtsas
   aldrig att pumpen har ändrats innan återläsning.

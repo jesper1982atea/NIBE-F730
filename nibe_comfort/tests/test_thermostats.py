@@ -4,7 +4,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from controller import ControlError, Controller, HomeAssistant
+from controller import ControlError, Controller, HomeAssistant, atomic_json
 from test_controller import config, entity, fixtures
 
 
@@ -23,7 +23,6 @@ class ThermostatTests(unittest.TestCase):
         self.cfg = config(enabled=True, target_temperature=22, room_sensors=["climate.living"],
                           thermostat_control_enabled=True, nearest_thermostat="climate.living")
         self.controller.save(self.cfg)
-        self.controller.thermostat_start = self.now - 3600
 
     def step(self, offset=0, testing=False):
         return self.controller.thermostat_step(self.ha.states(), self.now + offset, {}, testing)["rooms"][0]
@@ -56,14 +55,11 @@ class ThermostatTests(unittest.TestCase):
         self.step(1860)
         self.assertEqual(self.ha.set_thermostat.call_count, 2)
 
-    def test_disabled_master_test_and_startup_do_not_write(self):
+    def test_disabled_master_and_test_do_not_write(self):
         self.controller.config["enabled"] = False
         self.step()
         self.controller.config["enabled"] = True
         self.step(testing=True)
-        self.controller.thermostat_start = self.now
-        self.step()
-        self.controller.thermostat_start = self.now - 3600
         self.controller.config["thermostat_control_enabled"] = False
         self.assertEqual(self.controller.thermostat_step(self.ha.states(), self.now, {}, False)["rooms"], [])
         self.ha.set_thermostat.assert_not_called()
@@ -124,7 +120,6 @@ class ThermostatTests(unittest.TestCase):
         self.ha.set_thermostat.side_effect = ControlError("Timeout")
         self.assertIn("Timeout", self.step()["error"])
         restored = Controller(self.ha, self.temp.name)
-        restored.thermostat_start = self.now - 3600
         restored.thermostat_step(self.ha.states(), self.now + 901, {}, False)
         self.ha.set_thermostat.assert_called_once()
         self.assertFalse(restored.thermostats["climate.living"]["pending"])
@@ -191,6 +186,46 @@ class ThermostatTests(unittest.TestCase):
         restored.thermostat_step(self.ha.states(), self.now + 180, {}, False)
         self.ha.set_thermostat.assert_called_once()
 
+    def test_restart_without_prior_attempt_can_write_after_valid_reading(self):
+        restored = Controller(self.ha, self.temp.name)
+        restored.thermostat_step(self.ha.states(), self.now, {}, False)
+        self.ha.set_thermostat.assert_called_once_with("climate.living", 22)
+
+    def test_restart_does_not_reset_remaining_interval_after_rearming(self):
+        self.controller.thermostats["climate.living"] = {
+            "attempted_at": self.now - 1700, "latched": False, "pending": False,
+        }
+        atomic_json(self.controller.thermostat_path, self.controller.thermostats)
+        restored = Controller(self.ha, self.temp.name)
+        row = restored.thermostat_step(self.ha.states(), self.now, {}, False)["rooms"][0]
+        self.assertIn("Väntar 2 min", row["message"])
+        self.ha.set_thermostat.assert_not_called()
+        restored = Controller(self.ha, self.temp.name)
+        restored.thermostat_step(self.ha.states(), self.now + 99, {}, False)
+        self.ha.set_thermostat.assert_not_called()
+        restored.thermostat_step(self.ha.states(), self.now + 100, {}, False)
+        self.ha.set_thermostat.assert_called_once_with("climate.living", 22)
+
+    def test_confirmed_readback_after_restart_keeps_warm_period_latch(self):
+        self.step()
+        restored = Controller(self.ha, self.temp.name)
+        self.room["attributes"]["temperature"] = 22
+        restored.thermostat_step(self.ha.states(), self.now + 60, {}, False)
+        self.assertEqual(restored.thermostats["climate.living"]["outcome"], "confirmed")
+        self.assertEqual(restored.thermostats["climate.living"]["attempted_at"], self.now)
+        self.room["attributes"]["temperature"] = 25
+        row = restored.thermostat_step(self.ha.states(), self.now + 3600, {}, False)["rooms"][0]
+        self.assertIn("Redan begränsad", row["message"])
+        self.ha.set_thermostat.assert_called_once()
+
+    def test_invalid_saved_attempt_stops_startup(self):
+        for timestamp in (-1, "NaN", "Infinity"):
+            with self.subTest(timestamp=timestamp):
+                atomic_json(self.controller.thermostat_path, {"climate.living": {"attempted_at": timestamp}})
+                with self.assertRaises(ControlError):
+                    Controller(self.ha, self.temp.name)
+        self.ha.set_thermostat.assert_not_called()
+
     def test_migration_and_validation(self):
         for overrides in ({"nearest_thermostat": "climate.other"},
                           {"room_sensors": ["sensor.living"], "thermostat_control_enabled": True},
@@ -221,7 +256,7 @@ class ThermostatTests(unittest.TestCase):
         self.assertTrue(status["rooms"][0]["nearest"])
         self.assertTrue(status["thermostat_control"]["enabled"])
         self.ha.set_thermostat.assert_called_once_with("climate.living", 22)
-        self.ha.set_offset.assert_not_called()
+        self.ha.set_offset.assert_called_once_with("number.offset", -1)
 
     def test_service_payload(self):
         ha = HomeAssistant("test-token")
