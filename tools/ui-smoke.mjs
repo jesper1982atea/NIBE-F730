@@ -20,7 +20,7 @@ let failHistory = false;
 const now = Date.now() / 1000;
 const entities = [
   { entity_id: "sensor.living", name: "Vardagsrum", state: "22", unit: "°C", device_class: "temperature" },
-  { entity_id: thermostat, name: "LK Allrum", state: "heat", current_temperature: 22.2, temperature_error: null },
+  { entity_id: thermostat, name: "LK Allrum", state: "heat", current_temperature: 22.2, temperature_error: null, setpoint: 26, temperature_unit: "°C" },
   { entity_id: offset, name: "NIBE Offset", state: "3", min: -10, max: 10, step: 1 },
   { entity_id: outdoor, name: "NIBE BT1", state: "11", unit: "°C", device_class: "temperature" },
   { entity_id: price, name: "Tibber elpris", state: "1.4", unit: "SEK/kWh" },
@@ -524,6 +524,67 @@ try {
   assert.deepEqual(priorityConfig.priority_sensors, []);
   assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), false);
   await priorityPage.close();
+  const thermostatPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  thermostatPage.on("pageerror", (error) => errors.push(error.message));
+  let thermostatSettings = { ...settings, room_sensors: [thermostat, thirdRoom], priority_sensors: [],
+    nearest_thermostat: "", thermostat_control_enabled: false };
+  let thermostatSaves = 0;
+  await thermostatPage.route("**/api/settings", (route) => {
+    if (route.request().method() === "PUT") {
+      thermostatSettings = route.request().postDataJSON();
+      thermostatSaves++;
+    }
+    return route.fulfill({ json: thermostatSettings });
+  });
+  await thermostatPage.route("**/api/status", (route) => route.fulfill({ json: {
+    indoor: 23, house_indoor: 23, checked_at: Date.now() / 1000, enabled: true,
+    rooms: [{ entity_id: thermostat, name: "LK Allrum", temperature: 23, setpoint: 22,
+      nearest: thermostatSettings.nearest_thermostat === thermostat }],
+    thermostat_control: { enabled: thermostatSettings.thermostat_control_enabled, rooms: [
+      { entity_id: thermostat, message: "Börvärdet är redan vid eller under målet; höjs inte." },
+    ] },
+  } }));
+  await thermostatPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await thermostatPage.locator(`#room_sensors input[value="${thermostat}"]`).waitFor({ state: "attached" });
+  await thermostatPage.locator("#settings-panel > summary").click();
+  assert.equal(await thermostatPage.locator('#room_sensors input[value="sensor.living"]').isVisible(), false);
+  assert.equal(await thermostatPage.locator(`#room_sensors input[value="${thermostat}"]`).isVisible(), true);
+  assert.match(await thermostatPage.locator("#room_sensors").textContent(), /inställd 26/);
+  await thermostatPage.locator("#room-search").fill("badrum");
+  assert.equal(await thermostatPage.locator(`#room_sensors input[value="${thermostat}"]`).isVisible(), false);
+  assert.equal(await thermostatPage.locator(`#room_sensors input[value="${thirdRoom}"]`).isVisible(), true);
+  await thermostatPage.locator("#room-search").fill("");
+  await thermostatPage.locator("#show-room-sensors").check();
+  assert.equal(await thermostatPage.locator('#room_sensors input[value="sensor.living"]').isVisible(), true);
+  await thermostatPage.locator("#show-room-sensors").uncheck();
+  await thermostatPage.locator("#nearest_thermostat").selectOption(thermostat);
+  await thermostatPage.locator("#thermostat_control_enabled").check();
+  thermostatPage.once("dialog", (dialog) => dialog.dismiss());
+  await thermostatPage.locator("#save").click();
+  assert.equal(thermostatSaves, 0, "Rejecting consent must not save or enable thermostat writes");
+  thermostatPage.once("dialog", (dialog) => dialog.accept());
+  await thermostatPage.locator("#save").click();
+  await thermostatPage.waitForFunction(() => document.getElementById("notice").textContent.includes("sparade"));
+  assert.equal(thermostatSettings.nearest_thermostat, thermostat);
+  assert.equal(thermostatSettings.thermostat_control_enabled, true);
+  assert.equal(thermostatSettings.target_temperature, settings.target_temperature);
+  await thermostatPage.waitForFunction(() => document.getElementById("room-impact-list").textContent.includes("närmast pumpen"));
+  assert.match(await thermostatPage.locator("#thermostat-control-status").textContent(), /Termostatbegränsning på/);
+  await thermostatPage.locator("#room_sensors").screenshot({ path: `${artifacts}/thermostat-picker.png` });
+  await thermostatPage.emulateMedia({ colorScheme: "dark" });
+  for (const width of [320, 390, 1280]) {
+    await thermostatPage.setViewportSize({ width, height: 900 });
+    assert.equal(await thermostatPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Thermostat picker overflow at ${width}`);
+  }
+  await thermostatPage.locator("#thermostat_control_enabled").uncheck();
+  await thermostatPage.locator(`#room_sensors input[value="${thermostat}"]`).uncheck();
+  assert.equal(await thermostatPage.locator("#nearest_thermostat").inputValue(), "");
+  await thermostatPage.locator("#save").click();
+  await thermostatPage.waitForFunction(() => !document.getElementById("save").disabled);
+  assert.equal(thermostatSettings.thermostat_control_enabled, false);
+  assert.equal(thermostatSettings.nearest_thermostat, "");
+  assert.equal(thermostatSettings.room_sensors.includes(thermostat), false);
+  await thermostatPage.close();
   assert.deepEqual(errors, []);
   console.log("Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
 } finally {

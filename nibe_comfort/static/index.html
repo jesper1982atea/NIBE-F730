@@ -162,11 +162,23 @@
           <h2>Vilka rum räknas?</h2>
           <p>Pumpens grundkurva finns kvar. Vi justerar förskjutningen försiktigt för att nå temperaturen du valt högst upp.</p>
           <label for="room_sensors">Rumsgivare</label>
+          <div class="room-picker-toolbar">
+            <input type="search" id="room-search" placeholder="Sök rum eller termostat" aria-label="Sök temperaturkälla">
+            <label class="toggle"><input type="checkbox" id="show-room-sensors"> Visa även separata temperaturgivare</label>
+            <span id="room-selection-count"></span>
+          </div>
           <p class="hint" id="room-help">Markera rummen som ska visas. Utan prioriterade givare styr deras gemensamma snitt värmen. Även golvvärme (climate) kan väljas: vi läser uppmätt temperatur, inte termostatens börvärde. Välj inte både en termostat och dess separata givare för samma rum, eftersom rummet då räknas dubbelt.</p>
-          <div id="room_sensors" class="sensor-list" role="group" aria-describedby="room-help"></div>
+          <div id="room_sensors" class="room-picker" role="group" aria-describedby="room-help"></div>
           <label for="priority_sensors">Prioriterade rum · valfritt, högst 2 givare</label>
           <p class="hint" id="priority-help">Välj 1–2 av rummen ovan vars snittemperatur ska nå ditt mål, till exempel vardagsrummet. Övriga rum visas men styr inte. Även de kan bli varmare. Ingen prioritering väljs automatiskt.</p>
           <div id="priority_sensors" class="sensor-list" role="group" aria-describedby="priority-help"></div>
+          <label for="nearest_thermostat">Termostat närmast värmepumpen</label>
+          <select id="nearest_thermostat"><option value="">Inte markerad</option></select>
+          <p class="hint">Endast en informationsmarkering. Avstånd används inte för styrning och den undantas inte från begränsning.</p>
+          <label class="toggle"><input type="checkbox" id="thermostat_control_enabled"> Begränsa övertemperatur med termostater</label>
+          <p class="hint">Av från början. Kräver att alla valda rum är termostater i värmeläge (heat), att huvudautomatiken är på och att målet passar termostaternas steglängd. Vid minst 0,5 °C över ditt sparade mål sänks ett högre börvärde till rumsmålet, även vid förvärmning. Lägre börvärden höjs aldrig och värmen stängs inte av. Återställning gör du själv; avstängning återställer inte redan ändrade värden. Högst en ändring under varje varm period, minst 30 minuter mellan försök och efter omstart. Ny period kan börja först när rummet svalnat till högst 0,2 °C över målet. Kontrollera att anläggningen har tillräckligt flöde när termostaterna stryper.</p>
+          <p id="thermostat-control-status" role="status"></p>
+          <ul id="thermostat-control-rooms"></ul>
         </section>
 
         <section class="card">

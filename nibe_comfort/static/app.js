@@ -113,9 +113,19 @@ function renderSettings() {
     Object.assign(input, { type: "checkbox", value: entity.entity_id, checked: settings.room_sensors.includes(entity.entity_id) });
     const text = document.createElement("span");
     const climate = entity.entity_id.startsWith("climate.");
-    text.textContent = climate
-      ? `${entity.name} · ${displayNumber(entity.current_temperature)} °C · golvvärme/termostat${entity.temperature_error ? " (saknar mätvärde)" : ""}`
-      : `${entity.name} · ${entity.state} ${entity.unit}`;
+    label.className = "room-choice";
+    label.dataset.climate = String(climate);
+    const title = document.createElement("strong");
+    title.textContent = entity.name;
+    const measured = document.createElement("span");
+    measured.className = "room-choice-temperature";
+    measured.textContent = climate ? `${displayNumber(entity.current_temperature)} °C` : `${entity.state} ${entity.unit}`;
+    const detail = document.createElement("small");
+    const mode = { heat: "värme", auto: "automatik", off: "avstängd", cool: "kyla", heat_cool: "värme/kyla" }[entity.state] || entity.state;
+    detail.textContent = climate
+      ? `Termostat · ${entity.temperature_error ? "mätvärde saknas" : mode}${entity.setpoint != null ? ` · inställd ${displayNumber(entity.setpoint)} ${entity.temperature_unit || "°C"}` : ""}`
+      : "Separat temperaturgivare";
+    text.append(title, measured, detail);
     const id = document.createElement("small");
     id.textContent = entity.entity_id;
     text.append(id);
@@ -123,6 +133,8 @@ function renderSettings() {
     $("room_sensors").append(label);
   }
   renderPriorityPicker(settings.priority_sensors);
+  renderNearestThermostat(settings.nearest_thermostat);
+  filterRoomPicker();
   $("room-impact").open = settings.priority_sensors.length > 0;
   if (!rooms.length) $("room_sensors").textContent = "Inga temperaturgivare hittades i Home Assistant.";
   $("mode").textContent = settings.enabled ? "Automatik aktiverad" : "Övervakning";
@@ -192,6 +204,27 @@ function limitPriorityPicker() {
   for (const input of inputs) input.disabled = full && !input.checked;
 }
 
+function renderNearestThermostat(selected) {
+  const ids = Array.from($("room_sensors").querySelectorAll("input:checked"), (input) => input.value)
+    .filter((id) => id.startsWith("climate."));
+  $("nearest_thermostat").replaceChildren(new Option("Inte markerad", ""),
+    ...ids.map((id) => new Option(entities.find((e) => e.entity_id === id)?.name || id, id)));
+  $("nearest_thermostat").value = ids.includes(selected) ? selected : "";
+}
+
+function filterRoomPicker() {
+  const query = $("room-search").value.toLocaleLowerCase("sv-SE");
+  const showSensors = $("show-room-sensors").checked;
+  const labels = [...$("room_sensors").querySelectorAll("label")];
+  for (const label of labels) {
+    const checked = label.querySelector("input").checked;
+    label.classList.toggle("selected", checked);
+    label.hidden = (!showSensors && label.dataset.climate !== "true" && !checked)
+      || !label.textContent.toLocaleLowerCase("sv-SE").includes(query);
+  }
+  $("room-selection-count").textContent = `${labels.filter((label) => label.querySelector("input").checked).length} valda · ${labels.filter((label) => !label.hidden).length} visas`;
+}
+
 function roomTrend(room) {
   if (room.error) return room.error;
   const line = historyData?.series.find((line) => line.entity_id === room.entity_id);
@@ -209,7 +242,7 @@ function renderRoomImpact() {
     const row = document.createElement("div");
     row.className = "room-impact-row";
     const name = document.createElement("strong");
-    name.textContent = `${room.name}${room.priority ? " · prioriterat" : ""}`;
+    name.textContent = `${room.name}${room.priority ? " · prioriterat" : ""}${room.nearest ? " · närmast pumpen" : ""}`;
     const value = document.createElement("span");
     const diff = room.temperature == null ? null : room.temperature - settings.target_temperature;
     value.textContent = `${displayNumber(room.temperature)} °C${diff == null ? "" : Math.abs(diff) < 0.1 ? " · vid målet" : ` · ${displayNumber(Math.abs(diff))}° ${diff > 0 ? "över" : "under"} målet`}`;
@@ -217,6 +250,13 @@ function renderRoomImpact() {
     trend.textContent = roomTrend(room);
     row.classList.toggle("too-warm", lastStatus.warm_rooms?.includes(room.entity_id) || false);
     row.append(name, value, trend);
+    const thermostat = document.createElement("small");
+    const control = lastStatus?.thermostat_control?.rooms.find((entry) => entry.entity_id === room.entity_id);
+    thermostat.textContent = [
+      room.setpoint != null ? `Termostat inställd på ${displayNumber(room.setpoint)} °C` : room.thermostat_error || "",
+      control?.error || control?.message || "",
+    ].filter(Boolean).join(" · ");
+    if (thermostat.textContent) row.append(thermostat);
     return row;
   }));
   const warm = (lastStatus?.rooms || []).filter((room) => lastStatus.warm_rooms?.includes(room.entity_id));
@@ -230,6 +270,16 @@ function renderRoomImpact() {
     return item;
   }));
   renderComfort();
+  const control = lastStatus?.thermostat_control;
+  $("thermostat-control-status").textContent = lastStatus?.error_message
+    ? `Pausad: ${lastStatus.error_message}`
+    : control?.enabled ? `Termostatbegränsning på${lastStatus.enabled ? "" : " · huvudautomatiken är av, inga nya ändringar skickas"}.`
+      : "Termostatbegränsning av. Inga börvärden ändras.";
+  $("thermostat-control-rooms").replaceChildren(...(control?.rooms || []).map((room) => {
+    const li = document.createElement("li");
+    li.textContent = `${entities.find((e) => e.entity_id === room.entity_id)?.name || room.entity_id}: ${room.error || room.message}`;
+    return li;
+  }));
 }
 
 function renderComfort() {
@@ -1033,6 +1083,7 @@ async function refreshLearning() {
 
 const fieldLabels = {
   target_temperature: "Måltemperatur", room_sensors: "Rumsgivare", priority_sensors: "Prioriterade rum", enabled: "Automatik",
+  nearest_thermostat: "Närmast värmepumpen", thermostat_control_enabled: "Termostatbegränsning",
   offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare",
   forecast_entity: "Prognoskälla", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
   max_offset: "Högsta förskjutning", weather_gain: "Väderpåverkan", room_gain: "Rumspåverkan",
@@ -1064,6 +1115,10 @@ function renderEvents() {
     if (data.requested !== undefined) lines.push(`Begärt: ${data.requested}. Återläst: ${data.observed}.`);
     if (event.kind === "test_write") lines.push(`Förskjutning ${data.previous} → ${data.value} i ${data.restore_after_minutes} minuter.`);
     if (event.kind === "test_restore") lines.push(`Tillbaka till ${data.value}.`);
+    if (event.kind.startsWith("thermostat_")) {
+      if (data.entity_id) lines.push(`Termostat: ${data.entity_id}.`);
+      if (data.value !== undefined) lines.push(`Börvärde: ${data.previous !== undefined ? `${data.previous} → ` : ""}${data.value}${data.unit ? ` ${data.unit}` : ""}.`);
+    }
     if (event.kind === "offset_observed") lines.push(`${data.previous} → ${data.value}. ${data.note}`);
     if (data.error) lines.push(data.error);
     if (data.request_id) lines.push(`Tillhör begäran #${data.request_id}.`);
@@ -1210,6 +1265,10 @@ async function init() {
   $("settings").addEventListener("submit", (event) => {
     event.preventDefault();
     const next = readSettings();
+    if (next.thermostat_control_enabled && (!settings.thermostat_control_enabled
+      || next.target_temperature !== settings.target_temperature
+      || JSON.stringify(next.room_sensors) !== JSON.stringify(settings.room_sensors))
+      && !window.confirm("Valda termostaters högre börvärden kan sänkas till ditt rumsmål vid minst 0,5 °C övertemperatur. Tillräckligt flöde måste finnas i anläggningen. Avstängning återställer inte redan ändrade börvärden. Godkänner du termostatbegränsningen för dessa rum och detta mål?")) return;
     if (next.enabled && JSON.stringify(next.priority_sensors) !== JSON.stringify(settings.priority_sensors)
       && !window.confirm("Styrningen kommer att följa snittet för de prioriterade rummen, eller alla valda rum om inget prioriteras. Kurvförskjutningen påverkar hela huset och andra rum kan bli varmare. Spara ändringen?")) return;
     if (next.enabled && (!settings.enabled || next.offset_entity !== settings.offset_entity)
@@ -1233,8 +1292,13 @@ async function init() {
     });
   }
   $("target_temperature").addEventListener("input", targetChanged);
-  $("room_sensors").addEventListener("change", () => renderPriorityPicker(
-    Array.from($("priority_sensors").querySelectorAll("input:checked"), (input) => input.value)));
+  $("room_sensors").addEventListener("change", () => {
+    renderPriorityPicker(Array.from($("priority_sensors").querySelectorAll("input:checked"), (input) => input.value));
+    renderNearestThermostat($("nearest_thermostat").value);
+    filterRoomPicker();
+  });
+  $("room-search").addEventListener("input", filterRoomPicker);
+  $("show-room-sensors").addEventListener("change", filterRoomPicker);
   $("priority_sensors").addEventListener("change", limitPriorityPicker);
   $("offset_entity").addEventListener("change", entityHints);
   $("outdoor_entity").addEventListener("change", entityHints);

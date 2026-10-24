@@ -9,6 +9,11 @@ Det börjar i övervakningsläge och har begränsningar för
 ändringstakt, värdeintervall och mätvärdenas ålder.
 
 Även golvvärmetermostater (`climate`, exempelvis LK) kan användas som rumsgivare.
+Rummen väljs med sökbara temperaturkort. Markera vilken termostat som är
+närmast pumpen och aktivera vid behov valfri övertemperaturbegränsning:
+vid minst 0,5 °C över målet kan ett högre termostatbörvärde sänkas till målet.
+Funktionen är av från början och kräver huvudautomatiken; lägre börvärden
+höjs aldrig och driftlägen ändras inte. Tillräckligt flöde måste säkerställas.
 Temperaturgrafer per rum (uppmätt och termostatens börvärde), en värmeplan med
 väder, Tibber-priser och planerad förskjutning, en uppskattad värmekurva,
 väderprognos, automatisk Tibber-prisupptäckt och pumpstatus samlas i samma gränssnitt. Alla tilläggets framtida inställningsändringar

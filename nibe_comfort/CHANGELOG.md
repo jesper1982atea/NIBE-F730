@@ -1,5 +1,20 @@
 # Ändringslogg
 
+## 0.2.17
+
+- Nytt rumsval med sökning, tydliga temperaturkort och termostater först.
+  Befintliga givare och prioriterade rum behålls. Separata givare kan visas.
+- Markera vilken vald termostat som är närmast värmepumpen. Markeringen är
+  enbart information, inte prioritering eller undantag från begränsningen.
+- Valfri **Begränsa övertemperatur med termostater**, av från början.
+  Vid minst 0,5 °C över rumsmålet sänks ett högre börvärde till målet.
+  Lägre börvärden höjs aldrig och driftlägen ändras inte. Kräver valda
+  climate-termostater i värmeläge, giltiga färska värden och skrivbart mål.
+- Huvudstopp, pumptest, 30 minuters intervall/omstartsskydd och högst ett
+  försök per varm period skyddar styrningen. Försök sparas före skrivning;
+  återläsning, fel och utebliven bekräftelse loggas per rum.
+  Avstängning återställer inte tidigare ändrade börvärden.
+
 ## 0.2.16
 
 - Nytt komfortkort **Varför blir inte rummet varmt?** under startsidan.

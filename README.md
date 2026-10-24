@@ -13,6 +13,12 @@ skrivförsök sparas i en beständig ändringslogg.
 Tillägget lär sig också hur huset svarar på värmekurvan och kan, om du slår på
 det, förvärma före dyra elpristimmar och låta huset svalna lite under dem.
 
+Rumsvalet har sökbara temperaturkort och en informationsmarkering för
+termostaten närmast pumpen. Valfri termostatbegränsning kan sänka ett högre
+börvärde till rumsmålet vid minst 0,5 °C övertemperatur. Den är av från början,
+höjer aldrig lägre börvärden och ändrar inga driftlägen. Kontrollera tillräckligt
+flöde innan den aktiveras; avstängning återställer inte ändrade börvärden.
+
 ## Skärmbilder
 
 | Översikt | Värmeplan med justeringar |
