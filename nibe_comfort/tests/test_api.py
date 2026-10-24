@@ -201,6 +201,22 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(entities[0]["current_temperature"], 22.2)
         self.assertIsNone(entities[0]["temperature_error"])
+        self.assertEqual(entities[0]["setpoint"], 29)
+        self.assertEqual(entities[0]["temperature_unit"], "°C")
+
+    def test_thermostat_configuration_round_trip_and_preflight(self):
+        cfg = config(room_sensors=["climate.room"], nearest_thermostat="climate.room",
+                     thermostat_control_enabled=True)
+        self.assertEqual(self.request("/api/settings", "PUT", cfg)[0], 200)
+        saved = self.request("/api/settings")[1]
+        self.assertTrue(saved["thermostat_control_enabled"])
+        self.assertEqual(saved["nearest_thermostat"], "climate.room")
+        self.ha.set_thermostat.assert_not_called()
+        cfg["enabled"] = True
+        self.assertEqual(self.request("/api/settings", "PUT", cfg)[0], 400)
+        self.assertFalse(self.request("/api/settings")[1]["enabled"])
+        cfg.update(enabled=False, nearest_thermostat="climate.missing")
+        self.assertEqual(self.request("/api/settings", "PUT", cfg)[0], 400)
 
     def test_local_api_does_not_serve_ui_or_arbitrary_paths(self):
         self.assertEqual(self.request("/")[0], 404)

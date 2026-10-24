@@ -111,6 +111,9 @@ def handler_for(controller, api_token=None):
                                 "device_class": attrs.get("device_class", ""),
                                 "min": attrs.get("min"), "max": attrs.get("max"), "step": attrs.get("step"),
                                 "current_temperature": current, "temperature_error": temperature_error,
+                                "setpoint": attrs.get("temperature") if entity["entity_id"].startswith("climate.") else None,
+                                "temperature_unit": attrs.get("temperature_unit"),
+                                "target_temp_step": attrs.get("target_temp_step"),
                             })
                     self.respond(200, entities)
                 elif api_token is None and path in ("/", "/index.html", "/app.js", "/theme.js", "/style.css"):

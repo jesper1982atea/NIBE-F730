@@ -168,13 +168,67 @@ meddelande i stället för gissningar. Värden som slutat rapporteras visas inte
 Välj exempelvis `climate.lk_allrum_thermostat` i samma lista som dina andra
 rumsgivare. Tillägget läser **`current_temperature`**, alltså uppmätt temperatur,
 inte termostatens börvärde eller läge. Termostatens egna inställningar ändras
-inte. Temperaturenheten hämtas från Home Assistants enhetsinställningar och
+bara om du uttryckligen aktiverar begränsningen nedan. Temperaturenheten hämtas från Home Assistants enhetsinställningar och
 Fahrenheit räknas om till Celsius.
 
 En termostat utan uppmätt temperatur kan visas i listan men pausar regleringen
 om den väljs; börvärdet används aldrig som reservvärde. Välj inte både en
 termostat och dess separata givare om du vill undvika dubbel vikt för samma rum.
 En avstängd termostat kan fortfarande lämna en giltig temperatur.
+
+### Rumsval och termostaten närmast pumpen
+
+Temperaturkorten visar namn, uppmätt temperatur, driftläge och termostatens
+börvärde. Sök på namn eller entitets-ID. Termostater visas först; kryssa i
+**Visa även separata temperaturgivare** för övriga givare. Redan valda givare
+visas även utan den kryssrutan och tas inte bort vid uppdateringen.
+Ett sökfilter ändrar inte vilka rum som är valda.
+
+Välj **Termostat närmast värmepumpen** bland de valda termostaterna.
+Markeringen visas i rumsöversikten och är enbart information: den ändrar
+inte prioritering, pumpreglering eller termostatbegränsning och innebär inte
+att detta rum undantas. Tas termostaten bort från rumsvalet rensas markeringen.
+
+### Begränsa övertemperatur med termostater
+
+Funktionen är **av från början**, även vid uppdatering. Välj enbart
+`climate`-termostater, aktivera **Begränsa övertemperatur med termostater**
+och spara med bekräftelsen. Även huvudautomatiken måste vara på och pumpens
+vanliga kontroll måste lyckas. Under pumptest skickas inga nya termostatändringar.
+Befintliga rumsval eller termostatinställningar byts aldrig automatiskt.
+
+När ett valt rum är minst **0,5 °C över ditt sparade rumsmål** sänks ett
+högre termostatbörvärde till målet via `climate.set_temperature`.
+Alla valda rum omfattas, även rum som inte är prioriterade och det närmast
+pumpen. Funktionen sänker inte stegvis, höjer aldrig ett lägre börvärde
+och ändrar inte driftläge eller slår av/på värmen. Den använder det sparade
+målet även under förvärmning och kan därför begränsa den extra uppvärmningen.
+
+Termostaten måste vara i **värmeläge (`heat`)**, rapportera giltig temperatur,
+stöd för ett enskilt temperaturbörvärde, min/max och steglängd. Målet måste
+kunna anges exakt; tillägget gissar eller avrundar inte till ett annat mål.
+Automatikläge, kyla, dubbla temperaturintervall, saknade uppgifter och gamla
+mätvärden avvisas. Vid aktivering kontrolleras samtliga valda termostater.
+Senare fel visas per rum och stoppar det rummets nya skrivningar; andra
+giltiga rum kan fortsätta om pumpens övergripande kontroll fortfarande lyckas.
+Fahrenheit räknas om vid avläsning och serviceanropet använder HA:s ursprungsenhet.
+
+Det görs högst ett försök per varm period, med minst **30 minuter** efter
+start/omstart och mellan försök. En ny varm period tillåts först efter att
+rummet svalnat till högst **0,2 °C över målet** och intervallet passerat.
+Om du manuellt höjer börvärdet under samma varma period sänks det inte igen.
+Egna scheman kan ändra börvärdet; undvik konkurrerande automationer.
+
+Försöket sparas i `/data/thermostat-state.json` före serviceanropet. En
+timeout kan ändå ha nått termostaten och upprepas inte automatiskt under
+samma varma period. Status och ändringslogg visar begäran, accepterat anrop,
+återläst börvärde och utebliven bekräftelse efter 15 minuter. En HA-återläsning
+bekräftar bara integrationens rapport, inte ventilens fysiska läge eller flöde.
+
+**Avstängning stoppar nya ändringar men återställer inte tidigare börvärden.**
+Återställ dem själv i Home Assistant vid behov. Säkerställ att värmesystemet
+har tillräckligt flöde när flera termostater stryper; markeringen närmast
+pumpen är inget flödesskydd. Rådgör med installatör vid osäkerhet.
 
 ### Temperaturgrafer och väderprognos
 

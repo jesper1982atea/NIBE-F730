@@ -19,6 +19,8 @@ DEFAULTS = {
     "target_temperature": 21.0,
     "room_sensors": [],
     "priority_sensors": [],
+    "nearest_thermostat": "",
+    "thermostat_control_enabled": False,
     "offset_entity": "",
     "outdoor_entity": "",
     "price_entity": "",
@@ -84,7 +86,7 @@ def validate(config):
     if not isinstance(config, dict) or set(config) != set(DEFAULTS):
         raise ControlError("Konfigurationen innehåller saknade eller okända fält.")
     result = copy.deepcopy(config)
-    for key in ("enabled", "preheat_enabled"):
+    for key in ("enabled", "preheat_enabled", "thermostat_control_enabled"):
         if type(result[key]) is not bool:
             raise ControlError(f"{key} måste vara boolesk.")
     for key, (low, high) in LIMITS.items():
@@ -103,6 +105,11 @@ def validate(config):
         raise ControlError("Välj högst två prioriterade givare bland dina rumsgivare.")
     if len(set(priority)) != len(priority):
         raise ControlError("Samma prioriterade givare får inte väljas flera gånger.")
+    nearest = result["nearest_thermostat"]
+    if not isinstance(nearest, str) or (nearest and (nearest not in rooms or not nearest.startswith("climate."))):
+        raise ControlError("Termostaten närmast pumpen måste vara en av dina valda termostater.")
+    if result["thermostat_control_enabled"] and (not rooms or any(not key.startswith("climate.") for key in rooms)):
+        raise ControlError("Automatisk termostatbegränsning kräver att alla valda rum är climate-termostater.")
     for key, prefixes in (
         ("offset_entity", ("number.",)),
         ("outdoor_entity", ("sensor.", "weather.")),
@@ -182,6 +189,9 @@ class HomeAssistant:
 
     def set_offset(self, entity_id, value):
         self.request("/services/number/set_value", {"entity_id": entity_id, "value": value})
+
+    def set_thermostat(self, entity_id, value):
+        self.request("/services/climate/set_temperature", {"entity_id": entity_id, "temperature": value})
 
     def integration_registry(self):
         template = (
@@ -360,6 +370,30 @@ def control_rooms(config):
     return config["priority_sensors"] or config["room_sensors"]
 
 
+def thermostat_state(config, states, key, now, peers):
+    entity = fresh_entity(states, key, config["max_age_minutes"], now, peers.get(key, ()))
+    attrs = entity["attributes"]
+    if entity["state"] != "heat":
+        raise ControlError(f"{key}: termostaten måste vara i värmeläge (heat); läget ändras inte automatiskt.")
+    features = number(attrs.get("supported_features"), key)
+    if features < 0 or features != int(features) or int(features) & 1 == 0:
+        raise ControlError(f"{key}: stöd för ett enskilt skrivbart temperaturbörvärde saknas.")
+    current = temperature(entity)
+    if not 5 <= current <= 40:
+        raise ControlError(f"{key}: orimlig inomhustemperatur.")
+    unit = attrs.get("temperature_unit")
+    target = config["target_temperature"] if unit == "°C" else config["target_temperature"] * 9 / 5 + 32
+    minimum = number(attrs.get("min_temp"), f"{key} minimum")
+    maximum = number(attrs.get("max_temp"), f"{key} maximum")
+    step = number(attrs.get("target_temp_step"), f"{key} steglängd")
+    setpoint = number(attrs.get("temperature"), f"{key} börvärde")
+    if step <= 0 or minimum >= maximum or not minimum <= setpoint <= maximum:
+        raise ControlError(f"{key}: ogiltiga temperaturgränser eller steglängd.")
+    if not minimum <= target <= maximum or abs((target - minimum) / step - round((target - minimum) / step)) > 1e-6:
+        raise ControlError(f"{key}: ditt mål kan inte anges exakt inom termostatens intervall och steglängd.")
+    return current, setpoint, round(target, 6)
+
+
 def indoor_temperature(config, get):
     selected = control_rooms(config)
     if not selected:
@@ -378,7 +412,8 @@ def current_readings(config, entities, now, peers):
     rooms = []
     for key in config["room_sensors"]:
         room = {"entity_id": key, "name": states.get(key, {}).get("attributes", {}).get("friendly_name", key),
-                "temperature": None, "priority": key in config["priority_sensors"], "error": None}
+                "temperature": None, "priority": key in config["priority_sensors"],
+                "nearest": key == config["nearest_thermostat"], "error": None}
         try:
             value = temperature(get(key))
             if not 5 <= value <= 40:
@@ -543,6 +578,8 @@ class Controller:
                 saved.setdefault("preheat_enabled", False)
                 saved.setdefault("preheat_degrees", 0.5)
                 saved.setdefault("priority_sensors", [])
+                saved.setdefault("nearest_thermostat", "")
+                saved.setdefault("thermostat_control_enabled", False)
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
         self.pending = None
@@ -567,6 +604,11 @@ class Controller:
         # Set by the web layer: callable(config) -> {"windows": [...]} for price-based pre-heating.
         self.preheat_provider = None
         self.preheat_kind = None
+        self.thermostat_path = Path(data_dir) / "thermostat-state.json"
+        self.thermostats = json.loads(self.thermostat_path.read_text()) if self.thermostat_path.exists() else {}
+        if not isinstance(self.thermostats, dict):
+            raise ControlError("Ogiltigt sparat termostattillstånd.")
+        self.thermostat_start = time.time()
 
     def peers(self):
         """Same-device entities per entity, refreshed every 5 minutes."""
@@ -588,9 +630,15 @@ class Controller:
         config = validate(config)
         with self.lock:
             if config["enabled"]:
-                result = evaluate(config, self.ha.states(), time.time(), self.peers())
+                entities = self.ha.states()
+                peers = self.peers()
+                result = evaluate(config, entities, time.time(), peers)
                 if not result["writable"]:
                     raise ControlError("Ingen skrivbar kurvförskjutning är konfigurerad.")
+                if config["thermostat_control_enabled"]:
+                    states = {e["entity_id"]: e for e in entities}
+                    for key in config["room_sensors"]:
+                        thermostat_state(config, states, key, time.time(), peers)
             changes = {key: {"from": self.config[key], "to": value} for key, value in config.items() if value != self.config[key]}
             event_id = self.events.add("settings_attempt", "Begäran att spara inställningar.", changes=changes)
             atomic_json(self.path, config)
@@ -598,6 +646,84 @@ class Controller:
             self.status = {"message": "Inställningar sparade. Väntar på ny avläsning.", "error_message": None,
                            "enabled": config["enabled"]}
             self.events.add("settings_saved", "Inställningar sparade.", request_id=event_id, changes=changes)
+
+    def thermostat_step(self, entities, now, peers, testing):
+        result = {"enabled": self.config["thermostat_control_enabled"], "rooms": []}
+        if not result["enabled"]:
+            return result
+        states = {e["entity_id"]: e for e in entities}
+        for key in self.config["room_sensors"]:
+            row = {"entity_id": key, "message": "", "error": None}
+            result["rooms"].append(row)
+            state = self.thermostats.get(key, {})
+            try:
+                current, setpoint, target = thermostat_state(self.config, states, key, now, peers)
+                if state.get("last_error"):
+                    self.events.add("thermostat_resumed", "Giltiga termostatvärden igen.", entity_id=key)
+                    state.pop("last_error")
+                    atomic_json(self.thermostat_path, self.thermostats)
+                if state.get("pending"):
+                    if abs(setpoint - state["value"]) < 1e-6:
+                        self.events.add("thermostat_observed", "Termostatens nya börvärde återläst.",
+                                        entity_id=key, value=setpoint, request_id=state["request_id"])
+                        state.update(pending=False, outcome="confirmed")
+                        atomic_json(self.thermostat_path, self.thermostats)
+                    elif now - state["attempted_at"] >= 900:
+                        self.events.add("thermostat_unconfirmed", "Termostatens ändring kunde inte bekräftas. Kontrollera i Home Assistant.",
+                                        entity_id=key, value=state["value"], request_id=state["request_id"])
+                        state.update(pending=False, outcome="unconfirmed")
+                        atomic_json(self.thermostat_path, self.thermostats)
+                    else:
+                        row["message"] = "Ändring skickad; väntar på återläsning."
+                        if state.get("outcome") == "failed":
+                            row["error"] = "Serviceanropet misslyckades; kan ändå ha tagits emot. Väntar på återläsning."
+                        continue
+                if state.get("outcome") in ("failed", "unconfirmed"):
+                    row["error"] = "Senaste ändringen kunde inte bekräftas. Kontrollera termostaten i Home Assistant."
+                if current <= self.config["target_temperature"] + 0.2:
+                    if state.get("latched") and now - state["attempted_at"] >= 1800:
+                        state["latched"] = False
+                        atomic_json(self.thermostat_path, self.thermostats)
+                    row["message"] = "Ingen övertemperatur. Börvärdet lämnas orört."
+                    continue
+                if current < self.config["target_temperature"] + 0.5:
+                    row["message"] = "Under gränsen för begränsning (+0,5 °C)."
+                    continue
+                if setpoint <= target + 1e-6:
+                    row["message"] = "Börvärdet är redan vid eller under målet; höjs inte."
+                    continue
+                if not self.config["enabled"] or testing:
+                    row["message"] = "Väntar: automatiken är avstängd eller pumptest pågår."
+                    continue
+                if state.get("latched") or now - max(self.thermostat_start, state.get("attempted_at", 0)) < 1800:
+                    row["message"] = "Väntar: minsta intervall 30 min eller redan begränsad under denna varma period."
+                    continue
+                request_id = self.events.add("thermostat_attempt", "Begränsar övertemperatur: sätter termostatens börvärde till rumsmålet.",
+                                            entity_id=key, previous=setpoint, value=target, current=current,
+                                            target_temperature=self.config["target_temperature"],
+                                            unit=states[key]["attributes"]["temperature_unit"])
+                state = {"attempted_at": now, "value": target, "request_id": request_id,
+                         "latched": True, "pending": True, "outcome": "sent"}
+                self.thermostats[key] = state
+                atomic_json(self.thermostat_path, self.thermostats)
+                try:
+                    self.ha.set_thermostat(key, target)
+                except ControlError as exc:
+                    state["outcome"] = "failed"
+                    atomic_json(self.thermostat_path, self.thermostats)
+                    self.events.add("thermostat_failed", "Termostatändringen misslyckades; kan ändå ha tagits emot.",
+                                    entity_id=key, request_id=request_id, error=str(exc))
+                    raise
+                self.events.add("thermostat_sent", "Home Assistant accepterade termostatändringen; inväntar återläsning.",
+                                entity_id=key, request_id=request_id, value=target)
+                row["message"] = "Ändring skickad; väntar på återläsning."
+            except ControlError as exc:
+                row["error"] = str(exc)
+                if state.get("last_error") != str(exc):
+                    self.events.add("thermostat_paused", "Termostatbegränsning pausad för rummet.", entity_id=key, error=str(exc))
+                    self.thermostats.setdefault(key, {})["last_error"] = str(exc)
+                    atomic_json(self.thermostat_path, self.thermostats)
+        return result
 
     def observe(self, entities, now, peers=None):
         if not self.config["offset_entity"]:
@@ -809,6 +935,7 @@ class Controller:
                     message="Övervakning: inga ändringar skickas.",
                 )
                 testing = bool(self.test and self.test["phase"] in ("running", "restoring"))
+                result["thermostat_control"] = self.thermostat_step(entities, now, peers, testing)
                 if testing:
                     result["message"] = "Test av styrningen pågår: automatiken väntar tills testet är klart."
                 elif self.config["enabled"]:
