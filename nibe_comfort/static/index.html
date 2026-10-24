@@ -167,6 +167,8 @@
             <label class="toggle"><input type="checkbox" id="show-room-sensors"> Visa även separata temperaturgivare</label>
             <span id="room-selection-count"></span>
           </div>
+          <p id="selected-room-sensors" class="hint" role="status"></p>
+          <button id="remove-room-sensors" type="button" class="secondary" hidden>Avmarkera separata givare · behåll termostater</button>
           <p class="hint" id="room-help">Markera rummen som ska visas. Utan prioriterade givare styr deras gemensamma snitt värmen. Även golvvärme (climate) kan väljas: vi läser uppmätt temperatur, inte termostatens börvärde. Välj inte både en termostat och dess separata givare för samma rum, eftersom rummet då räknas dubbelt.</p>
           <div id="room_sensors" class="room-picker" role="group" aria-describedby="room-help"></div>
           <label for="priority_sensors">Prioriterade rum · valfritt, högst 2 givare</label>

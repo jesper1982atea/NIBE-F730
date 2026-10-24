@@ -183,6 +183,12 @@ börvärde. Sök på namn eller entitets-ID. Termostater visas först; kryssa i
 **Visa även separata temperaturgivare** för övriga givare. Redan valda givare
 visas även utan den kryssrutan och tas inte bort vid uppdateringen.
 Ett sökfilter ändrar inte vilka rum som är valda.
+Antalet valda termostater och separata givare visas var för sig. Valda separata
+givare listas med namn och ID även om sökningen döljer korten. En termostats
+`sensor.…` är inte samma sak som dess styrbara `climate.…`.
+**Avmarkera separata givare · behåll termostater** tar bort givarna och deras
+eventuella prioriteringar från formuläret, inte från Home Assistant. Kontrollera
+rumsvalet och spara; inga bortval sparas automatiskt.
 
 Välj **Termostat närmast värmepumpen** bland de valda termostaterna.
 Markeringen visas i rumsöversikten och är enbart information: den ändrar
