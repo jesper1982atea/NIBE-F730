@@ -1,5 +1,16 @@
 # Ändringslogg
 
+## 0.2.19
+
+- Stöd för climate-termostater som inte rapporterar den valfria
+  `target_temp_step`, exempelvis Liljebagge. Målet skickas exakt inom
+  rapporterade gränser utan gissad steglängd. Saknad steglängd visas i status.
+  Rapporterad steglängd valideras som tidigare; återläsning och alla övriga
+  skydd behålls, inklusive utebliven bekräftelse om målet inte återläses.
+- Sparrad högst upp i inställningarna följer med när du rullar. Visar vilka
+  inställningar som ändrats, pågående sparande, resultat och fel nära knappen.
+  Samma validering och aktiveringsbekräftelser gäller för båda sparknapparna.
+
 ## 0.2.18
 
 - Rumsvalet visar separat antal termostater och givare samt namn och ID för

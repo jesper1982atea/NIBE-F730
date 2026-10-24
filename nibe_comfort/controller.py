@@ -390,11 +390,12 @@ def thermostat_state(config, states, key, now, peers):
     target = config["target_temperature"] if unit == "°C" else config["target_temperature"] * 9 / 5 + 32
     minimum = number(attrs.get("min_temp"), f"{key} minimum")
     maximum = number(attrs.get("max_temp"), f"{key} maximum")
-    step = number(attrs.get("target_temp_step"), f"{key} steglängd")
+    raw_step = attrs.get("target_temp_step")
+    step = number(raw_step, f"{key} steglängd") if raw_step is not None else None
     setpoint = number(attrs.get("temperature"), f"{key} börvärde")
-    if step <= 0 or minimum >= maximum or not minimum <= setpoint <= maximum:
+    if (step is not None and step <= 0) or minimum >= maximum or not minimum <= setpoint <= maximum:
         raise ControlError(f"{key}: ogiltiga temperaturgränser eller steglängd.")
-    if not minimum <= target <= maximum or abs((target - minimum) / step - round((target - minimum) / step)) > 1e-6:
+    if not minimum <= target <= maximum or (step is not None and abs((target - minimum) / step - round((target - minimum) / step)) > 1e-6):
         raise ControlError(f"{key}: ditt mål kan inte anges exakt inom termostatens intervall och steglängd.")
     return current, setpoint, round(target, 6)
 
@@ -663,6 +664,8 @@ class Controller:
             state = self.thermostats.get(key, {})
             try:
                 current, setpoint, target = thermostat_state(self.config, states, key, now, peers)
+                if states[key]["attributes"].get("target_temp_step") is None:
+                    row["warning"] = "Steglängd rapporteras inte. Målet skickas utan avrundning och måste bekräftas genom återläsning."
                 if state.get("last_error"):
                     self.events.add("thermostat_resumed", "Giltiga termostatvärden igen.", entity_id=key)
                     state.pop("last_error")
@@ -706,6 +709,7 @@ class Controller:
                 request_id = self.events.add("thermostat_attempt", "Begränsar övertemperatur: sätter termostatens börvärde till rumsmålet.",
                                             entity_id=key, previous=setpoint, value=target, current=current,
                                             target_temperature=self.config["target_temperature"],
+                                            reported_step=states[key]["attributes"].get("target_temp_step"),
                                             unit=states[key]["attributes"]["temperature_unit"])
                 state = {"attempted_at": now, "value": target, "request_id": request_id,
                          "latched": True, "pending": True, "outcome": "sent"}

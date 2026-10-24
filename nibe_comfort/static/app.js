@@ -32,6 +32,8 @@ function notice(message, error = false) {
   $("notice").textContent = message;
   $("notice").className = error ? "error" : "";
   $("notice").hidden = false;
+  $("settings-save-status").textContent = message;
+  $("settings-save-status").classList.toggle("save-error", error);
 }
 
 async function api(path, options = {}) {
@@ -263,7 +265,7 @@ function renderRoomImpact() {
     const control = lastStatus?.thermostat_control?.rooms.find((entry) => entry.entity_id === room.entity_id);
     thermostat.textContent = [
       room.setpoint != null ? `Termostat inställd på ${displayNumber(room.setpoint)} °C` : room.thermostat_error || "",
-      control?.error || control?.message || "",
+      [control?.error || control?.message || "", control?.warning || ""].filter(Boolean).join(" "),
     ].filter(Boolean).join(" · ");
     if (thermostat.textContent) row.append(thermostat);
     return row;
@@ -286,7 +288,7 @@ function renderRoomImpact() {
       : "Termostatbegränsning av. Inga börvärden ändras.";
   $("thermostat-control-rooms").replaceChildren(...(control?.rooms || []).map((room) => {
     const li = document.createElement("li");
-    li.textContent = `${entities.find((e) => e.entity_id === room.entity_id)?.name || room.entity_id}: ${room.error || room.message}`;
+    li.textContent = `${entities.find((e) => e.entity_id === room.entity_id)?.name || room.entity_id}: ${room.error || room.message} ${room.warning || ""}`;
     return li;
   }));
 }
@@ -420,6 +422,18 @@ function renderIndoorDiff() {
 function targetChanged() {
   const value = $("target_temperature").valueAsNumber;
   $("save-target").hidden = !settings || !Number.isFinite(value) || Math.abs(value - settings.target_temperature) < 0.01;
+  updateSaveState();
+}
+
+function updateSaveState() {
+  if (!settings) return;
+  const next = readSettings();
+  const changed = Object.keys(settings).filter((key) => JSON.stringify(next[key]) !== JSON.stringify(settings[key]));
+  $("settings-save-status").textContent = changed.length
+    ? `Osparade ändringar: ${changed.map((key) => fieldLabels[key] || key).join(", ")}.`
+    : "Inga osparade ändringar.";
+  $("settings-save-status").classList.remove("save-error");
+  $("save-near").disabled = busy;
 }
 
 const valueAt = (points, time) => {
@@ -473,7 +487,8 @@ function renderSummary(data) {
 async function save(config) {
   if (busy) return;
   busy = true;
-  $("save").disabled = $("pause").disabled = $("save-target").disabled = true;
+  $("save").disabled = $("save-near").disabled = $("pause").disabled = $("save-target").disabled = true;
+  $("settings-save-status").textContent = "Sparar ändringar…";
   try {
     settings = await api("settings", {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config),
@@ -490,7 +505,7 @@ async function save(config) {
     notice(`Kunde inte spara: ${error.message}`, true);
   } finally {
     busy = false;
-    $("save").disabled = $("pause").disabled = $("save-target").disabled = false;
+    $("save").disabled = $("save-near").disabled = $("pause").disabled = $("save-target").disabled = false;
   }
 }
 
@@ -1258,13 +1273,13 @@ async function showVersion() {
 
 async function init() {
   makeAdvanced();
-  $("save").disabled = $("pause").disabled = true;
+  $("save").disabled = $("save-near").disabled = $("pause").disabled = true;
   try {
     [settings, entities] = await Promise.all([api("settings"), api("entities")]);
     entities.sort((a, b) => a.name.localeCompare(b.name, "sv"));
     await findPump();
     renderSettings();
-    $("save").disabled = $("pause").disabled = false;
+    $("save").disabled = $("save-near").disabled = $("pause").disabled = false;
     $("notice").hidden = true;
   } catch (error) {
     notice(`Kunde inte läsa inställningar och entiteter: ${error.message}. Försöker igen automatiskt om 15 sekunder.`, true);
@@ -1296,6 +1311,8 @@ async function init() {
       && !window.confirm("Har du verifierat att vald entitet är kurvförskjutning och att gränserna passar din pump? Automatiken får ändra denna entitet.")) return;
     void save(next);
   });
+  $("settings").addEventListener("input", updateSaveState);
+  $("settings").addEventListener("change", updateSaveState);
   $("pause").addEventListener("click", async () => {
     try {
       const latest = await api("settings");

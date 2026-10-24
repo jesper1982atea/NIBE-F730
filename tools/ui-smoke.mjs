@@ -529,8 +529,10 @@ try {
   let thermostatSettings = { ...settings, room_sensors: [thermostat, thirdRoom], priority_sensors: [],
     nearest_thermostat: "", thermostat_control_enabled: false };
   let thermostatSaves = 0;
+  let thermostatSaveFails = false;
   await thermostatPage.route("**/api/settings", (route) => {
     if (route.request().method() === "PUT") {
+      if (thermostatSaveFails) return route.fulfill({ status: 400, json: { error: "Termostaten är otillgänglig" } });
       thermostatSettings = route.request().postDataJSON();
       thermostatSaves++;
     }
@@ -579,27 +581,38 @@ try {
   await thermostatPage.locator("#show-room-sensors").uncheck();
   await thermostatPage.locator("#nearest_thermostat").selectOption(thermostat);
   await thermostatPage.locator("#thermostat_control_enabled").check();
+  assert.match(await thermostatPage.locator("#settings-save-status").textContent(), /Osparade ändringar.*Termostatbegränsning/);
   thermostatPage.once("dialog", (dialog) => dialog.dismiss());
-  await thermostatPage.locator("#save").click();
+  await thermostatPage.locator("#save-near").click();
   assert.equal(thermostatSaves, 0, "Rejecting consent must not save or enable thermostat writes");
   thermostatPage.once("dialog", (dialog) => dialog.accept());
-  await thermostatPage.locator("#save").click();
+  await thermostatPage.locator("#save-near").click();
   await thermostatPage.waitForFunction(() => document.getElementById("notice").textContent.includes("sparade"));
   assert.equal(thermostatSettings.nearest_thermostat, thermostat);
   assert.equal(thermostatSettings.thermostat_control_enabled, true);
   assert.equal(thermostatSettings.target_temperature, settings.target_temperature);
+  assert.match(await thermostatPage.locator("#settings-save-status").textContent(), /sparade/);
   await thermostatPage.waitForFunction(() => document.getElementById("room-impact-list").textContent.includes("närmast pumpen"));
   assert.match(await thermostatPage.locator("#thermostat-control-status").textContent(), /Termostatbegränsning på/);
   await thermostatPage.locator("#room_sensors").screenshot({ path: `${artifacts}/thermostat-picker.png` });
   await thermostatPage.emulateMedia({ colorScheme: "dark" });
   for (const width of [320, 390, 1280]) {
     await thermostatPage.setViewportSize({ width, height: 900 });
+    await thermostatPage.locator("#price_low").scrollIntoViewIfNeeded();
+    const bar = await thermostatPage.locator(".settings-savebar").boundingBox();
+    assert.ok(bar.y >= -1 && bar.y + bar.height <= 900, `Save bar must remain visible at ${width}px`);
     assert.equal(await thermostatPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `Thermostat picker overflow at ${width}`);
   }
   await thermostatPage.locator("#thermostat_control_enabled").uncheck();
   await thermostatPage.locator(`#room_sensors input[value="${thermostat}"]`).uncheck();
   assert.equal(await thermostatPage.locator("#nearest_thermostat").inputValue(), "");
-  await thermostatPage.locator("#save").click();
+  thermostatSaveFails = true;
+  await thermostatPage.locator("#save-near").click();
+  await thermostatPage.waitForFunction(() => document.getElementById("settings-save-status").textContent.includes("otillgänglig"));
+  assert.equal(await thermostatPage.locator("#thermostat_control_enabled").isChecked(), false);
+  assert.equal(thermostatSettings.thermostat_control_enabled, true, "Failed save must not update persisted settings");
+  thermostatSaveFails = false;
+  await thermostatPage.locator("#save-near").click();
   await thermostatPage.waitForFunction(() => !document.getElementById("save").disabled);
   assert.equal(thermostatSettings.thermostat_control_enabled, false);
   assert.equal(thermostatSettings.nearest_thermostat, "");
