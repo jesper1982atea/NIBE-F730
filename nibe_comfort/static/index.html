@@ -18,6 +18,13 @@
     </div>
   </header>
   <main>
+    <nav class="page-nav" aria-label="Hitta på sidan">
+      <a href="#status-title">Översikt</a>
+      <a href="#hot-water-card">Varmvatten</a>
+      <a href="#temperature-section">Rum och historik</a>
+      <a href="#settings-panel">Inställningar</a>
+      <a href="#log-panel">Ändringslogg</a>
+    </nav>
     <div id="notice" role="status" hidden></div>
     <section class="hero card" aria-labelledby="status-title">
       <div class="hero-head">
@@ -47,6 +54,14 @@
       </div>
       <p id="hero-extra" class="hero-extra"></p>
       <p id="updated" class="muted"></p>
+      <details class="disclosure hero-help">
+        <summary>Så fungerar värmen · tre saker att känna till</summary>
+        <div class="explainer-grid">
+          <div><strong>1. Du väljer ett mål</strong><p>Temperaturen jämförs med snittet i dina valda eller prioriterade rum. Målet är inte samma sak som termostatens börvärde.</p></div>
+          <div><strong>2. Pumpen värmer hela huset</strong><p>Kurvförskjutningen höjer eller sänker värmen från pumpen. Ett kurvsteg är inte en grads rumstemperatur. Förändringen märks långsamt.</p></div>
+          <div><strong>3. Du ser vad som händer</strong><p>Nästa justering är en plan, inte en garanti. En skickad begäran bekräftas först när Home Assistant läser tillbaka värdet. Övervakningsläge skickar inga nya automatiska ändringar.</p></div>
+        </div>
+      </details>
       <details id="room-impact">
         <summary>Temperatur i alla valda rum</summary>
         <p>Förskjutningen påverkar hela huset, inte bara prioriterade rum. Här ser du uppmätta värden och förändring senaste timmen, inte en prognos eller bevis på vad som orsakat förändringen.</p>
@@ -59,17 +74,23 @@
       <h2>Varför blir inte rummet varmt?</h2>
       <p id="comfort-status" role="status">Väntar på aktuella rumstemperaturer…</p>
       <ul id="comfort-advice"></ul>
+      <details class="disclosure" id="comfort-details">
+        <summary>Fördjupning · vad hände efter mer värme?</summary>
       <h3>Efter senaste bekräftade höjningen</h3>
       <p id="comfort-change"></p>
       <ul id="comfort-response"></ul>
       <p class="hint">Rådgivande, ändrar inga inställningar. Uppmätt temperaturförändring är inte bevis på pumpens effekt: väder, sol, ventilation och användning påverkar också. Vi kan inte avgöra flöde eller injustering från enbart temperaturgivare.</p>
+      </details>
     </section>
 
     <section class="card dashboard">
       <div class="section-heading"><div><span class="section-number">IGÅR, I DAG OCH I MORGON</span><h2>Värmeplan</h2></div><button type="button" id="refresh-plan" class="secondary">Uppdatera plan</button></div>
+      <p class="section-intro">Vad pumpen har gjort och vad som planeras härnäst. Planen räknas om när temperatur, väder eller pris ändras.</p>
       <p id="plan-status" role="status">Hämtar värmeplan…</p>
       <ul id="plan-changes" class="plan-changes"></ul>
       <p id="plan-notes" class="explanation"></p>
+      <details class="disclosure" id="plan-details">
+        <summary>Visa underlaget · väder, elpris och kurvförskjutning</summary>
       <h3>Utetemperatur</h3>
       <div id="plan-outdoor" class="chart" role="img" aria-label="Utetemperatur senaste dygnet och prognos"></div>
       <div id="plan-outdoor-legend" class="chart-legend"></div>
@@ -82,22 +103,30 @@
       <div id="plan-offset" class="chart" role="img" aria-label="Kurvförskjutning historik och plan"></div>
       <div id="plan-offset-legend" class="chart-legend"></div>
       <p class="hint chart-key"><span class="key planned">Streckad lila</span> = kommande justering, <span class="key done-auto">grön</span> = ändrad av automatiken, <span class="key done-other">orange</span> = ändrad manuellt eller av annan automation. ▲ höjning, ▼ sänkning.</p>
+      </details>
+      <details class="disclosure" id="curve-details">
+        <summary>Avancerat · pumpens uppskattade värmekurva</summary>
       <h3>Värmekurvan som den är inställd nu</h3>
       <p class="hint">Uppskattad från pumpens egen beräknade framledning de senaste 7 dygnen. Gröna punkter och linjen gäller nuvarande förskjutning, grå punkter andra förskjutningar. Stor ring = just nu. Det skuggade fältet är utetemperaturen i prognosen.</p>
       <div id="plan-curve" class="chart" role="img" aria-label="Framledningstemperatur mot utetemperatur"></div>
       <p id="plan-curve-status" class="hint"></p>
+      </details>
     </section>
 
     <section class="card dashboard" id="learning-card">
       <div class="section-heading"><div><span class="section-number">SJÄLVLÄRANDE</span><h2>Ditt hus lär sig</h2></div><button type="button" id="refresh-learning" class="secondary">Uppdatera</button></div>
       <p id="learn-status" role="status">Hämtar husmodellen…</p>
-      <div id="learn-progress" class="learn-progress"></div>
+      <p class="section-intro">En försiktig uppskattning av hur snabbt huset blir varmt. Ju mer historik, desto bättre underlag – det är fortfarande en prognos.</p>
       <p id="learn-message" class="explanation"></p>
+      <details class="disclosure" id="learning-details">
+        <summary>Fördjupning · inlärning, siffror och temperaturprognos</summary>
+      <div id="learn-progress" class="learn-progress"></div>
       <div id="learn-facts" class="live-grid"></div>
       <h3>Inne · senaste dygnet och vad modellen tror händer</h3>
       <div id="learn-chart" class="chart" role="img" aria-label="Innetemperatur och förutsägelse"></div>
       <div id="learn-legend" class="chart-legend"></div>
       <p class="hint chart-key"><span class="key preheat">Rött fält</span> = förvärmning före dyrt elpris, <span class="key coast">blått fält</span> = dyra timmar då huset får bli lite svalare. Förutsägelsen följer värmeplanen och väderprognosen.</p>
+      </details>
       <h3>Förvärmning före dyra timmar</h3>
       <div class="learn-controls">
         <label class="toggle"><input type="checkbox" id="preheat_enabled" name="preheat_enabled" form="settings"> Låt huset förvärmas när elen är billig</label>
@@ -121,6 +150,9 @@
       </div>
       <h3>När används varmvattnet?</h3>
       <p id="hw-pattern" class="explanation"></p>
+      <p class="hint">Varmvattenkortet visar bara information. Nivån är en uppskattning, inte uppmätta liter; tillägget ändrar inte varmvatteninställningarna.</p>
+      <details class="disclosure" id="hot-water-details">
+        <summary>Visa användning och temperaturhistorik</summary>
       <div id="hw-hours" class="chart" role="img" aria-label="Tappningar per timme på dygnet"></div>
       <p class="hint chart-key"><span class="key hw-big">Stark färg</span> = stor tappning (dusch eller bad), <span class="key hw-small">blek</span> = mindre tappning. Räknat på senaste 7 dygnen.</p>
       <h3>Temperatur i tanken · senaste 2 dygnen</h3>
@@ -129,32 +161,42 @@
       <p class="hint">Tappningar syns som snabba fall i laddgivaren BT6 längre ner i tanken när kallt vatten strömmar in. BT7 i toppen ändras mindre. Skuggade fält = pumpen laddar varmvatten.</p>
       <h3>Senaste tappningarna</h3>
       <ul id="hw-list" class="plan-changes"></ul>
+      </details>
     </section>
 
-    <section class="card dashboard">
+    <section class="card dashboard" id="temperature-section">
       <div class="section-heading"><div><span class="section-number">SENASTE DYGNET</span><h2>Temperaturen över tid</h2></div><button type="button" id="refresh-history" class="secondary">Uppdatera graf</button></div>
+      <p class="section-intro">Följ hur varmt det faktiskt varit. Heldragen linje är uppmätt temperatur, streckad linje i rumsgraferna är termostatens börvärde.</p>
       <label for="history-entity">Visa</label>
       <select id="history-entity" class="compact-select"><option value="">Alla rum</option></select>
       <p id="history-status" role="status">Hämtar temperaturhistorik…</p>
       <div id="temperature-chart" class="chart" role="img" aria-label="Rumstemperaturer under senaste dygnet"></div>
       <div id="temperature-legend" class="chart-legend"></div>
-      <p class="hint">K = kurvförskjutning, T = termostat. Markeringarna visar loggade begäranden och kurvobservationer. Återläst betyder bekräftat av HA-integrationen, inte en oberoende fysisk mätning. En begäran utan återläsning är inte en bekräftad ändring. Positivt beslutsbidrag begär mer värme, negativt mindre. Temperaturförändring efteråt bevisar inte vad som orsakade den.</p>
       <p id="history-changes-status" role="status"></p>
+      <details class="disclosure" id="history-decisions">
+        <summary>Varför ändrades värmen? · beslut och förklaringar</summary>
+      <p class="hint">K = kurvförskjutning, T = termostat. Markeringarna visar loggade begäranden och kurvobservationer. Återläst betyder bekräftat av HA-integrationen, inte en oberoende fysisk mätning. En begäran utan återläsning är inte en bekräftad ändring. Positivt beslutsbidrag begär mer värme, negativt mindre. Temperaturförändring efteråt bevisar inte vad som orsakade den.</p>
       <ul id="history-changes" class="plan-changes"></ul>
+      </details>
+      <h3 id="thermostat-charts-title">Rum för rum</h3>
       <div id="thermostat-charts" class="thermostat-charts"></div>
       <p class="hint">Välj ett rum för att se det ensamt. För golvvärme och termostater visas både uppmätt temperatur (heldragen) och vad termostaten är inställd att värma till (streckad). Givare rapporterar bara när värdet ändras, så ett värde gäller tills nästa rapport. Luckor betyder att givaren var otillgänglig.</p>
-      <details><summary>Visa mätpunkter som tabell</summary><div id="history-table" class="table-scroll"></div></details>
+      <details class="disclosure"><summary>Avancerat · mätpunkter som tabell</summary><div id="history-table" class="table-scroll"></div></details>
     </section>
 
     <section class="card dashboard">
       <span class="section-number">PUMPEN JUST NU</span>
       <h2>Värme, drift och el</h2>
       <p id="overview-status" role="status">Hämtar pumpstatus…</p>
+      <p class="section-intro">Rapporterad drift och eventuella larm. Saknad information betyder inte att pumpen är avstängd.</p>
       <div id="pump-metrics" class="live-grid"></div>
+      <details class="disclosure" id="electricity-details">
+        <summary>Visa elförbrukning · pumpen jämfört med hela huset</summary>
       <h3>Elförbrukning</h3>
       <div id="electricity-metrics" class="live-grid"></div>
       <p id="electricity-note" class="hint"></p>
       <p class="hint">Värden rapporterade via Home Assistant. Saknade eller gamla uppgifter visas inte som noll eller ”av”.</p>
+      </details>
     </section>
 
     <details id="settings-panel" class="fold">
@@ -164,6 +206,7 @@
         <span id="settings-save-status" role="status">Inga osparade ändringar.</span>
         <button id="save-near" type="submit">Spara ändringar</button>
       </div>
+      <p class="settings-guide">Börja med <strong>rum och måltemperatur</strong>. Pumpanslutning, väder och elpris behöver normalt bara ställas in en gång. Inget ändras förrän du sparar.</p>
       <div class="grid">
         <section class="card">
           <span class="section-number">01 / KOMFORT</span>
@@ -186,8 +229,12 @@
           <select id="nearest_thermostat"><option value="">Inte markerad</option></select>
           <p class="hint">Endast en informationsmarkering. Avstånd används inte för styrning och den undantas inte från begränsning.</p>
           <label class="toggle"><input type="checkbox" id="thermostat_control_enabled"> Begränsa övertemperatur med termostater</label>
+          <p class="hint warning">Valfritt: sänker ett högre termostatbörvärde till ditt mål vid minst 0,5 °C övertemperatur. Höjer aldrig lägre börvärden. Avstängning återställer inte ändrade värden. Säkerställ tillräckligt flöde i värmesystemet.</p>
+          <details class="disclosure">
+            <summary>Så fungerar termostatbegränsningen · krav och skydd</summary>
           <p class="hint">Steglängd kontrolleras när den rapporteras. Om den saknas skickas målet utan avrundning inom termostatens gränser; exakt återläsning krävs fortfarande.</p>
           <p class="hint">Av från början. Kräver att alla valda rum är termostater i värmeläge (heat), att huvudautomatiken är på och att målet passar termostaternas steglängd. Vid minst 0,5 °C över ditt sparade mål sänks ett högre börvärde till rumsmålet, även vid förvärmning. Lägre börvärden höjs aldrig och värmen stängs inte av. Återställning gör du själv; avstängning återställer inte redan ändrade värden. Högst en ändring under varje varm period, minst 30 minuter mellan försök och efter omstart. Ny period kan börja först när rummet svalnat till högst 0,2 °C över målet. Kontrollera att anläggningen har tillräckligt flöde när termostaterna stryper.</p>
+          </details>
           <p id="thermostat-control-status" role="status"></p>
           <ul id="thermostat-control-rooms"></ul>
         </section>

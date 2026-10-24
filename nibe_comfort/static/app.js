@@ -541,8 +541,10 @@ function chartWidth(container) {
 }
 
 const signed = (from, to) => `${to > from ? "▲" : "▼"} ${displayNumber(from)}→${displayNumber(to)}`;
+const chartRedraws = new WeakMap();
 
 function drawChart(container, series, options) {
+  chartRedraws.set(container, () => drawChart(container, series, options));
   const { start, end, unit = "°", now = null, guides = [], markers = [], bands = [], label } = options;
   container.replaceChildren();
   const values = series.flatMap((line) => line.points.filter((point) => point[1] !== null).map((point) => point[1]));
@@ -627,6 +629,7 @@ function legend(container, series) {
 }
 
 function drawCurve(container, curve) {
+  chartRedraws.set(container, () => drawCurve(container, curve));
   container.replaceChildren();
   const width = chartWidth(container), narrow = width < 520;
   const height = narrow ? 240 : 300, left = narrow ? 44 : 56, right = narrow ? 8 : 20, top = 16, bottom = 40;
@@ -793,6 +796,7 @@ function renderHistory() {
     drawChart(chart, roomSeries, { start: data.start, end: data.end,
       markers: historyMarkers(changes.filter((change) => change.kind === "offset" || change.entity_id === line.entity_id)) });
   }
+  $("thermostat-charts-title").hidden = charts.length === 0;
   const last = (points) => [...(points || [])].reverse().find((point) => point[1] !== null)?.[1] ?? null;
   const count = lines.reduce((sum, line) => sum + line.points.filter((point) => point[1] !== null).length, 0);
   let status = count
@@ -839,6 +843,7 @@ async function refreshHistory() {
     $("history-table").replaceChildren();
     $("history-changes").replaceChildren();
     $("thermostat-charts").replaceChildren();
+    $("thermostat-charts-title").hidden = true;
     $("history-changes-status").textContent = "Ändringshistoriken är inte tillgänglig.";
     $("history-status").textContent = `Kunde inte hämta historik: ${error.message}`;
   } finally { $("refresh-history").disabled = false; }
@@ -1390,6 +1395,23 @@ async function init() {
   });
   $("settings").addEventListener("input", updateSaveState);
   $("settings").addEventListener("change", updateSaveState);
+  document.querySelectorAll(".page-nav a").forEach((link) => link.addEventListener("click", () => {
+    const target = document.querySelector(link.getAttribute("href"));
+    if (target?.tagName === "DETAILS") target.open = true;
+  }));
+  document.addEventListener("toggle", (event) => {
+    if (event.target.tagName !== "DETAILS" || !event.target.open) return;
+    window.requestAnimationFrame(() => {
+      for (const chart of event.target.querySelectorAll(".chart")) {
+        if (chart.getClientRects().length && chart.querySelector("svg")) chartRedraws.get(chart)?.();
+      }
+    });
+  }, true);
+  document.addEventListener("invalid", (event) => {
+    for (let parent = event.target.parentElement; parent; parent = parent.parentElement) {
+      if (parent.tagName === "DETAILS") parent.open = true;
+    }
+  }, true);
   $("pause").addEventListener("click", async () => {
     try {
       const latest = await api("settings");
