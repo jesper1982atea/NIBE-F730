@@ -563,6 +563,50 @@ def actual_changes(history, events, start):
     return changes
 
 
+def control_history(events, config, start, end):
+    """One entry per logged request, with its latest outcome; never infer physical changes."""
+    attempts = {e["id"]: e for e in events if e["kind"] in ("write_attempt", "thermostat_attempt")}
+    outcomes = {}
+    for event in sorted(events, key=lambda e: (e["timestamp"], e["id"])):
+        if event["kind"] in ("write_sent", "write_observed", "write_failed", "write_unconfirmed",
+                             "thermostat_sent", "thermostat_observed", "thermostat_failed", "thermostat_unconfirmed"):
+            outcomes[event["details"].get("request_id")] = event
+    result = []
+    for event in events:
+        d = event["details"]
+        if (event["kind"] == "offset_observed" and d.get("entity_id") == config["offset_entity"]
+                and start <= event["timestamp"] <= end):
+            result.append({"id": event["id"], "timestamp": event["timestamp"], "kind": "offset",
+                           "entity_id": d["entity_id"], "status": "observed", "previous": d.get("previous"),
+                           "value": d.get("value"), "unit": ""})
+    for attempt in attempts.values():
+        details = attempt["details"]
+        thermostat = attempt["kind"] == "thermostat_attempt"
+        entity_id = details.get("entity_id")
+        if entity_id not in (config["room_sensors"] if thermostat else [config["offset_entity"]]):
+            continue
+        outcome = outcomes.get(attempt["id"])
+        stamp = attempt["timestamp"]
+        if not start <= stamp <= end:
+            if not outcome or not start <= outcome["timestamp"] <= end:
+                continue
+            stamp = outcome["timestamp"]
+        status = "attempt"
+        if outcome:
+            status = {"observed": "confirmed", "unconfirmed": "unconfirmed",
+                      "failed": "failed", "sent": "sent"}[outcome["kind"].split("_")[-1]]
+        result.append({"id": attempt["id"], "timestamp": stamp, "requested_at": attempt["timestamp"],
+                       "outcome_at": outcome["timestamp"] if outcome else None,
+                       "kind": "thermostat" if thermostat else "offset", "entity_id": entity_id,
+                       "status": status, "previous": details.get("previous"), "value": details.get("value"),
+                       "unit": details.get("unit", ""), "contributions": details.get("contributions"),
+                       "indoor": details.get("indoor", details.get("current")), "outdoor": details.get("outdoor"),
+                       "price": details.get("price"), "price_unit": details.get("price_unit"),
+                       "target": details.get("target_temperature"),
+                       "preheat": details.get("preheat"), "error": outcome["details"].get("error") if outcome else None})
+    return sorted(result, key=lambda e: (e["timestamp"], e["id"]))
+
+
 class Insights:
     def __init__(self, ha, data_dir=None):
         self.ha = ha

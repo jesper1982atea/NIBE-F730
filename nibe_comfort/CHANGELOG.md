@@ -1,5 +1,19 @@
 # Ändringslogg
 
+## 0.2.20
+
+- Egen dygnsgraf per vald termostat med uppmätt temperatur och historiskt
+  börvärde. Rumsfiltret styr både grafer och relevant ändringslista.
+- Kurv- och termostatbegäranden markeras på samma tidsaxel. Listan skiljer
+  begäran, accepterat serviceanrop, återläsning, fel och utebliven bekräftelse.
+  Kurvobservationer visas separat utan att tillskrivas en obekräftad orsak.
+- Vid pumpbeslut visas loggade bidrag från rum, ute och elpris (även noll),
+  mätvärden vid beslutet samt förvärmning/sparläge. Termostatbeslut visar
+  övertemperatur och mål, inte en påhittad direkt elprispåverkan.
+- Historiken hämtar periodens beständiga logg inklusive länkade begäranden
+  utanför perioden, inte bara de senaste 100 posterna. Loggfel visas tydligt
+  utan att kasta bort tillgänglig temperaturhistorik. Inga styrregler ändras.
+
 ## 0.2.19
 
 - Stöd för climate-termostater som inte rapporterar den valfria
