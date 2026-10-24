@@ -698,6 +698,44 @@ async function refreshOverview() {
 
 let historyData = null;
 
+function historyChangeText(change) {
+  if (change.status === "observed") {
+    return `#${change.id} · ${clock(change.timestamp)} · Kurvförskjutning ${displayNumber(change.previous)} → ${displayNumber(change.value)} återläst. Orsak inte fastställd här; kan vara tillägget, pumptest, manuell ändring eller annan automation. Jämför styrbegäranden i listan.`;
+  }
+  const name = entities.find((e) => e.entity_id === change.entity_id)?.name || change.entity_id;
+  const state = { confirmed: "återläst", sent: "skickad, inte bekräftad", attempt: "begärd, inte bekräftad",
+    failed: "anrop misslyckades, kan ändå ha tagits emot", unconfirmed: "återläsning saknas" }[change.status];
+  let text = `#${change.id} · ${clock(change.timestamp)} · ${change.kind === "offset" ? "Kurvförskjutning" : name}: ${displayNumber(change.previous)} → ${displayNumber(change.value)} ${change.unit || ""} · ${state}.`;
+  if (change.kind === "offset") {
+    const c = change.contributions;
+    text += c ? ` Beslutsbidrag i kurvsteg: rum ${displayNumber(c.room)}, utetemperatur ${displayNumber(c.weather)}, elpris ${displayNumber(c.price)}.`
+      : " Beslutsbidrag saknas i loggen.";
+    const values = [
+      change.indoor != null ? `inne ${displayNumber(change.indoor)} °C` : "",
+      change.target != null ? `mål ${displayNumber(change.target)} °C` : "",
+      change.outdoor != null ? `ute ${displayNumber(change.outdoor)} °C` : "",
+      change.price != null ? `elpris ${displayNumber(change.price)} ${change.price_unit || "(historisk enhet saknas i loggen)"}` : "",
+    ].filter(Boolean);
+    if (values.length) text += ` Vid beslutet: ${values.join(", ")}.`;
+    if (change.preheat) text += change.preheat === "preheat" ? " Förvärmning aktiv." : " Sparläge vid dyrt elpris aktivt.";
+  } else {
+    text += ` Övertemperaturbegränsning${change.indoor != null ? `: uppmätt ${displayNumber(change.indoor)} °C` : ""}${change.target != null ? `, mål ${displayNumber(change.target)} °C` : ""}. Elpris används inte direkt för termostatbeslutet.`;
+  }
+  if (change.outcome_at) text += ` Senaste besked ${clock(change.outcome_at)}.`;
+  if (change.error) text += ` ${change.error}`;
+  return text;
+}
+
+function historyMarkers(changes) {
+  return changes.map((change) => ({
+    time: change.timestamp,
+    label: `${change.kind === "offset" ? "K" : "T"} ${displayNumber(change.value)} · ${["confirmed", "observed"].includes(change.status) ? "återläst" : "begäran"}`,
+    short: `${change.kind === "offset" ? "K" : "T"}${change.id}`,
+    className: change.status === "confirmed" ? "done-auto" : "done-other",
+    title: historyChangeText(change),
+  }));
+}
+
 function renderHistory() {
   const data = historyData;
   const lines = data.series.filter((line) => !line.outdoor);
@@ -717,8 +755,44 @@ function renderHistory() {
   } else {
     series = lines.map((line, index) => ({ name: line.name, points: line.points, until: data.end, color: index }));
   }
-  drawChart($("temperature-chart"), series, { start: data.start, end: data.end, guides });
+  const changes = (data.changes || []).filter((change) => change.kind === "offset" || !single || change.entity_id === single.entity_id);
+  drawChart($("temperature-chart"), series, { start: data.start, end: data.end, guides, markers: historyMarkers(changes) });
   legend($("temperature-legend"), series);
+  $("history-changes-status").textContent = data.changes_error || (changes.length
+    ? `${changes.length} loggade begäranden/observationer under perioden. Begäran och återläst kurvändring kan vara separata poster. Bidrag 0 betyder ingen direkt påverkan vid beslutet.`
+    : "Inga styrbegäranden eller kurvobservationer finns loggade för dessa rum och denna pump under perioden.");
+  $("history-changes").replaceChildren(...changes.map((change) => {
+    const item = document.createElement("li");
+    item.className = change.status === "confirmed" ? "done-auto" : "done-other";
+    item.textContent = historyChangeText(change);
+    return item;
+  }));
+  $("thermostat-charts").replaceChildren();
+  const charts = [];
+  for (const line of (single ? [single] : lines).filter((entry) => entry.kind === "climate")) {
+    const card = document.createElement("section");
+    card.className = "thermostat-history";
+    const title = document.createElement("h3");
+    title.textContent = line.name;
+    const chart = document.createElement("div");
+    chart.className = "chart";
+    chart.setAttribute("role", "img");
+    chart.setAttribute("aria-label", `${line.name}: uppmätt temperatur, börvärde och styrbegäranden senaste dygnet`);
+    const roomSeries = [
+      { name: "Uppmätt °C", points: line.points, until: data.end, color: 0 },
+      { name: "Termostatens börvärde °C", points: line.setpoints || [], until: data.end, color: 1, dashed: true },
+    ];
+    const roomLegend = document.createElement("div");
+    roomLegend.className = "chart-legend";
+    card.append(title, chart, roomLegend);
+    $("thermostat-charts").append(card);
+    charts.push({ chart, roomSeries, line });
+    legend(roomLegend, roomSeries);
+  }
+  for (const { chart, roomSeries, line } of charts) {
+    drawChart(chart, roomSeries, { start: data.start, end: data.end,
+      markers: historyMarkers(changes.filter((change) => change.kind === "offset" || change.entity_id === line.entity_id)) });
+  }
   const last = (points) => [...(points || [])].reverse().find((point) => point[1] !== null)?.[1] ?? null;
   const count = lines.reduce((sum, line) => sum + line.points.filter((point) => point[1] !== null).length, 0);
   let status = count
@@ -763,6 +837,9 @@ async function refreshHistory() {
     $("temperature-chart").replaceChildren();
     $("temperature-legend").replaceChildren();
     $("history-table").replaceChildren();
+    $("history-changes").replaceChildren();
+    $("thermostat-charts").replaceChildren();
+    $("history-changes-status").textContent = "Ändringshistoriken är inte tillgänglig.";
     $("history-status").textContent = `Kunde inte hämta historik: ${error.message}`;
   } finally { $("refresh-history").disabled = false; }
 }

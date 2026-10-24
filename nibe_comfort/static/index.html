@@ -138,6 +138,10 @@
       <p id="history-status" role="status">Hämtar temperaturhistorik…</p>
       <div id="temperature-chart" class="chart" role="img" aria-label="Rumstemperaturer under senaste dygnet"></div>
       <div id="temperature-legend" class="chart-legend"></div>
+      <p class="hint">K = kurvförskjutning, T = termostat. Markeringarna visar loggade begäranden och kurvobservationer. Återläst betyder bekräftat av HA-integrationen, inte en oberoende fysisk mätning. En begäran utan återläsning är inte en bekräftad ändring. Positivt beslutsbidrag begär mer värme, negativt mindre. Temperaturförändring efteråt bevisar inte vad som orsakade den.</p>
+      <p id="history-changes-status" role="status"></p>
+      <ul id="history-changes" class="plan-changes"></ul>
+      <div id="thermostat-charts" class="thermostat-charts"></div>
       <p class="hint">Välj ett rum för att se det ensamt. För golvvärme och termostater visas både uppmätt temperatur (heldragen) och vad termostaten är inställd att värma till (streckad). Givare rapporterar bara när värdet ändras, så ett värde gäller tills nästa rapport. Luckor betyder att givaren var otillgänglig.</p>
       <details><summary>Visa mätpunkter som tabell</summary><div id="history-table" class="table-scroll"></div></details>
     </section>

@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from controller import ControlError, Controller, HomeAssistant, temperature
-from insights import Insights
+from insights import Insights, control_history
 
 LOG = logging.getLogger("nibe_comfort")
 STATIC = Path(__file__).parent / "static"
@@ -77,7 +77,18 @@ def handler_for(controller, api_token=None):
                 elif path == "/api/hotwater":
                     self.respond(200, insights.hot_water(controller.settings()))
                 elif path == "/api/history":
-                    self.respond(200, insights.history(controller.settings()))
+                    config = controller.settings()
+                    history = insights.history(config)
+                    try:
+                        history["changes"] = control_history(
+                            controller.events.history(history["start"], history["end"]),
+                            config, history["start"], history["end"])
+                        history["changes_error"] = None
+                    except (sqlite3.Error, OSError):
+                        LOG.exception("Kunde inte läsa ändringsloggen för temperaturhistoriken")
+                        history["changes"] = []
+                        history["changes_error"] = "Ändringsloggen kunde inte läsas. Temperaturhistoriken visas utan styrmarkeringar."
+                    self.respond(200, history)
                 elif path == "/api/forecast":
                     self.respond(200, insights.forecast(controller.settings()["forecast_entity"]))
                 elif path == "/api/plan":

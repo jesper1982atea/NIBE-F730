@@ -9,6 +9,9 @@ med väder, Tibbers kvartspriser och planerad förskjutning, en uppskattad
 värmekurva, SMHI/HA-väderprognos, Tibbers aktuella pris samt pumpens tillgängliga larm- och driftvärden. Golvvärme via
 `climate` stöds som rumsgivare. Inställningsändringar och automatiska
 skrivförsök sparas i en beständig ändringslogg.
+Varje vald termostat har en dygnsgraf för uppmätt temperatur och börvärde,
+med kurv-/termostatbegäranden på tidsaxeln och loggade beslutsbidrag från
+rumstemperatur, väder och elpris. Begäran skiljs från bekräftad återläsning.
 
 Tillägget lär sig också hur huset svarar på värmekurvan och kan, om du slår på
 det, förvärma före dyra elpristimmar och låta huset svalna lite under dem.

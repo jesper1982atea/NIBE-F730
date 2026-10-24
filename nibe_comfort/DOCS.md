@@ -258,6 +258,36 @@ betyder att givaren var otillgänglig. Grafen glesas ut till första/sista
 värdet i femminutersintervall. Mätpunkterna finns också som tabell.
 Historik hämtas högst var femte minut.
 
+Under översikten finns också **en egen graf per vald climate-termostat**,
+med uppmätt temperatur och dess historiska börvärde. Rumsfiltret visar ett
+enskilt rum eller alla. Både översikt och rumsgrafer har markeringar för
+loggade kurvbegäranden (**K**) och termostatbegäranden (**T**). Kurvbegäranden
+visas för alla rum, termostatbegäranden bara för den berörda termostaten.
+
+Ändringslistan visar före/eftervärden, enhet och senaste status: begärd,
+skickad utan bekräftelse, återläst, misslyckat anrop eller saknad återläsning.
+En begäran markeras vid försökstidpunkten, inte när rummet blev varmare.
+Återläsningens tid visas separat. Började begäran före dygnet men fick
+besked under perioden visas den vid beskedstiden. En separat återläst
+kurvobservation kan avse samma händelse; orsaken antas inte vara tillägget.
+Även pumptest eller manuell/annan styrning kan ge en kurvobservation.
+Börvärdeslinjen kan ändras av egna scheman; avsaknad av tilläggsmarkering
+betyder inte att termostaten varit oförändrad.
+
+För pumpens automatiska beslut visas loggade bidrag i kurvsteg från rum,
+utetemperatur och elpris, inklusive noll. Positivt bidrag begär mer värme,
+negativt mindre. Mätvärden och mål vid beslutet samt eventuell förvärmning
+visas när de finns i loggen. Prisets enhet sparas för nya beslut; äldre
+poster utan enhet markeras i stället för att ges dagens enhet.
+Termostatbegränsning grundas på övertemperatur mot det sparade målet,
+inte direkt på elpris. Temperaturutvecklingen efteråt bevisar inte orsak:
+sol, ventilation, användning och annan styrning kan också påverka.
+
+Markeringarna använder periodens beständiga ändringslogg och länkade
+begäranden, även om fler än 100 händelser har loggats. Historik innan
+tillägget började logga kan inte återskapas. Om loggen inte kan läsas
+visas ett uttryckligt fel; temperaturhistoriken behålls utan markeringar.
+
 ### Värmeplan · väder och elpris
 
 Ett eget kort visar senaste dygnet och kommande cirka 36 timmar på samma

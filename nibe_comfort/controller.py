@@ -540,6 +540,7 @@ class EventLog:
                 "(id INTEGER PRIMARY KEY, timestamp REAL NOT NULL, kind TEXT NOT NULL, "
                 "message TEXT NOT NULL, details TEXT NOT NULL)"
             )
+            connection.execute("CREATE INDEX IF NOT EXISTS events_timestamp ON events(timestamp)")
 
     @contextmanager
     def connect(self):
@@ -569,6 +570,17 @@ class EventLog:
             dict(id=row[0], timestamp=row[1], kind=row[2], message=row[3], details=json.loads(row[4]))
             for row in rows
         ]
+
+    def history(self, start, end):
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT id,timestamp,kind,message,details FROM events "
+                "WHERE timestamp BETWEEN ? AND ? OR id IN "
+                "(SELECT json_extract(details,'$.request_id') FROM events WHERE timestamp BETWEEN ? AND ?) "
+                "ORDER BY timestamp,id",
+                (start, end, start, end),
+            ).fetchall()
+        return [dict(id=r[0], timestamp=r[1], kind=r[2], message=r[3], details=json.loads(r[4])) for r in rows]
 
 
 class Controller:
@@ -964,6 +976,8 @@ class Controller:
                                 entity_id=self.config["offset_entity"], previous=result["current_offset"],
                                 value=result["next_offset"], target_temperature=self.config["target_temperature"],
                                 indoor=result["indoor"], outdoor=result["outdoor"], price=result["price"],
+                                price_unit=next((e["attributes"].get("unit_of_measurement") for e in entities
+                                                 if e["entity_id"] == self.config["price_entity"]), None),
                                 contributions=result["contributions"], desired_offset=result["desired_offset"],
                                 target_shift=result["target_shift"], preheat=preheat.get("kind"),
                             )

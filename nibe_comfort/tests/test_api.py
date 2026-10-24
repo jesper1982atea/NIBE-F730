@@ -132,6 +132,28 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request("/api/settings", "PUT", original)[0], 200)
         self.assertEqual(self.request("/api/settings")[1]["target_temperature"], 22)
 
+    def test_history_includes_durable_control_events_without_writes(self):
+        self.controller.save(config())
+        self.ha.request.return_value = []
+        request = self.controller.events.add("write_attempt", "request", entity_id="number.offset",
+                                             previous=2, value=3, contributions={"room": 1, "price": 0, "weather": 0})
+        self.controller.events.add("write_observed", "confirmed", request_id=request)
+        status, data = self.request("/api/history")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["changes"][0]["status"], "confirmed")
+        self.assertIn("series", data)
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
+
+    def test_history_log_failure_preserves_temperature_history_with_visible_error(self):
+        self.controller.save(config())
+        self.ha.request.return_value = []
+        with patch.object(self.controller.events, "history", side_effect=OSError("Disk failure")), self.assertLogs("nibe_comfort", level="ERROR"):
+            status, data = self.request("/api/history")
+        self.assertEqual(status, 200)
+        self.assertIn("series", data)
+        self.assertEqual(data["changes"], [])
+        self.assertIn("kunde inte läsas", data["changes_error"])
     def test_bad_json_shape_and_content_type_rejected(self):
         self.assertEqual(self.request("/api/settings", "PUT", {})[0], 400)
         self.assertEqual(self.request("/api/settings", "PUT", config(), content_type="text/plain")[0], 415)

@@ -530,6 +530,26 @@ try {
     nearest_thermostat: "", thermostat_control_enabled: false };
   let thermostatSaves = 0;
   let thermostatSaveFails = false;
+  let thermostatHistoryFails = false;
+  await thermostatPage.route("**/api/history", (route) => {
+    if (thermostatHistoryFails) return route.fulfill({ status: 502, json: { error: "Ändringsloggen kan inte läsas" } });
+    return route.fulfill({ json: {
+      ...history(),
+      series: [thermostat, thirdRoom].map((id) => ({ entity_id: id,
+        name: entities.find((e) => e.entity_id === id).name, kind: "climate",
+        points: [[now - 86400, 21], [now - 7200, 22], [now - 60, 23]],
+        setpoints: [[now - 86400, 24], [now - 3600, 22]] })),
+      changes: [
+        { id: 50, timestamp: now - 7200, kind: "offset", entity_id: offset, status: "confirmed",
+          previous: 2, value: 3, contributions: { room: 1.5, weather: 0, price: -0.5 },
+          indoor: 21, outdoor: 4, price: 2.5, target: 22, outcome_at: now - 7100 },
+        { id: 51, timestamp: now - 3600, kind: "thermostat", entity_id: thermostat, status: "confirmed",
+          previous: 24, value: 22, unit: "°C", indoor: 23, target: 22 },
+        { id: 52, timestamp: now - 1800, kind: "thermostat", entity_id: thirdRoom, status: "unconfirmed",
+          previous: 25, value: 22, unit: "°C", indoor: 24, target: 22 },
+      ],
+    } });
+  });
   await thermostatPage.route("**/api/settings", (route) => {
     if (route.request().method() === "PUT") {
       if (thermostatSaveFails) return route.fulfill({ status: 400, json: { error: "Termostaten är otillgänglig" } });
@@ -548,6 +568,32 @@ try {
   } }));
   await thermostatPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await thermostatPage.locator(`#room_sensors input[value="${thermostat}"]`).waitFor({ state: "attached" });
+  await thermostatPage.waitForFunction(() => document.querySelectorAll("#thermostat-charts svg").length === 2);
+  await thermostatPage.locator("#thermostat-charts").screenshot({ path: `${artifacts}/thermostat-history.png` });
+  assert.equal(await thermostatPage.locator("#temperature-chart .chart-event").count(), 3);
+  assert.equal(await thermostatPage.locator(".thermostat-history").first().locator(".chart-event").count(), 2);
+  assert.equal(await thermostatPage.locator(".thermostat-history").last().locator(".chart-event").count(), 2);
+  for (const svg of await thermostatPage.locator("#thermostat-charts svg").all()) {
+    const expected = await svg.evaluate((element) => Math.round(element.parentElement.clientWidth));
+    const width = Number((await svg.getAttribute("viewBox")).split(" ")[2]);
+    assert.ok(Math.abs(expected - width) <= 1, "Every thermostat graph must be sized after the grid has settled");
+  }
+  assert.match(await thermostatPage.locator("#history-changes").textContent(), /rum 1,5, utetemperatur 0, elpris \u22120,5/);
+  assert.match(await thermostatPage.locator("#history-changes").textContent(), /återläsning saknas/);
+  assert.equal(await thermostatPage.locator(".thermostat-history path.dashed").count(), 2);
+  await thermostatPage.locator("#history-entity").selectOption(thermostat);
+  assert.equal(await thermostatPage.locator("#thermostat-charts svg").count(), 1);
+  assert.equal(await thermostatPage.locator("#history-changes li").count(), 2);
+  assert.doesNotMatch(await thermostatPage.locator("#history-changes").textContent(), /återläsning saknas/);
+  await thermostatPage.locator("#history-entity").selectOption("");
+  thermostatHistoryFails = true;
+  await thermostatPage.locator("#refresh-history").click();
+  await thermostatPage.waitForFunction(() => document.getElementById("history-status").textContent.includes("kan inte läsas"));
+  assert.equal(await thermostatPage.locator("#thermostat-charts svg").count(), 0);
+  assert.equal(await thermostatPage.locator("#history-changes li").count(), 0);
+  thermostatHistoryFails = false;
+  await thermostatPage.locator("#refresh-history").click();
+  await thermostatPage.waitForFunction(() => document.querySelectorAll("#thermostat-charts svg").length === 2);
   await thermostatPage.locator("#settings-panel > summary").click();
   assert.equal(await thermostatPage.locator('#room_sensors input[value="sensor.living"]').isVisible(), false);
   assert.equal(await thermostatPage.locator(`#room_sensors input[value="${thermostat}"]`).isVisible(), true);
