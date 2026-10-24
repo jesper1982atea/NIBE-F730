@@ -604,18 +604,20 @@ class Controller:
         self.observed_offset = None
         self.last_error = None
         self.state_path = Path(data_dir) / "control-state.json"
-        # A restart or ambiguous write must never allow a rapid retry.
-        self.last_write = time.time()
+        # Preserve the interval from the actual attempt, not the process start.
+        self.last_write = 0
         if self.state_path.exists():
             state = json.loads(self.state_path.read_text())
-            self.last_write = max(self.last_write, number(state["last_attempt"], "Senaste skrivförsök"))
+            self.last_write = number(state["last_attempt"], "Senaste skrivförsök")
+            if self.last_write < 0:
+                raise ControlError("Ogiltig tid för senaste skrivförsök.")
             self.pending = state.get("pending")
         self.test_path = Path(data_dir) / "test-state.json"
         self.test = None
         if self.test_path.exists():
             saved_test = json.loads(self.test_path.read_text())
             self.test = saved_test if isinstance(saved_test, dict) and saved_test.get("phase") else None
-        self.events.add("startup", "Tillägget startat. Minsta ändringsintervall gäller efter omstart.", settings=self.config)
+        self.events.add("startup", "Tillägget startat. Återläser värden; väntetid räknas från senaste sparade styrförsök.", settings=self.config)
         self.status = {"message": "Väntar på första avläsningen.", "error_message": None}
         self.peer_cache = (0, {})
         self.data_dir = str(data_dir)
@@ -626,7 +628,13 @@ class Controller:
         self.thermostats = json.loads(self.thermostat_path.read_text()) if self.thermostat_path.exists() else {}
         if not isinstance(self.thermostats, dict):
             raise ControlError("Ogiltigt sparat termostattillstånd.")
-        self.thermostat_start = time.time()
+        for state in self.thermostats.values():
+            if not isinstance(state, dict):
+                raise ControlError("Ogiltigt sparat termostattillstånd.")
+            if "attempted_at" in state:
+                state["attempted_at"] = number(state["attempted_at"], "Senaste termostatförsök")
+                if state["attempted_at"] < 0:
+                    raise ControlError("Ogiltig tid för senaste termostatförsök.")
 
     def peers(self):
         """Same-device entities per entity, refreshed every 5 minutes."""
@@ -715,8 +723,12 @@ class Controller:
                 if not self.config["enabled"] or testing:
                     row["message"] = "Väntar: automatiken är avstängd eller pumptest pågår."
                     continue
-                if state.get("latched") or now - max(self.thermostat_start, state.get("attempted_at", 0)) < 1800:
-                    row["message"] = "Väntar: minsta intervall 30 min eller redan begränsad under denna varma period."
+                remaining = max(0, 1800 - (now - state.get("attempted_at", 0)))
+                if state.get("latched"):
+                    row["message"] = "Redan begränsad under denna varma period; väntar tills rummet svalnat."
+                    continue
+                if remaining > 0:
+                    row["message"] = f"Väntar {math.ceil(remaining / 60)} min: minsta intervall 30 min från senaste styrförsök."
                     continue
                 request_id = self.events.add("thermostat_attempt", "Begränsar övertemperatur: sätter termostatens börvärde till rumsmålet.",
                                             entity_id=key, previous=setpoint, value=target, current=current,

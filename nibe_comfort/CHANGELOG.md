@@ -1,5 +1,16 @@
 # Ändringslogg
 
+## 0.2.22
+
+- Ingen extra väntetid enbart för att tillägget startas om eller uppdateras.
+  Pump och termostater använder tidpunkten för senaste sparade styrförsök
+  och återläser giltiga HA-värden innan de kan ändra något.
+- Faktiskt minsta intervall mellan försök behålls, även efter timeout och
+  bekräftad återläsning. Pågående begäranden och termostatens spärr per varm
+  period överlever omstart. Ingen omstart används som genväg runt dessa skydd.
+- Termostatstatus skiljer på återstående intervall och redan begränsad varm
+  period. Inga aktiveringsval eller sparade börvärden ändras av uppdateringen.
+
 ## 0.2.21
 
 - Lugnare vardagsvy med genvägar till översikt, varmvatten, rum/historik,
