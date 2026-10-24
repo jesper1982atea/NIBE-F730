@@ -97,6 +97,29 @@ class ThermostatTests(unittest.TestCase):
         self.step()
         self.ha.set_thermostat.assert_called_once_with("climate.living", 71.6)
 
+    def test_optional_step_sends_exact_goal_and_confirms_readback(self):
+        del self.room["attributes"]["target_temp_step"]
+        self.room["attributes"]["supported_features"] = 401
+        self.controller.save(self.cfg)
+        row = self.step()
+        self.assertIn("utan avrundning", row["warning"])
+        self.ha.set_thermostat.assert_called_once_with("climate.living", 22)
+        self.room["attributes"]["temperature"] = 22
+        self.step(60)
+        self.assertEqual(self.controller.thermostats["climate.living"]["outcome"], "confirmed")
+
+    def test_missing_step_does_not_allow_invalid_range_or_assume_confirmation(self):
+        self.room["attributes"]["target_temp_step"] = None
+        self.room["attributes"]["max_temp"] = 21
+        self.assertIsNotNone(self.step()["error"])
+        self.ha.set_thermostat.assert_not_called()
+        self.room["attributes"]["max_temp"] = 30
+        self.step()
+        self.room["attributes"]["temperature"] = 22.5
+        self.assertIsNotNone(self.step(900)["error"])
+        self.assertEqual(self.controller.thermostats["climate.living"]["outcome"], "unconfirmed")
+        self.ha.set_thermostat.assert_called_once()
+
     def test_failed_ambiguous_write_is_not_repeated_and_survives_restart(self):
         self.ha.set_thermostat.side_effect = ControlError("Timeout")
         self.assertIn("Timeout", self.step()["error"])

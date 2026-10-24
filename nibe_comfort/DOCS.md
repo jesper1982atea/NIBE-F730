@@ -211,13 +211,22 @@ och ändrar inte driftläge eller slår av/på värmen. Den använder det sparad
 målet även under förvärmning och kan därför begränsa den extra uppvärmningen.
 
 Termostaten måste vara i **värmeläge (`heat`)**, rapportera giltig temperatur,
-stöd för ett enskilt temperaturbörvärde, min/max och steglängd. Målet måste
-kunna anges exakt; tillägget gissar eller avrundar inte till ett annat mål.
-Automatikläge, kyla, dubbla temperaturintervall, saknade uppgifter och gamla
+stöd för ett enskilt temperaturbörvärde och min/max. Om steglängd rapporteras
+måste målet passa den exakt. `target_temp_step` är valfri i Home Assistant:
+saknas den skickas målet utan avrundning inom rapporterade gränser, utan att
+gissa steglängd. Detta anges i status och loggens försök visar rapporterat
+steg (null om det saknas). Återläst börvärde måste fortfarande matcha begäran;
+avrundar integrationen målet räknas ändringen inte som bekräftad.
+Automatikläge, kyla, dubbla temperaturintervall, andra saknade uppgifter och gamla
 mätvärden avvisas. Vid aktivering kontrolleras samtliga valda termostater.
 Senare fel visas per rum och stoppar det rummets nya skrivningar; andra
 giltiga rum kan fortsätta om pumpens övergripande kontroll fortfarande lyckas.
 Fahrenheit räknas om vid avläsning och serviceanropet använder HA:s ursprungsenhet.
+
+Sparraden högst upp i inställningarna ligger kvar när du rullar och visar
+osparade fält, sparresultat och fel. **Spara ändringar** använder samma
+validering och bekräftelser som knappen längst ner. Ändringar sparas inte
+automatiskt.
 
 Det görs högst ett försök per varm period, med minst **30 minuter** efter
 start/omstart och mellan försök. En ny varm period tillåts först efter att
