@@ -222,7 +222,16 @@ function filterRoomPicker() {
     label.hidden = (!showSensors && label.dataset.climate !== "true" && !checked)
       || !label.textContent.toLocaleLowerCase("sv-SE").includes(query);
   }
-  $("room-selection-count").textContent = `${labels.filter((label) => label.querySelector("input").checked).length} valda · ${labels.filter((label) => !label.hidden).length} visas`;
+  const selected = labels.filter((label) => label.querySelector("input").checked);
+  const sensors = selected.filter((label) => label.dataset.climate !== "true");
+  $("room-selection-count").textContent = `${selected.length - sensors.length} termostater + ${sensors.length} separata givare valda · ${labels.filter((label) => !label.hidden).length} visas`;
+  $("selected-room-sensors").textContent = sensors.length
+    ? `Valda separata temperaturgivare: ${sensors.map((label) => {
+      const id = label.querySelector("input").value;
+      return `${entities.find((entity) => entity.entity_id === id)?.name || id} (${id})`;
+    }).join(", ")}. Även en termostats temperaturgivare är bara en givare; begränsningen behöver dess climate-entitet. Dessa val följer med när du sparar, även om sökningen döljer dem.`
+    : "";
+  $("remove-room-sensors").hidden = sensors.length === 0;
 }
 
 function roomTrend(room) {
@@ -1265,6 +1274,18 @@ async function init() {
   $("settings").addEventListener("submit", (event) => {
     event.preventDefault();
     const next = readSettings();
+    if (next.thermostat_control_enabled
+      && (!next.room_sensors.length || next.room_sensors.some((id) => !id.startsWith("climate.")))) {
+      $("room-search").value = "";
+      $("show-room-sensors").checked = true;
+      filterRoomPicker();
+      const sensors = next.room_sensors.filter((id) => !id.startsWith("climate."));
+      notice(sensors.length
+        ? `Kunde inte spara: följande val är separata temperaturgivare, inte styrbara termostater: ${sensors.join(", ")}. Avmarkera dem under Rumsgivare och välj climate-termostaterna.`
+        : "Kunde inte spara: välj minst en climate-termostat för termostatbegränsning.", true);
+      $("room_sensors").scrollIntoView({ block: "center" });
+      return;
+    }
     if (next.thermostat_control_enabled && (!settings.thermostat_control_enabled
       || next.target_temperature !== settings.target_temperature
       || JSON.stringify(next.room_sensors) !== JSON.stringify(settings.room_sensors))
@@ -1299,6 +1320,12 @@ async function init() {
   });
   $("room-search").addEventListener("input", filterRoomPicker);
   $("show-room-sensors").addEventListener("change", filterRoomPicker);
+  $("remove-room-sensors").addEventListener("click", () => {
+    for (const input of $("room_sensors").querySelectorAll("input:checked")) {
+      if (!input.value.startsWith("climate.")) input.checked = false;
+    }
+    $("room_sensors").dispatchEvent(new Event("change", { bubbles: true }));
+  });
   $("priority_sensors").addEventListener("change", limitPriorityPicker);
   $("offset_entity").addEventListener("change", entityHints);
   $("outdoor_entity").addEventListener("change", entityHints);

@@ -108,8 +108,13 @@ def validate(config):
     nearest = result["nearest_thermostat"]
     if not isinstance(nearest, str) or (nearest and (nearest not in rooms or not nearest.startswith("climate."))):
         raise ControlError("Termostaten närmast pumpen måste vara en av dina valda termostater.")
-    if result["thermostat_control_enabled"] and (not rooms or any(not key.startswith("climate.") for key in rooms)):
-        raise ControlError("Automatisk termostatbegränsning kräver att alla valda rum är climate-termostater.")
+    if result["thermostat_control_enabled"]:
+        if not rooms:
+            raise ControlError("Välj minst en climate-termostat för automatisk termostatbegränsning.")
+        sensors = [key for key in rooms if not key.startswith("climate.")]
+        if sensors:
+            raise ControlError("Dessa valda rum är temperaturgivare, inte styrbara climate-termostater: "
+                               + ", ".join(sensors) + ". Avmarkera dem under Rumsgivare och välj termostatens climate-entitet.")
     for key, prefixes in (
         ("offset_entity", ("number.",)),
         ("outdoor_entity", ("sensor.", "weather.")),

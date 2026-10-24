@@ -1,5 +1,15 @@
 # Ändringslogg
 
+## 0.2.18
+
+- Rumsvalet visar separat antal termostater och givare samt namn och ID för
+  valda separata givare, även när sökningen döljer deras kort.
+- Knapp för att uttryckligen avmarkera separata givare och behålla termostater.
+  Inget tas bort automatiskt; ändringen sparas först med Spara inställningar.
+- Om termostatbegränsningen blockeras visas exakt vilka givare som behöver
+  avmarkeras. Tomt rumsval får ett separat fel. En termostats sensor-entitet
+  förväxlas inte med dess styrbara climate-entitet.
+
 ## 0.2.17
 
 - Nytt rumsval med sökning, tydliga temperaturkort och termostater först.

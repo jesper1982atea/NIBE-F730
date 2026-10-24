@@ -182,6 +182,16 @@ class ThermostatTests(unittest.TestCase):
         self.assertFalse(restored.settings()["thermostat_control_enabled"])
         self.assertEqual(restored.settings()["nearest_thermostat"], "")
 
+    def test_validation_identifies_separate_sensor_in_mixed_selection(self):
+        with self.assertRaisesRegex(ControlError, "sensor.living"):
+            config(room_sensors=["climate.living", "sensor.living"],
+                   thermostat_control_enabled=True)
+        with self.assertRaisesRegex(ControlError, "minst en"):
+            config(room_sensors=[], thermostat_control_enabled=True)
+        valid = config(room_sensors=["climate.living", "climate.other"],
+                       thermostat_control_enabled=True)
+        self.assertTrue(valid["thermostat_control_enabled"])
+
     def test_tick_integrates_information_and_control(self):
         self.controller.tick()
         status = self.controller.snapshot()
