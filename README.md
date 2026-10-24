@@ -4,6 +4,10 @@ Home Assistant-tillägg för begriplig temperaturstyrning av NIBE F730: välj
 rumsgivare, ställ önskad temperatur och låt tillägget föreslå eller stegvis
 justera värmekurvans förskjutning via Home Assistants myUplink-integration.
 
+Vardagsvyn visar det viktigaste först. Fördjupningar för grafer, beslut och
+tekniska värden kan fällas ut när du behöver dem; alla funktioner finns kvar.
+Genvägar hjälper dig hitta rum, varmvatten och inställningar.
+
 Visar även temperaturgrafer per rum med termostaternas börvärde, en värmeplan
 med väder, Tibbers kvartspriser och planerad förskjutning, en uppskattad
 värmekurva, SMHI/HA-väderprognos, Tibbers aktuella pris samt pumpens tillgängliga larm- och driftvärden. Golvvärme via

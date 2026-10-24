@@ -1,5 +1,20 @@
 # Ändringslogg
 
+## 0.2.21
+
+- Lugnare vardagsvy med genvägar till översikt, varmvatten, rum/historik,
+  inställningar och ändringslogg. Begripliga introduktioner och en utfällbar
+  guide för måltemperatur, kurvförskjutning och bekräftad återläsning.
+- Fördjupning kan fällas ut för väder-/prisunderlag, teknisk värmekurva,
+  husmodell, varmvattenhistorik, beslutsförklaringar och elförbrukning.
+  Alla funktioner finns kvar. Aktuellt läge, larm, övertemperaturvarningar,
+  huvudgrafer och kritisk termostatinformation döljs inte.
+- Diagram ritas om till rätt bredd när informationen öppnas, utan nytt
+  styranrop. Rensade diagram efter ett fel återupplivas inte av utfällning.
+  Ogiltiga fält i stängda inställningsdelar öppnas inför rättning.
+- Samma inställningar, samtycken, sparrad och reglering som tidigare.
+  Ingen automation aktiveras och inga sparade värden ändras av designen.
+
 ## 0.2.20
 
 - Egen dygnsgraf per vald termostat med uppmätt temperatur och historiskt

@@ -165,6 +165,38 @@ try {
   assert.equal(await page.locator("#notice").isVisible(), false, "Initialization recovers without reloading");
   await page.waitForFunction(() => document.querySelectorAll("#events-list article").length === 4);
   await page.waitForFunction(() => document.getElementById("plan-curve").querySelector("svg"));
+  const initialWrites = writes;
+  for (const id of ["plan-details", "curve-details", "learning-details", "hot-water-details", "history-decisions", "electricity-details", "comfort-details"]) {
+    assert.equal(await page.locator(`#${id}`).getAttribute("open"), null, `${id} starts folded`);
+  }
+  assert.equal(await page.locator("#plan-offset").isVisible(), false);
+  assert.equal(await page.locator("#hw-verdict").isVisible(), true);
+  assert.equal(await page.locator("#comfort-status").isVisible(), true);
+  assert.equal(await page.locator("#pump-metrics").isVisible(), true, "Pump alarms are never hidden by the new disclosures");
+  await page.screenshot({ path: `${artifacts}/simplified-desktop.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${artifacts}/simplified-mobile.png` });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({ path: `${artifacts}/simplified-dark.png` });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.locator('.page-nav a[href="#settings-panel"]').click();
+  assert.equal(await page.locator("#settings-panel").getAttribute("open"), "");
+  await page.locator("#settings-panel > summary").click();
+  await page.locator('.page-nav a[href="#log-panel"]').click();
+  assert.equal(await page.locator("#log-panel").getAttribute("open"), "");
+  await page.locator("#log-panel > summary").click();
+  await page.locator("#plan-details > summary").focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("#plan-offset").isVisible(), true, "Details work using the keyboard");
+  await page.waitForFunction(() => {
+    const chart = document.getElementById("plan-offset");
+    return Number(chart.querySelector("svg").getAttribute("viewBox").split(" ")[2]) === Math.round(chart.clientWidth);
+  });
+  for (const id of ["curve-details", "learning-details", "hot-water-details"]) {
+    await page.locator(`#${id} > summary`).click();
+  }
+  assert.equal(writes, initialWrites, "Navigation and disclosures must never save or control anything");
   assert.equal(await page.locator("#plan-outdoor path").count(), 2);
   assert.equal(await page.locator("#plan-price path").count(), 1);
   assert.equal(await page.locator("#plan-offset path").count(), 3);
@@ -348,6 +380,7 @@ try {
   haPage.on("pageerror", (error) => errors.push(error.message));
   await haPage.goto(`http://127.0.0.1:${server.address().port}/ha-parent`);
   const panel = haPage.frameLocator("#panel");
+  await panel.locator("#curve-details > summary").click();
   await panel.locator("#plan-curve svg").waitFor();
   const frame = haPage.frame({ url: /dashboard-test/ });
   assert.equal(await frame.evaluate(() => document.documentElement.dataset.theme), "dark", "Must follow dark Home Assistant theme");
@@ -663,6 +696,22 @@ try {
   assert.equal(thermostatSettings.thermostat_control_enabled, false);
   assert.equal(thermostatSettings.nearest_thermostat, "");
   assert.equal(thermostatSettings.room_sensors.includes(thermostat), false);
+  const savesBeforeDisclosure = thermostatSaves;
+  await thermostatPage.locator("#settings-panel").evaluate((element) => { element.open = false; });
+  await thermostatPage.evaluate(() => {
+    document.getElementById("max_offset").value = "99";
+    document.getElementById("settings").requestSubmit();
+  });
+  assert.equal(await thermostatPage.locator("#max_offset").isVisible(), true, "Invalid hidden fields are revealed before focus");
+  assert.equal(thermostatSaves, savesBeforeDisclosure);
+  await thermostatPage.locator("#max_offset").fill(String(thermostatSettings.max_offset));
+  await thermostatPage.route("**/api/plan", (route) => route.fulfill({ status: 502, json: { error: "Planunderlag saknas" } }), { times: 1 });
+  await thermostatPage.locator("#refresh-plan").click();
+  await thermostatPage.waitForFunction(() => document.getElementById("plan-status").textContent.includes("Planunderlag saknas"));
+  await thermostatPage.locator("#plan-details > summary").click();
+  await thermostatPage.waitForTimeout(50);
+  assert.equal(await thermostatPage.locator("#plan-details svg").count(), 0, "Opening details must not resurrect cleared stale charts");
+  assert.equal(thermostatSaves, savesBeforeDisclosure);
   await thermostatPage.close();
   assert.deepEqual(errors, []);
   console.log("Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");

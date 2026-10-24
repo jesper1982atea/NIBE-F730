@@ -25,6 +25,21 @@ Rumsgivare väljer du alltid själv.
 
 ### Startsidan
 
+Gränssnittet skiljer på **vardag och fördjupning**. Temperatur, mål och nästa
+åtgärd visas först. Genvägar högst upp går till varmvatten, rum/historik,
+inställningar och ändringslogg; de två sistnämnda öppnas när du följer länken.
+**Så fungerar värmen** förklarar skillnaden mellan rumsmål, termostatbörvärde
+och kurvförskjutning.
+
+Väder-/prisgrafer, pumpens tekniska värmekurva, husmodellens detaljer,
+varmvattenhistorik, beslutsförklaringar och elförbrukning ligger bakom tydliga
+utfällbara rubriker. Klicka eller fokusera rubriken och tryck Enter för att
+öppna. Underlagen fortsätter uppdateras i bakgrunden. Utfällning ändrar aldrig
+inställningar eller styrning; delarna börjar stängda när sidan laddas om.
+Inga funktioner har tagits bort. Aktuella temperaturer, nästa åtgärd,
+varmvattenbedömning, larm och viktiga varningar ligger kvar synligt.
+Sparraden och samtyckena gäller precis som tidigare.
+
 Överst finns fyra rutor: **Inne nu** (medel av dina valda rum och hur långt
 från ditt mål det är), **Du vill ha** (ändra med − och +, tryck sedan *Spara
 ny temperatur*), **Ute nu** (med prognosens spann närmaste dygnet) och **Nästa
