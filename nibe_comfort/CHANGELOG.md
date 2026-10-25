@@ -1,5 +1,23 @@
 # Ändringslogg
 
+## 0.2.27
+
+- Valfri braskamin med val av temperaturkällor i kaminrum. Försiktig
+  automatisk upptäckt jämför snabb lokal uppvärmning med övriga rum och
+  visar misstänkt extravärme, aldrig säker eldning.
+- Sparar observerade förlopp över omstart. Efter tre avslutade förlopp
+  med samma rumsval visas typisk lokal varaktighet och samtidiga
+  temperaturförändringar i rummen. Avbrott och osäkra förlopp undantas.
+- Misstänkta perioder markeras i husmodellens graf och ändringsloggen och
+  undantas, med efterperiod, från pumpinlärningen. Temperaturprognosen
+  pausas medan fortsatt extravärme är okänd.
+- Bestående misstänkt extravärme ger ett extra bidrag på −1 kurvsteg
+  om styrande snitt inte är under vanligt mål minus toleransen. Bidraget
+  tas bort vid kallare rum, saknade avläsningar eller avslutad period.
+  Vanliga intervall, gränser och huvudstopp gäller. Prioriteringar ändras inte.
+- Kaminanpassningen är av tills du väljer rum, bekräftar och sparar.
+  Osäker upptäckt och risken för kallare övriga rum förklaras tydligt.
+
 ## 0.2.26
 
 - Förklarar förvärmning som att lagra lite värme före dyra timmar och låta

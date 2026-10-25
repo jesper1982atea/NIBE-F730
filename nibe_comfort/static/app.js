@@ -113,7 +113,7 @@ function renderPreheatExample() {
 function renderSettings(formSettings = settings, preserveView = false) {
   for (const [key, value] of Object.entries(formSettings)) {
     const input = $(key);
-    if (!input || ["room_sensors", "priority_sensors"].includes(key)) continue;
+    if (!input || ["room_sensors", "priority_sensors", "fireplace_rooms"].includes(key)) continue;
     if (typeof value === "boolean") input.checked = value;
     else if (input.tagName !== "SELECT") input.value = value;
   }
@@ -157,6 +157,7 @@ function renderSettings(formSettings = settings, preserveView = false) {
   }
   renderPriorityPicker(formSettings.priority_sensors);
   renderNearestThermostat(formSettings.nearest_thermostat);
+  renderFireplacePicker(formSettings.fireplace_rooms);
   filterRoomPicker();
   renderRoomPickerAreas();
   if (!preserveView) $("room-impact").open = settings.priority_sensors.length > 0;
@@ -202,7 +203,7 @@ async function findPump() {
 function readSettings() {
   const result = { ...settings };
   for (const [key, value] of Object.entries(settings)) {
-    if (key === "room_sensors" || key === "priority_sensors") {
+    if (["room_sensors", "priority_sensors", "fireplace_rooms"].includes(key)) {
       result[key] = Array.from($(key).querySelectorAll("input:checked"), (input) => input.value);
     } else if (typeof value === "boolean") result[key] = $(key).checked;
     else if (typeof value === "number") result[key] = $(key).valueAsNumber;
@@ -223,6 +224,45 @@ function renderPriorityPicker(selected) {
     return label;
   }));
   limitPriorityPicker();
+}
+
+function renderFireplacePicker(selected) {
+  const ids = Array.from($("room_sensors").querySelectorAll("input:checked"), (input) => input.value);
+  $("fireplace_rooms").replaceChildren(...ids.map((id) => {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    Object.assign(input, { type: "checkbox", value: id, checked: selected.includes(id), name: "fireplace-room" });
+    const name = document.createElement("span");
+    name.textContent = fireplaceRoomName(id);
+    label.append(input, name);
+    return label;
+  }));
+}
+
+function fireplaceRoomName(id) {
+  return [entityAreas[id]?.area_name, entities.find((e) => e.entity_id === id)?.name || id].filter(Boolean).join(" · ");
+}
+
+function renderFireplace() {
+  const state = lastStatus?.fireplace;
+  $("fireplace-status").textContent = state?.message || (settings?.fireplace_enabled
+    ? "Väntar på aktuell kaminobservation." : "Kaminobservation är av.");
+  $("fireplace-control").textContent = state?.control_note || "";
+  $("fireplace-learning").textContent = state?.learned
+    ? `Typisk observerad varaktighet: ${displayNumber(state.duration_hours)} timmar från ${state.completed} avslutade förlopp. Ingen säker prognos för den här eldningen.`
+    : `Lär sig: ${state?.completed || 0} avslutade förlopp. Minst tre med samma rumsval behövs för typisk varaktighet och temperaturförändring.`;
+  if (state?.active_since != null) $("fireplace-status").textContent += ` Observerat förlopp från ${new Date(state.active_since * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.`;
+  $("fireplace-effects").replaceChildren(...(state?.room_effects || []).map((room) => {
+    const item = document.createElement("li");
+    const name = entityAreas[room.entity_id]?.area_name || entities.find((e) => e.entity_id === room.entity_id)?.name || room.entity_id;
+    item.textContent = `${name}: typisk uppmätt ökning +${displayNumber(room.rise)} °C${room.arrival_minutes == null ? "" : ` · först observerad +0,3 °C efter cirka ${room.arrival_minutes} min`}. Inte säkert orsakat av kaminen.`;
+    return item;
+  }));
+  $("fireplace-history").replaceChildren(...(state?.recent || []).slice().reverse().map((episode) => {
+    const item = document.createElement("li");
+    item.textContent = `${new Date(episode.start * 1000).toLocaleString("sv-SE")} – ${new Date(episode.end * 1000).toLocaleTimeString("sv-SE")}: ${episode.complete ? "lokal extravärme klingade av" : "avbruten/osäker observation, används inte för typisk varaktighet"}.`;
+    return item;
+  }));
 }
 
 function limitPriorityPicker() {
@@ -288,7 +328,7 @@ function renderRoomImpact() {
       const row = document.createElement("div");
       row.className = "room-impact-row";
       const title = document.createElement("strong");
-      title.textContent = `${room.name}${room.priority ? " · prioriterat" : ""}${room.nearest ? " · närmast pumpen" : ""}`;
+      title.textContent = `${room.name}${room.priority ? " · prioriterat" : ""}${room.nearest ? " · närmast pumpen" : ""}${settings?.fireplace_rooms.includes(room.entity_id) ? " · kaminrum" : ""}`;
       const value = document.createElement("span");
       const diff = room.temperature == null ? null : room.temperature - settings.target_temperature;
       value.textContent = `${displayNumber(room.temperature)} °C${diff == null ? "" : Math.abs(diff) < 0.1 ? " · vid målet" : ` · ${displayNumber(Math.abs(diff))}° ${diff > 0 ? "över" : "under"} målet`}`;
@@ -348,6 +388,9 @@ function renderRoomPickerAreas() {
     area.textContent = areaError ? "Home Assistant-rum kunde inte läsas"
       : entityAreas[id]?.area_name ? `Home Assistant-rum: ${entityAreas[id].area_name}`
         : "Inget område i Home Assistant";
+  }
+  for (const label of $("fireplace_rooms").querySelectorAll("label")) {
+    label.querySelector("span").textContent = fireplaceRoomName(label.querySelector("input").value);
   }
 }
 
@@ -427,6 +470,7 @@ async function refreshStatus() {
     const state = stale ? {
       ...response, indoor: null, outdoor: null, house_indoor: null, current_offset: null,
       desired_offset: null, next_offset: null, contributions: null, warm_rooms: [], thermostat_control: null,
+      fireplace: null,
       rooms: (response.rooms || []).map((room) => ({ ...room, temperature: null, setpoint: null,
         error: "Avläsningen är inte aktuell.", thermostat_error: "Avläsningen är inte aktuell." })),
     } : response;
@@ -435,6 +479,7 @@ async function refreshStatus() {
       $("mode").classList.toggle("active", state.enabled);
     }
     lastStatus = state;
+    renderFireplace();
     renderRoomImpact();
     $("indoor").textContent = displayNumber(state.indoor);
     renderIndoorDiff();
@@ -461,7 +506,7 @@ async function refreshStatus() {
       const c = state.contributions;
       const shift = state.target_shift ? `${state.target_shift > 0 ? "Förvärmer före dyrt elpris" : "Dyrt elpris"}: målet är tillfälligt ${displayNumber(settings.target_temperature + state.target_shift)} °C. ` : "";
       const note = state.preheat?.note ? `${state.preheat.note} ` : "";
-      $("explanation").textContent = `${shift}${note}Bas + rum (${displayNumber(c.room)}) + väder (${displayNumber(c.weather)}) + elpris (${displayNumber(c.price)}) → begränsat mål ${displayNumber(state.desired_offset)}. Nästa steg anpassas till pumpens steglängd och dina gränser.`;
+      $("explanation").textContent = `${shift}${note}Bas + rum (${displayNumber(c.room)}) + väder (${displayNumber(c.weather)}) + elpris (${displayNumber(c.price)}) + kamin (${displayNumber(c.fireplace ?? 0)}) → begränsat mål ${displayNumber(state.desired_offset)}. Nästa steg anpassas till pumpens steglängd och dina gränser.`;
     } else {
       $("explanation").textContent = "Inget aktuellt förslag. Kontrollera inställningarna och statusmeddelandet.";
     }
@@ -469,6 +514,7 @@ async function refreshStatus() {
     $("status-title").textContent = "Kontakt med tillägget saknas";
     $("status-message").textContent = error.message;
     lastStatus = null;
+    renderFireplace();
     renderRoomImpact();
     for (const id of ["indoor", "outdoor-now", "current-offset", "hero-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
     $("hero-offset-base").textContent = "";
@@ -491,7 +537,7 @@ async function refreshSavedSettings() {
     if (JSON.stringify(latest) !== JSON.stringify(settings)) {
       const draft = readSettings();
       const merged = { ...latest };
-      const roomFields = ["room_sensors", "priority_sensors", "nearest_thermostat"];
+      const roomFields = ["room_sensors", "priority_sensors", "nearest_thermostat", "fireplace_rooms", "fireplace_enabled"];
       const roomDraft = roomFields.some((key) => JSON.stringify(draft[key]) !== JSON.stringify(settings[key]));
       for (const key of Object.keys(settings)) {
         if ((roomDraft && roomFields.includes(key)) || JSON.stringify(draft[key]) !== JSON.stringify(settings[key])) merged[key] = draft[key];
@@ -840,7 +886,7 @@ function historyChangeText(change) {
   let text = `#${change.id} · ${clock(change.timestamp)} · ${change.kind === "offset" ? "Kurvförskjutning" : name}: ${displayNumber(change.previous)} → ${displayNumber(change.value)} ${change.unit || ""} · ${state}.`;
   if (change.kind === "offset") {
     const c = change.contributions;
-    text += c ? ` Beslutsbidrag i kurvsteg: rum ${displayNumber(c.room)}, utetemperatur ${displayNumber(c.weather)}, elpris ${displayNumber(c.price)}.`
+    text += c ? ` Beslutsbidrag i kurvsteg: rum ${displayNumber(c.room)}, utetemperatur ${displayNumber(c.weather)}, elpris ${displayNumber(c.price)}${c.fireplace == null ? "" : `, kamin ${displayNumber(c.fireplace)}`}.`
       : " Beslutsbidrag saknas i loggen.";
     const values = [
       change.indoor != null ? `inne ${displayNumber(change.indoor)} °C` : "",
@@ -1314,8 +1360,8 @@ async function refreshLearning() {
     const model = data.model;
     const titles = { learning: "Lär sig fortfarande", rough: "Grov bild av huset", good: "Känner huset väl" };
     $("learn-status").textContent = data.error || (model ? `${titles[model.status]} · uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE")}` : "Ingen modell ännu.");
-    $("learn-message").textContent = model?.message || "";
-    $("learn-message").hidden = !model?.message;
+    $("learn-message").textContent = [model?.message, data.prediction_note].filter(Boolean).join(" ");
+    $("learn-message").hidden = !$("learn-message").textContent;
     $("learn-progress").replaceChildren(...(model ? [
       progressRow("Mätvärden", model.hours, model.needed_hours, `${displayNumber(model.days)} av 7 dygn`),
       progressRow("Kurvändringar att lära av", model.changes, model.needed_changes, `${model.changes} av ${model.needed_changes}`),
@@ -1339,8 +1385,12 @@ async function refreshLearning() {
       start, end, now: data.now, integer: false, pad: 0.3,
       empty: model?.status === "learning" ? "Förutsägelsen visas när modellen har lärt sig tillräckligt." : "Ingen innetemperatur att visa ännu.",
       guides: [{ value: data.target, label: `Mål ${displayNumber(data.target)}°` }],
-      bands: windows.map((w) => ({ start: w.start, end: w.end, className: w.kind === "preheat" ? "preheat" : "coast",
-        title: `${w.kind === "preheat" ? "Förvärmning" : "Dyrt elpris"} ${clock(w.start)}–${clock(w.end)}` })),
+      bands: [
+        ...windows.map((w) => ({ start: w.start, end: w.end, className: w.kind === "preheat" ? "preheat" : "coast",
+          title: `${w.kind === "preheat" ? "Förvärmning" : "Dyrt elpris"} ${clock(w.start)}–${clock(w.end)}` })),
+        ...(data.fireplace_periods || []).map((w) => ({ start: w.start, end: w.end, className: "fireplace",
+          title: `Misstänkt extravärme ${clock(w.start)}–${clock(w.end)}, inte bekräftad eldning` })),
+      ],
     });
     legend($("learn-legend"), series);
     const items = windows.map((w) => {
@@ -1364,6 +1414,7 @@ async function refreshLearning() {
 const fieldLabels = {
   target_temperature: "Måltemperatur", room_sensors: "Rumsgivare", priority_sensors: "Prioriterade rum", enabled: "Automatik",
   nearest_thermostat: "Närmast värmepumpen", thermostat_control_enabled: "Termostatbegränsning",
+  fireplace_enabled: "Kaminanpassning", fireplace_rooms: "Kaminrum",
   offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare",
   forecast_entity: "Prognoskälla", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
   max_offset: "Högsta förskjutning", weather_gain: "Väderpåverkan", room_gain: "Rumspåverkan",
@@ -1400,6 +1451,8 @@ function renderEvents() {
       if (data.value !== undefined) lines.push(`Börvärde: ${data.previous !== undefined ? `${data.previous} → ` : ""}${data.value}${data.unit ? ` ${data.unit}` : ""}.`);
     }
     if (event.kind === "offset_observed") lines.push(`${data.previous} → ${data.value}. ${data.note}`);
+    if (event.kind.startsWith("fireplace_")) lines.push(`Kaminrum: ${(data.rooms || []).join(", ")}. Misstänkt extravärme, inte bekräftad eldning.`);
+    if (event.kind === "write_attempt" && data.fireplace === "active") lines.push(`Misstänkt extravärme pågick. Extra kaminbidrag ${displayNumber(data.contributions?.fireplace ?? 0)} kurvsteg; prioriterat snitt och vanliga skydd användes.`);
     if (data.error) lines.push(data.error);
     if (data.request_id) lines.push(`Tillhör begäran #${data.request_id}.`);
     if (lines.length) { const p = document.createElement("p"); p.textContent = lines.join("\n"); entry.append(p); }
@@ -1549,6 +1602,10 @@ async function init() {
   $("settings").addEventListener("submit", (event) => {
     event.preventDefault();
     const next = readSettings();
+    if (next.fireplace_enabled && (!settings.fireplace_enabled
+      || JSON.stringify(next.fireplace_rooms) !== JSON.stringify(settings.fireplace_rooms)
+      || JSON.stringify(next.room_sensors) !== JSON.stringify(settings.room_sensors))
+      && !window.confirm("Automatisk temperaturanalys kan misstänka eldning men också reagera på sol eller annan värme. När huvudautomatiken är på får detta sänka den beräknade kurvförskjutningen ett extra steg om det styrande snittet inte är för kallt. Hela huset påverkas och övriga rum kan bli kallare. Godkänner du kaminanpassningen för dessa rum?")) return;
     if (next.thermostat_control_enabled
       && (!next.room_sensors.length || next.room_sensors.some((id) => !id.startsWith("climate.")))) {
       $("room-search").value = "";
@@ -1609,9 +1666,12 @@ async function init() {
   $("target_temperature").addEventListener("input", targetChanged);
   $("preheat_degrees").addEventListener("input", updateSaveState);
   $("preheat_enabled").addEventListener("change", updateSaveState);
+  $("fireplace_enabled").addEventListener("change", updateSaveState);
+  $("fireplace_rooms").addEventListener("change", updateSaveState);
   $("room_sensors").addEventListener("change", () => {
     renderPriorityPicker(Array.from($("priority_sensors").querySelectorAll("input:checked"), (input) => input.value));
     renderNearestThermostat($("nearest_thermostat").value);
+    renderFireplacePicker(Array.from($("fireplace_rooms").querySelectorAll("input:checked"), (input) => input.value));
     filterRoomPicker();
     renderIndoorDiff();
     renderPreheatExample();

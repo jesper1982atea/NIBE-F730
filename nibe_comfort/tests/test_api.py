@@ -49,6 +49,20 @@ class ApiTests(unittest.TestCase):
             with exc:
                 return exc.code, json.load(exc)
 
+    def test_fireplace_settings_and_read_only_observation_status(self):
+        cfg = config(fireplace_enabled=True, fireplace_rooms=["sensor.living"])
+        code, saved = self.request("/api/settings", "PUT", cfg)
+        self.assertEqual(code, 200)
+        self.assertTrue(saved["fireplace_enabled"])
+        self.assertFalse(saved["enabled"])
+        self.controller.tick()
+        code, status = self.request("/api/status")
+        self.assertEqual(code, 200)
+        self.assertEqual(status["fireplace"]["phase"], "learning")
+        self.assertEqual(status["fireplace"]["rooms"], ["sensor.living"])
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
+
     def test_ingress_serves_static_files_including_theme(self):
         handler = handler_for(self.controller, None)
         ingress = type("IngressHandler", (handler,), {"address_string": lambda self: "172.30.32.2"})

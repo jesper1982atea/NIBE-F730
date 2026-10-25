@@ -22,6 +22,7 @@
       <a href="#status-title">Översikt</a>
       <a href="#hot-water-card">Varmvatten</a>
       <a href="#temperature-section">Rum och historik</a>
+      <a href="#fireplace-card">Braskamin</a>
       <a href="#settings-panel">Inställningar</a>
       <a href="#log-panel">Ändringslogg</a>
     </nav>
@@ -128,7 +129,7 @@
       <h3>Inne · senaste dygnet och vad modellen tror händer</h3>
       <div id="learn-chart" class="chart" role="img" aria-label="Innetemperatur och förutsägelse"></div>
       <div id="learn-legend" class="chart-legend"></div>
-      <p class="hint chart-key"><span class="key preheat">Rött fält</span> = förvärmning före dyrt elpris, <span class="key coast">blått fält</span> = dyra timmar då huset får bli lite svalare. Förutsägelsen följer värmeplanen och väderprognosen.</p>
+      <p class="hint chart-key"><span class="key preheat">Rött fält</span> = förvärmning före dyrt elpris, <span class="key coast">blått fält</span> = dyra timmar då huset får bli lite svalare, <span class="key fireplace">gult fält</span> = misstänkt extravärme (inte bekräftad eldning). Förutsägelsen följer värmeplanen och väderprognosen.</p>
       </details>
       <div id="preheat-settings">
       <h3>Lagra lite värme före dyra timmar</h3>
@@ -143,6 +144,33 @@
       <details class="disclosure"><summary>Hur väljs tiderna?</summary><p>Kräver kommande Tibber-priser, inte bara en givare med priset just nu. Dyra perioder är minst en timme med pris minst 25 % över det kommande dygnets mittpris. Förvärmning planeras bara om timmarna före är minst 20 % billigare. Ett lägre mål kan planeras under dyrperioden även utan föregående förvärmning. Starttiden är normalt tre timmar före och anpassas till 1–6 timmar när husmodellen har tillräckligt underlag. Saknas prisunderlag används ditt vanliga mål och orsaken visas i planen.</p></details>
       </div>
       <ul id="learn-windows" class="plan-changes"></ul>
+    </section>
+
+    <section class="card dashboard" id="fireplace-card">
+      <span class="section-number">BRASKAMIN / EXTRAVÄRME</span>
+      <h2>Värme från kaminen</h2>
+      <p id="fireplace-status" role="status">Kaminobservation är av tills du väljer rum och sparar.</p>
+      <p class="section-intro">Automatisk temperaturanalys kan misstänka lokal extravärme, men inte skilja säkert mellan eldning, sol och andra värmekällor. Detta är inte ett brand- eller säkerhetslarm.</p>
+      <p class="hint warning">Ditt prioriterade snitt styr fortfarande. Vid bestående misstänkt extravärme läggs ett extra kaminbidrag på −1 steg till den beräknade kurvförskjutningen, men bara om det styrande snittet inte är under ditt vanliga mål minus toleransen. Kurvan påverkar hela huset; andra rum kan bli kallare och sol kan ge falska träffar. Vanliga intervall, steglängd och gränser gäller.</p>
+      <div class="learn-controls">
+        <label class="toggle"><input type="checkbox" id="fireplace_enabled" name="fireplace_enabled" form="settings"> Jag har braskamin · upptäck extravärme och anpassa kurvan</label>
+        <button type="submit" form="settings" id="save-fireplace">Spara inställningar</button>
+      </div>
+      <label for="fireplace_rooms">Temperaturkällor i rummet med kamin</label>
+      <div id="fireplace_rooms" class="sensor-list" role="group" aria-describedby="fireplace-help"></div>
+      <p id="fireplace-help" class="hint">Välj bland rumsgivarna i inställningarna. Välj bara kaminens rum, inte alla rum värmen sprids till. Minst ett annat valt rum behövs som jämförelse. Inget börjar gälla förrän du sparar.</p>
+      <p id="fireplace-learning" class="explanation"></p>
+      <p id="fireplace-control" class="explanation" role="status"></p>
+      <ul id="fireplace-effects"></ul>
+      <details class="disclosure">
+        <summary>Så upptäcks och lärs extravärmen</summary>
+        <p>Vi jämför kaminrummets snabba temperaturökning under ungefär en timme med övriga valda rum. Mönstret måste bestå innan en misstänkt period sparas. En långsam eller jämnt spridd värmeökning kan missas; sol kan ge falska träffar. Aktuella värden krävs i alla valda rum.</p>
+        <p>Efter minst tre avslutade förlopp med samma rumsval visas typisk observerad varaktighet och temperaturökning i rummen. Det visar vad som hände samtidigt, inte hur mycket värme kaminen säkert gav eller hur länge glöden varar. Varaktigheten gäller tills den lokala temperaturskillnaden klingat av, inte tills hela huset svalnat.</p>
+        <p>Kaminbidraget är en extra sänkning av det beräknade målet, inte ytterligare ett steg ned vid varje avläsning. När observationen tar slut, aktuella värden saknas eller det styrande snittet är för kallt tas bidraget bort och kurvan räknas om. Även då gäller minsta ändringsintervall. Huvudautomatiken måste vara på för att några ändringar ska skickas.</p>
+        <p>Observationer sparas från aktiveringen och överlever omstart. Misstänkta perioder och sex timmar därefter undantas från pumpens inlärning. Temperaturprognosen pausas under en pågående observation; den inlärda varaktigheten används inte för att skicka framtida styrkommandon.</p>
+      </details>
+      <h3>Senaste misstänkta perioder</h3>
+      <ul id="fireplace-history"></ul>
     </section>
 
     <section class="card dashboard" id="hot-water-card">

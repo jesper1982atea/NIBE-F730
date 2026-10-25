@@ -447,6 +447,8 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
     price_configured = bool(config["cheap_boost"] or config["expensive_reduction"])
     price_on = price_configured and use_prices
     preheat_on = bool(config.get("preheat_enabled")) and bool(windows)
+    fireplace_active = (status.get("fireplace") or {}).get("phase") == "active"
+    fireplace = status["contributions"].get("fireplace", 0) if config["fireplace_enabled"] and fireplace_active else 0
     base_error = status["error"] - (status.get("target_shift") or 0)
 
     def desired_at(stamp):
@@ -467,7 +469,7 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
             price = value_at(prices, stamp)
             if price is not None:
                 price_adjustment = price_contribution(config, price, error)
-        value = config["base_offset"] + room + weather + price_adjustment
+        value = config["base_offset"] + room + weather + price_adjustment + fireplace
         reasons = []
         if window and window["kind"] == "preheat":
             reasons.append(f"förvärmer +{window['shift']:g}° före dyrt elpris")
@@ -481,6 +483,8 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
             reasons.append(f"utetemperatur {outdoor:.1f} °C")
         if room:
             reasons.append("rumstemperatur " + ("under" if room > 0 else "över") + " målet")
+        if fireplace:
+            reasons.append("misstänkt extravärme: kaminbidrag −1 steg")
         return round(max(config["min_offset"], min(config["max_offset"], value)), 2), reasons
 
     slots = [now]
@@ -553,7 +557,8 @@ def actual_changes(history, events, start):
                     "source": "automatik" if match else "manuell eller annan automation", "reasons": []}
             if match:
                 c = match["details"].get("contributions", {})
-                item["reasons"] = [f"{label} {c[key]:+g}" for key, label in (("room", "rum"), ("weather", "väder"), ("price", "elpris"))
+                item["reasons"] = [f"{label} {c[key]:+g}" for key, label in (
+                    ("room", "rum"), ("weather", "väder"), ("price", "elpris"), ("fireplace", "kamin"))
                                    if c.get(key)]
                 kind = match["details"].get("preheat")
                 if kind:
@@ -613,6 +618,10 @@ class Insights:
         self.cache = {}
         self.lock = threading.Lock()
         self.store = LearningStore(f"{data_dir}/learning.sqlite" if data_dir else None)
+        self.fireplace_provider = None
+
+    def fireplace_intervals(self):
+        return self.fireplace_provider() if self.fireplace_provider else []
 
     def cached(self, key, seconds, loader):
         with self.lock:
@@ -838,11 +847,15 @@ class Insights:
         result["offset"].update(planned=plan["planned"], desired=plan["desired"], changes=plan["changes"])
         result["offset"]["done"] = actual_changes(result["offset"]["history"], events or [], result["start"])
         result["notes"].extend(plan["notes"])
+        if (status.get("fireplace") or {}).get("active_since") is not None:
+            result["notes"].append("Misstänkt extravärme: planen antar nuvarande rumstemperatur och fortsatt kaminläge. Varaktigheten är okänd; planen räknas om vid nästa avläsning.")
         return result
 
     def house_model(self, config):
         """Learn from Home Assistant history (7 days) plus everything stored earlier. Cached for an hour."""
-        key = ("model", tuple(control_rooms(config)), config["outdoor_entity"], config["offset_entity"])
+        episodes = self.fireplace_intervals()
+        key = ("model", tuple(control_rooms(config)), config["outdoor_entity"], config["offset_entity"],
+               tuple((e["start"], e["end"]) for e in episodes))
 
         def load():
             now = time.time()
@@ -871,13 +884,22 @@ class Insights:
             hours = set.intersection(*(set(stored[e]) for e in rooms))
             indoor = {h: sum(stored[e][h] for e in rooms) / len(rooms) for h in hours}
             result.update(indoor=indoor, outdoor=stored.get(config["outdoor_entity"], {}), offset=stored[config["offset_entity"]])
-            result["model"] = learn(indoor, result["outdoor"], result["offset"], now)
+            training = {h: value for h, value in indoor.items() if not any(
+                e["start"] - 3600 <= h <= (e["end"] + 6 * 3600 if e["end"] is not None else now)
+                for e in episodes)}
+            result["excluded_hours"] = len(indoor) - len(training)
+            result["model"] = learn(training, result["outdoor"], result["offset"], now)
+            if result["excluded_hours"]:
+                result["model"]["message"] += (
+                    f" {result['excluded_hours']} timmar kring misstänkt extravärme undantas från pumpinlärningen."
+                )
             return result
         return self.cached(key, 3600, load)
 
     def preheat(self, config):
         """Pre-heating windows from Tibber prices and the learned lead time. Cached 15 minutes."""
-        key = ("preheat", tuple(control_rooms(config)), config["offset_entity"], config["preheat_degrees"])
+        key = ("preheat", tuple(control_rooms(config)), config["offset_entity"], config["preheat_degrees"],
+               tuple((e["start"], e["end"]) for e in self.fireplace_intervals()))
 
         def load():
             model = None
@@ -898,6 +920,9 @@ class Insights:
         now = time.time()
         model = data["model"]
         result = {"now": now, "error": data["error"], "model": model, "history": [], "prediction": [],
+                  "fireplace_periods": [{"start": e["start"], "end": e["end"] if e["end"] is not None else now}
+                                       for e in self.fireplace_intervals()
+                                       if e["end"] is None or e["end"] >= now - 86400],
                   "target": config["target_temperature"], "preheat": {"enabled": config["preheat_enabled"],
                   "degrees": config["preheat_degrees"], "windows": [], "lead_hours": None, "lead_source": None, "note": None}}
         result["history"] = [[h + 1800, round(v, 2)] for h, v in sorted(data["indoor"].items()) if h >= now - 36 * 3600]
@@ -907,6 +932,9 @@ class Insights:
                                      lead_source=schedule["lead_source"], note=schedule["note"] or None)
         except ControlError as exc:
             result["preheat"]["note"] = str(exc)
+        if (status.get("fireplace") or {}).get("active_since") is not None:
+            result["prediction_note"] = "Temperaturprognosen väntar: misstänkt extravärme har okänd fortsatt effekt."
+            return result
         if not model or not model.get("beta") or status.get("indoor") is None:
             return result
         plan = self.plan(config, status, events)

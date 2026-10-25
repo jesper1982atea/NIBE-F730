@@ -60,3 +60,4 @@
 :root[data-theme=dark] .learn-bar{background:#26302c}:root[data-theme=dark] .chart-band.preheat{fill:#ee8a75;opacity:.18}:root[data-theme=dark] .chart-band.coast{fill:#7ea2ef;opacity:.18}:root[data-theme=dark] .key.preheat{color:#ee8a75}:root[data-theme=dark] .key.coast{color:#9db9f3}:root[data-theme=dark] .plan-changes li.preheat{border-color:#ee8a75}:root[data-theme=dark] .plan-changes li.coast{border-color:#7ea2ef}
 :root[data-theme=dark] .test-steps li.now{background:#2e2716;border-color:#8a6a2a}:root[data-theme=dark] .test-steps li.fail{background:#33201a;border-color:#7a4433}
 :root[data-theme=dark] .test-values div{background:#25302c}
+.chart-band.fireplace{fill:#d89020;opacity:.14}.key.fireplace{color:#a56a11}

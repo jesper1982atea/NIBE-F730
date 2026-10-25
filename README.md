@@ -20,6 +20,12 @@ rumstemperatur, väder och elpris. Begäran skiljs från bekräftad återläsnin
 Tillägget lär sig också hur huset svarar på värmekurvan och kan, om du slår på
 det, förvärma före dyra elpristimmar och låta huset svalna lite under dem.
 
+Valfri **kaminanpassning** jämför kaminrummets temperatur med övriga rum.
+Bestående misstänkt extravärme kan ge ett extra bidrag på −1 kurvsteg när
+styrande rum inte är för kalla. Sol kan ge samma mönster; det är ingen
+säker eldningsdetektor. Observerad varaktighet och rumstemperaturernas
+förändring lärs från sparade förlopp, separat från pumpens husmodell.
+
 Rumsvalet har sökbara temperaturkort och en informationsmarkering för
 termostaten närmast pumpen. Valfri termostatbegränsning kan sänka ett högre
 börvärde till rumsmålet vid minst 0,5 °C övertemperatur. Den är av från början,
