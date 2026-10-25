@@ -66,6 +66,7 @@
       <details id="room-impact">
         <summary>Temperatur i alla valda rum</summary>
         <p>Förskjutningen påverkar hela huset, inte bara prioriterade rum. Här ser du uppmätta värden och förändring senaste timmen, inte en prognos eller bevis på vad som orsakat förändringen.</p>
+        <p id="room-area-status" class="hint" role="status"></p>
         <div id="room-impact-list"></div>
       </details>
     </section>
@@ -179,9 +180,10 @@
       <p class="hint">K = kurvförskjutning, T = termostat. Markeringarna visar loggade begäranden och kurvobservationer. Återläst betyder bekräftat av HA-integrationen, inte en oberoende fysisk mätning. En begäran utan återläsning är inte en bekräftad ändring. Positivt beslutsbidrag begär mer värme, negativt mindre. Temperaturförändring efteråt bevisar inte vad som orsakade den.</p>
       <ul id="history-changes" class="plan-changes"></ul>
       </details>
-      <h3 id="thermostat-charts-title">Rum för rum</h3>
+      <h3 id="thermostat-charts-title">Rum för rum · Home Assistant-områden</h3>
+      <p id="history-area-status" class="hint" role="status"></p>
       <div id="thermostat-charts" class="thermostat-charts"></div>
-      <p class="hint">Välj ett rum för att se det ensamt. För golvvärme och termostater visas både uppmätt temperatur (heldragen) och vad termostaten är inställd att värma till (streckad). Givare rapporterar bara när värdet ändras, så ett värde gäller tills nästa rapport. Luckor betyder att givaren var otillgänglig.</p>
+      <p class="hint">Korten grupperas efter rummets område i Home Assistant. De visar temperaturförändringen under dygnet och termostatändringar som loggats i just det området. Kurvförskjutning är en gemensam ändring för hela huset och visas separat i styrhistoriken, inte som en ändring i ett enskilt rum. Om ett rum saknar område tilldelar du området till enheten eller entiteten i Home Assistant. Givare rapporterar bara när värdet ändras, så ett värde gäller tills nästa rapport. Luckor betyder att givaren var otillgänglig.</p>
       <details class="disclosure"><summary>Avancerat · mätpunkter som tabell</summary><div id="history-table" class="table-scroll"></div></details>
     </section>
 

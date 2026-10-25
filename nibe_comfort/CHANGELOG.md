@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 0.2.24
+
+- Rumsöversikt och temperaturhistorik grupperas efter Home Assistants
+  områden. Varje rumskort visar temperatur, förändring under dygnet och
+  termostatändringar som hör till rummets valda klimatentitet.
+- Kurvförskjutning märks som gemensam husstyrning i stället för att tillskrivas
+  ett enskilt rum. Saknad rumstilldelning och fel vid uppslag visas tydligt.
+- Inga ändringar av rum, aktivering eller temperaturmål görs automatiskt.
+
 ## 0.2.23
 
 - Temperaturmålet märks nu tydligt som mål för prioriterade rum när sådana

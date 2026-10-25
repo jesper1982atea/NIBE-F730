@@ -218,6 +218,32 @@ class HomeAssistant:
         validate_registry(registry)
         return registry
 
+    def entity_areas(self, entity_ids):
+        """Resolve Home Assistant area assignments for the supplied entity IDs."""
+        if (not isinstance(entity_ids, list) or len(entity_ids) > 100
+                or any(not isinstance(eid, str) for eid in entity_ids)):
+            raise ControlError("Ogiltig lista med entiteter för rumsindelning.")
+        if not entity_ids:
+            return {}
+        template = (
+            "{% set ns = namespace(items=[]) %}"
+            "{% for eid in " + json.dumps(entity_ids, ensure_ascii=True) + " %}"
+            "{% set aid = area_id(eid) %}"
+            "{% set ns.items = ns.items + [{'entity_id': eid, 'area_id': aid, "
+            "'area_name': area_name(aid) if aid else none}] %}"
+            "{% endfor %}{{ ns.items | to_json }}"
+        )
+        rows = self.request("/template", {"template": template})
+        if not isinstance(rows, list) or len(rows) != len(entity_ids) or any(
+            not isinstance(row, dict)
+            or row.get("entity_id") not in entity_ids
+            or (row.get("area_id") is not None and not isinstance(row["area_id"], str))
+            or (row.get("area_name") is not None and not isinstance(row["area_name"], str))
+            for row in rows
+        ) or len({row["entity_id"] for row in rows}) != len(entity_ids):
+            raise ControlError("Home Assistant returnerade ogiltiga rumsuppgifter.")
+        return {row["entity_id"]: {"area_id": row["area_id"], "area_name": row["area_name"]} for row in rows}
+
     def discover(self):
         from insights import discover_tibber
         registry = self.integration_registry()

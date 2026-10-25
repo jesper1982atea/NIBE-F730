@@ -127,6 +127,8 @@ def handler_for(controller, api_token=None):
                                 "target_temp_step": attrs.get("target_temp_step"),
                             })
                     self.respond(200, entities)
+                elif path == "/api/areas":
+                    self.respond(200, controller.ha.entity_areas(controller.settings()["room_sensors"]))
                 elif api_token is None and path in ("/", "/index.html", "/app.js", "/theme.js", "/style.css"):
                     name = "index.html" if path == "/" else path[1:]
                     mime = {"html": "text/html", "js": "text/javascript", "css": "text/css"}[name.rsplit(".", 1)[1]]

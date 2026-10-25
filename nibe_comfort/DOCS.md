@@ -270,6 +270,13 @@ pumpen är inget flödesskydd. Rådgör med installatör vid osäkerhet.
 Temperaturgrafen visar de **sparade** rumsgivarnas senaste 24 timmar via
 Home Assistants historik-API. Givarna behöver ingå i Recorder; data som
 aldrig sparats kan inte återskapas. Välj **Alla rum** eller ett enskilt rum.
+Rumsöversikten och dygnskorten grupperas efter det **område** som enheten
+eller entiteten tillhör i Home Assistant. Ett kort visar senaste temperatur,
+förändring under historikperioden och loggade termostatändringar i det området.
+Om Home Assistant inte har ett område tilldelat visas givaren under
+**Inget område i Home Assistant**. Tilldela området i Home Assistant för att
+få önskad rumsgruppering. Ett rum med flera valda entiteter kan visa fler än
+en temperaturkurva.
 För golvvärme och andra termostater (`climate`) visas både uppmätt temperatur
 och vad termostaten är inställd att värma till (streckad), hämtat från
 termostatens historiska börvärde. Givare rapporterar bara när värdet ändras,
@@ -278,11 +285,12 @@ betyder att givaren var otillgänglig. Grafen glesas ut till första/sista
 värdet i femminutersintervall. Mätpunkterna finns också som tabell.
 Historik hämtas högst var femte minut.
 
-Under översikten finns också **en egen graf per vald climate-termostat**,
-med uppmätt temperatur och dess historiska börvärde. Rumsfiltret visar ett
-enskilt rum eller alla. Både översikt och rumsgrafer har markeringar för
-loggade kurvbegäranden (**K**) och termostatbegäranden (**T**). Kurvbegäranden
-visas för alla rum, termostatbegäranden bara för den berörda termostaten.
+Under översikten finns kort **per Home Assistant-område**. Kortet visar
+uppmätt temperatur för entiteterna i rummet och, för climate-termostater,
+dess historiska börvärde. Rumsfiltret kan visa en entitet eller alla.
+Rumskortets markeringar och ändringslista visar termostatbegäranden i det
+rummet. Pumpens kurvförskjutning är gemensam för hela huset och visas i
+översiktens styrhistorik, inte som en lokal rumsändring.
 
 Ändringslistan visar före/eftervärden, enhet och senaste status: begärd,
 skickad utan bekräftelse, återläst, misslyckat anrop eller saknad återläsning.
