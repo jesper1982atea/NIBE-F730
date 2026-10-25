@@ -20,6 +20,7 @@ STATIC = Path(__file__).parent / "static"
 
 def handler_for(controller, api_token=None):
     insights = Insights(controller.ha, getattr(controller, "data_dir", None))
+    insights.fireplace_provider = controller.fireplace_observations
     if getattr(controller, "preheat_provider", 1) is None:
         controller.preheat_provider = insights.preheat
 

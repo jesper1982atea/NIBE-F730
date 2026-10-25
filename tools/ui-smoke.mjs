@@ -131,6 +131,7 @@ const server = createServer(async (request, response) => {
         message: "Grov uppskattning (6,6 av 7 dygn, 4 av 6 kurvändringar). Förvärmningen använder försiktiga standardvärden (3 timmar innan) tills modellen är säker." },
       history: Array.from({ length: 24 }, (_, i) => [now - (24 - i) * hour, 21.7 + Math.sin(i / 4) * 0.3]),
       prediction: Array.from({ length: 25 }, (_, i) => [now + i * hour, 21.9 + (i > 6 && i < 10 ? 0.3 : 0) - (i >= 10 && i < 13 ? 0.2 : 0)]),
+      fireplace_periods: [{ start: now - 7200, end: now - 3600 }],
       preheat: { enabled: settings.preheat_enabled, degrees: settings.preheat_degrees, lead_hours: 3, lead_source: "default", note: null,
         windows: [{ kind: "preheat", start: now + 7 * hour, end: now + 10 * hour, shift: 0.5, price: 0.9 },
                   { kind: "coast", start: now + 10 * hour, end: now + 13 * hour, shift: -0.5, price: 2.4 }] },
@@ -238,12 +239,13 @@ try {
   await page.waitForFunction(() => document.getElementById("learn-status").textContent.startsWith("Grov bild"));
   await page.waitForFunction(() => document.getElementById("version").textContent === " · Version 0.2.8");
   assert.equal(await page.locator("#learning-card").evaluate((card) => card.previousElementSibling.querySelector("#plan-changes") !== null), true, "Learning card follows the plan");
-  assert.equal(await page.locator("#hot-water-card").evaluate((card) => card.previousElementSibling.id), "learning-card");
+  assert.equal(await page.locator("#hot-water-card").evaluate((card) => card.previousElementSibling.id), "fireplace-card");
   assert.match(await page.locator("#learn-progress").textContent(), /6,6 av 7 dygn.*4 av 6/);
   assert.match(await page.locator("#learn-facts").textContent(), /\+0,19 °C inne på sikt.*≈ 7,1 timmar/);
   assert.equal(await page.locator("#learn-chart path").count(), 2);
   assert.equal(await page.locator("#learn-chart .chart-band.preheat").count(), 1);
   assert.equal(await page.locator("#learn-chart .chart-band.coast").count(), 1);
+  assert.equal(await page.locator("#learn-chart .chart-band.fireplace").count(), 1);
   assert.match(await page.locator("#learn-windows").textContent(), /Förvärmning är av.*3 timmar före \(standard.*förvärm \+0,5°.*0,5° svalare/);
   assert.equal(await page.locator("#preheat_enabled").isChecked(), false, "Pre-heating starts off");
   assert.equal(await page.locator("#preheat_degrees").inputValue(), "0.5");
@@ -861,6 +863,58 @@ try {
   assert.equal(await livePage.locator("#target_temperature").inputValue(), "24", "An old in-flight read cannot overwrite a successful save");
   assert.equal(liveWrites, 1, "Only the explicit save may write settings");
   await livePage.close();
+  const firePage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  firePage.on("pageerror", (error) => errors.push(error.message));
+  firePage.on("dialog", (dialog) => dialog.accept());
+  let fireSettings = { ...defaults, room_sensors: [thermostat, "sensor.living"], priority_sensors: [thermostat],
+    offset_entity: offset, fireplace_enabled: false, fireplace_rooms: [] };
+  let fireWrites = 0;
+  let fireObservation = { enabled: false, phase: "off", message: "Kaminobservation är av.",
+    completed: 0, learned: false, room_effects: [], recent: [], rooms: [], active_since: null };
+  await firePage.route("**/api/settings", (route) => {
+    if (route.request().method() === "PUT") {
+      fireWrites++;
+      fireSettings = route.request().postDataJSON();
+    }
+    return route.fulfill({ json: fireSettings });
+  });
+  await firePage.route("**/api/status", (route) => route.fulfill({ json: {
+    checked_at: Date.now() / 1000, enabled: false, indoor: 23, house_indoor: 22, outdoor: 5,
+    current_offset: 3, next_offset: 2, desired_offset: 2, fireplace: fireObservation,
+    rooms: [{ entity_id: thermostat, name: "LK Allrum", temperature: 23, priority: true }],
+  } }));
+  await firePage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await firePage.waitForFunction(() => document.getElementById("fireplace-status").textContent === "Kaminobservation är av.");
+  assert.equal(await firePage.locator("#fireplace_enabled").isChecked(), false);
+  await firePage.locator("#fireplace_enabled").check();
+  await firePage.locator(`#fireplace_rooms input[value="${thermostat}"]`).check();
+  assert.match(await firePage.locator("#settings-save-status").textContent(), /Osparade.*Kaminanpassning.*Kaminrum/);
+  assert.equal(fireWrites, 0, "Selecting a fireplace must not silently save or enable automation");
+  await firePage.locator("#save-fireplace").click();
+  await firePage.waitForFunction(() => document.getElementById("notice").textContent.includes("Inställningarna är sparade"));
+  assert.equal(fireWrites, 1);
+  assert.equal(fireSettings.fireplace_enabled, true);
+  assert.deepEqual(fireSettings.fireplace_rooms, [thermostat]);
+  assert.deepEqual(fireSettings.priority_sensors, [thermostat], "The chosen priority rooms must stay unchanged");
+  assert.equal(fireSettings.enabled, false, "Observations do not turn on physical control");
+  fireObservation = { ...fireObservation, enabled: true, rooms: [thermostat], phase: "active",
+    message: "Misstänkt extravärme. Det kan vara eldning eller sol.", active_since: now - 3600,
+    contribution: -1, control_note: "Extra kaminbidrag −1 steg. Övervakning: inga automatiska ändringar skickas.",
+    completed: 3, learned: true, duration_hours: 4.2,
+    room_effects: [{ entity_id: "sensor.living", rise: 0.4, arrival_minutes: 45 }],
+    recent: [{ start: now - 86400, end: now - 72000, complete: false }],
+  };
+  await firePage.evaluate(() => window.dispatchEvent(new Event("online")));
+  await firePage.waitForFunction(() => document.getElementById("fireplace-status").textContent.includes("Misstänkt extravärme"));
+  assert.match(await firePage.locator("#fireplace-learning").textContent(), /4,2 timmar.*3 avslutade.*Ingen säker prognos/);
+  assert.match(await firePage.locator("#fireplace-effects").textContent(), /Vardagsrum.*0,4 °C.*45 min.*Inte säkert/);
+  assert.match(await firePage.locator("#fireplace-history").textContent(), /avbruten\/osäker/);
+  assert.match(await firePage.locator("#fireplace-control").textContent(), /kaminbidrag −1.*Övervakning/);
+  assert.match(await firePage.locator("#room-impact-list").textContent(), /prioriterat.*kaminrum/);
+  assert.equal(fireWrites, 1, "Rendering suspected extra heat must not save or send new commands");
+  await firePage.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await firePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await firePage.close();
   assert.deepEqual(errors, []);
   console.log("Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
 } finally {

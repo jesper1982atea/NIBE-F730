@@ -13,6 +13,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from fireplace import empty_state, intervals as fireplace_intervals, update as update_fireplace, validate_state as validate_fireplace_state
+
 
 DEFAULTS = {
     "enabled": False,
@@ -21,6 +23,8 @@ DEFAULTS = {
     "priority_sensors": [],
     "nearest_thermostat": "",
     "thermostat_control_enabled": False,
+    "fireplace_enabled": False,
+    "fireplace_rooms": [],
     "offset_entity": "",
     "outdoor_entity": "",
     "price_entity": "",
@@ -86,7 +90,7 @@ def validate(config):
     if not isinstance(config, dict) or set(config) != set(DEFAULTS):
         raise ControlError("Konfigurationen innehåller saknade eller okända fält.")
     result = copy.deepcopy(config)
-    for key in ("enabled", "preheat_enabled", "thermostat_control_enabled"):
+    for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled"):
         if type(result[key]) is not bool:
             raise ControlError(f"{key} måste vara boolesk.")
     for key, (low, high) in LIMITS.items():
@@ -105,6 +109,15 @@ def validate(config):
         raise ControlError("Välj högst två prioriterade givare bland dina rumsgivare.")
     if len(set(priority)) != len(priority):
         raise ControlError("Samma prioriterade givare får inte väljas flera gånger.")
+    fireplace_rooms = result["fireplace_rooms"]
+    if not isinstance(fireplace_rooms, list) or any(not isinstance(key, str) or key not in rooms for key in fireplace_rooms):
+        raise ControlError("Kaminrum måste väljas bland dina rumsgivare.")
+    if len(set(fireplace_rooms)) != len(fireplace_rooms):
+        raise ControlError("Samma kaminrum får inte väljas flera gånger.")
+    if result["fireplace_enabled"] and not fireplace_rooms:
+        raise ControlError("Välj minst en temperaturkälla i rummet med braskamin.")
+    if result["fireplace_enabled"] and not set(rooms) - set(fireplace_rooms):
+        raise ControlError("Välj även minst ett rum utan kamin för temperaturjämförelse.")
     nearest = result["nearest_thermostat"]
     if not isinstance(nearest, str) or (nearest and (nearest not in rooms or not nearest.startswith("climate."))):
         raise ControlError("Termostaten närmast pumpen måste vara en av dina valda termostater.")
@@ -397,6 +410,12 @@ def price_contribution(config, price, error):
     return adjustment
 
 
+def fireplace_contribution(config, indoor, active):
+    """No extra reduction while the ordinary control-room average is cold."""
+    return -1.0 if config["fireplace_enabled"] and active \
+        and indoor >= config["target_temperature"] - config["deadband"] - 1e-6 else 0.0
+
+
 def control_rooms(config):
     return config["priority_sensors"] or config["room_sensors"]
 
@@ -496,7 +515,7 @@ def current_readings(config, entities, now, peers):
     return readings
 
 
-def evaluate(config, entities, now, peers=None, target_shift=0.0):
+def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False):
     """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule."""
     states = {entity["entity_id"]: entity for entity in entities}
     peers = peers or {}
@@ -518,13 +537,15 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0):
         price = number(price_entity["state"], "Elpris")
         price_unit = price_entity.get("attributes", {}).get("unit_of_measurement", "")
         price_adjustment = price_contribution(config, price, error)
-    desired = config["base_offset"] + room_adjustment + weather_adjustment + price_adjustment
+    fireplace_adjustment = fireplace_contribution(config, indoor, fireplace_active)
+    desired = config["base_offset"] + room_adjustment + weather_adjustment + price_adjustment + fireplace_adjustment
     requested = desired
     desired = max(config["min_offset"], min(config["max_offset"], desired))
     result = {
         "indoor": round(indoor, 2), "outdoor": outdoor, "price": price,
         "price_unit": price_unit, "error": round(error, 2), "target_shift": round(target_shift, 2),
-        "contributions": {"room": round(room_adjustment, 2), "weather": round(weather_adjustment, 2), "price": price_adjustment},
+        "contributions": {"room": round(room_adjustment, 2), "weather": round(weather_adjustment, 2),
+                          "price": price_adjustment, "fireplace": fireplace_adjustment},
         "desired_offset": round(desired, 3), "current_offset": None,
         "next_offset": None, "writable": False,
         "control_limit": (
@@ -624,6 +645,8 @@ class Controller:
                 saved.setdefault("priority_sensors", [])
                 saved.setdefault("nearest_thermostat", "")
                 saved.setdefault("thermostat_control_enabled", False)
+                saved.setdefault("fireplace_enabled", False)
+                saved.setdefault("fireplace_rooms", [])
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
         self.pending = None
@@ -650,6 +673,12 @@ class Controller:
         # Set by the web layer: callable(config) -> {"windows": [...]} for price-based pre-heating.
         self.preheat_provider = None
         self.preheat_kind = None
+        self.fireplace_path = Path(data_dir) / "fireplace-state.json"
+        try:
+            self.fireplace_state = validate_fireplace_state(json.loads(self.fireplace_path.read_text())) \
+                if self.fireplace_path.exists() else empty_state()
+        except (ValueError, TypeError) as exc:
+            raise ControlError("Kunde inte läsa sparade kaminobservationer. Kontrollera fireplace-state.json.") from exc
         self.thermostat_path = Path(data_dir) / "thermostat-state.json"
         self.thermostats = json.loads(self.thermostat_path.read_text()) if self.thermostat_path.exists() else {}
         if not isinstance(self.thermostats, dict):
@@ -677,6 +706,22 @@ class Controller:
 
     def snapshot(self):
         return copy.deepcopy(self.status)
+
+    def fireplace_observations(self):
+        return fireplace_intervals(self.fireplace_state)
+
+    def fireplace_step(self, entities, now, peers):
+        # A short freshness limit is necessary to distinguish a rise from a reporting gap.
+        config = {**self.config, "max_age_minutes": min(15, self.config["max_age_minutes"])}
+        readings = current_readings(config, entities, now, peers)["rooms"] if config["fireplace_enabled"] else []
+        state, status, events = update_fireplace(self.fireplace_state, self.config, readings, now)
+        if state != self.fireplace_state:
+            atomic_json(self.fireplace_path, state)
+            for event in events:
+                details = {k: v for k, v in event.items() if k not in ("kind", "message")}
+                self.events.add(event["kind"], event["message"], **details)
+            self.fireplace_state = state
+        return status
 
     def save(self, config):
         config = validate(config)
@@ -987,17 +1032,31 @@ class Controller:
             now = time.time()
             readings = {}
             result = {}
+            fireplace = None
             try:
                 entities = self.ha.states()
                 now = time.time()
                 peers = self.peers()
                 readings = current_readings(self.config, entities, now, peers)
+                fireplace = self.fireplace_step(entities, now, peers)
                 self.test_step(entities, now)
                 self.observe(entities, now, peers)
                 preheat = self.preheat(now, schedule)
-                result = evaluate(self.config, entities, now, peers, preheat["shift"])
+                result = evaluate(self.config, entities, now, peers, preheat["shift"],
+                                  fireplace_active=fireplace["phase"] == "active")
                 result["preheat"] = preheat
                 result.update(readings)
+                fireplace["contribution"] = result["contributions"]["fireplace"]
+                fireplace["control_note"] = (
+                    "Extra kaminbidrag −1 steg i beräknad kurvförskjutning. Vanliga intervall, steg och gränser gäller."
+                    if fireplace["contribution"] else
+                    "Ingen extra kaminsänkning: det styrande snittet är under ditt vanliga mål minus toleransen."
+                    if fireplace["phase"] == "active" else
+                    "Ingen extra kaminsänkning utan aktuell, bestående misstänkt extravärme."
+                )
+                if not self.config["enabled"]:
+                    fireplace["control_note"] += " Övervakning: inga automatiska ändringar skickas."
+                result["fireplace"] = fireplace
                 if self.last_error:
                     self.events.add("resumed", "Giltiga mätvärden igen; styrningen kan fortsätta.")
                     self.last_error = None
@@ -1035,6 +1094,7 @@ class Controller:
                                                  if e["entity_id"] == self.config["price_entity"]), None),
                                 contributions=result["contributions"], desired_offset=result["desired_offset"],
                                 target_shift=result["target_shift"], preheat=preheat.get("kind"),
+                                fireplace=fireplace["phase"], fireplace_rooms=fireplace["rooms"],
                             )
                             pending = dict(
                                 request_id=request_id, timestamp=now,
@@ -1064,6 +1124,7 @@ class Controller:
                     self.last_error = str(exc)
                 self.status = {
                     **result, **readings,
+                    "fireplace": fireplace,
                     "error_message": str(exc), "checked_at": now,
                     "settings": copy.deepcopy(self.config),
                     "pending_write": copy.deepcopy(self.pending),

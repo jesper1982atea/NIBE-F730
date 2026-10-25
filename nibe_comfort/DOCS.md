@@ -171,6 +171,81 @@ genom vanliga rumsregeln, så alla gränser, steglängd och minsta tid mellan
 ändringar gäller. Saknas priser eller blir något fel används vanlig
 måltemperatur och orsaken visas i statusförklaringen.
 
+### Braskamin och automatisk observation av extravärme
+
+I kortet **Värme från kaminen** väljer du **Jag har braskamin** och
+temperaturkällan i kaminens rum. Välj bland dina redan valda rumsgivare;
+Home Assistants rumsnamn visas när tilldelning finns. Välj inte både en
+termostat och dess separata givare för samma rum. Minst ett annat valt rum
+utan kamin behövs som jämförelse. Spara valet; uppdateringen aktiverar
+ingenting automatiskt. Observation kan användas i övervakningsläge utan
+att huvudautomatiken aktiveras.
+
+**Ditt prioriterade snitt styr fortfarande även under misstänkt eldning.**
+Utan prioritering används snittet av alla valda rum, precis som tidigare.
+Är kaminrummet med i det styrande snittet kan dess högre temperatur
+sänka kurvförskjutningen för hela huset och göra andra rum kallare. Ett
+kaminrum som bara visas men inte är prioriterat påverkar inte det prioriterade
+snittet. **Bestående misstänkt extravärme ger dessutom ett extra bidrag på
+−1 steg i beräknad kurvförskjutning**, även om kaminrummet inte är
+prioriterat. Bidraget tillåts bara när det styrande snittet är minst ditt
+vanliga mål minus toleransen, oberoende av tillfälligt sänkt elprismål.
+Det läggs till tillsammans med rum, väder och elpris innan säkerhetsgränser
+och steglängd tillämpas. Det betyder inte ett nytt steg ned varje minut.
+Faktiskt begärt värde och väntetid visas som vanligt.
+
+Bidraget tas bort när perioden avslutas, avläsningar saknas, funktionen
+stängs av eller det styrande snittet blir för kallt. Då räknas kurvan om
+utifrån det aktuella behovet; ingen gammal förskjutning återställs blint.
+Minsta ändringsintervall gäller även när bidraget tas bort. Ingen
+prioritering ändras och kaminen styrs inte. Alla pumpgränser,
+termostatregler och stopp gäller fortfarande. Huvudautomatiken måste vara
+på för att skicka ändringar; annars visas bara förslag. Aktivering och
+ändrade rumsval kräver bekräftelse i gränssnittet. Ändringsloggen visar
+kaminbidraget vid beslutet, inte att värmen säkert kom från eldning.
+
+**Automatisk temperaturanalys är osäker.** Den kan misstänka lokal
+extravärme men inte bekräfta eldning. Sol, matlagning eller annan lokal
+värme kan ge samma mönster. Långsam eldning eller värme som sprids jämnt
+till alla rum kan missas. Det är inget brand- eller säkerhetslarm.
+
+Analysen tar en observation högst var femte minut, med giltiga och färska
+temperaturer (högst 15 minuter, eller din kortare mätvärdesgräns) i
+samtliga valda rum. En oförändrad givare kan bekräftas genom färska
+rapporter från samma HA-enhet, som i övrig styrning. En temperaturökning
+i kaminrummens snitt måste vara minst 0,5 °C under ungefär 45–75 minuter,
+motsvara minst 0,7 °C per timme och vara minst 0,5 °C större än ökningen
+i övriga rum. Mönstret ska bestå minst tio minuter innan en misstänkt
+period registreras. Analysen behöver först minst 45 minuter med
+sammanhängande observationer.
+
+Perioden avslutas när kaminrummens relativa ökning har sjunkit till högst
+0,2 °C över jämförelserummen i minst 30 minuter. Förloppet ska ha varat
+minst 45 minuter. Detta mäter hur länge den **lokala temperaturskillnaden**
+syns, inte glödens varaktighet eller tiden tills hela huset svalnat.
+Avbrott över 15 minuter, ändrade rumsval, avstängning eller ett oavslutat
+förlopp efter 18 timmar markeras som osäkra/avbrutna och används inte
+för typisk varaktighet.
+
+Efter minst **tre avslutade förlopp med samma rumsval** visas medianen
+av observerad varaktighet samt rummens temperaturökning och när minst
+0,3 °C ökning först observerades. Det är samtidiga mätningar, inte bevis
+för att kaminen värmde ett visst rum. Siffrorna används inte för att
+automatiskt schemalägga framtida kurvkommandon eller garantera återstående
+värmetid.
+
+Observationerna sparas från aktivering i `/data/fireplace-state.json` och
+överlever omstart: högst ett dygn med femminutersvärden och de senaste
+100 förloppen inom 180 dygn. Äldre historik analyseras inte retroaktivt.
+Misstänkta perioder markeras i husmodellens temperaturgraf och i
+ändringsloggen. Pumpens modell undantar registrerade perioder från en
+timme före jämförelsens början till sex timmar efter avslut, även om
+kaminobservation senare stängs av. Därmed tillskrivs inte dessa
+temperaturförändringar pumpen vid inlärningen. Oupptäckt extravärme kan
+fortfarande påverka modellen. Historiska temperaturer visas oförändrade;
+den framtida temperaturprognosen pausas under en pågående observation
+eftersom den fortsatta extravärmen är okänd.
+
 ### Varmvatten
 
 Kortet **Varmvatten** läser givarna från samma myUplink-enhet som den valda
