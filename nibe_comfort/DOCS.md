@@ -71,7 +71,9 @@ dess uppmätta temperatur mot 22 °C, även om snittet för alla rum redan är
 högre. Välj inte både termostaten och dess separata temperaturgivare för
 samma rum: det skulle ge rummet dubbel vikt i snittet.
 
-Med två prioriterade givare väger de lika. Utan prioritering styr snittet
+Måltemperaturen högst upp gäller snittet av prioriterade rum; gränssnittet
+visar detta bredvid temperaturinställningen. Med två prioriterade givare
+väger de lika. Utan prioritering styr snittet
 av alla valda rum som tidigare. Inga prioriterade givare väljs vid uppdatering.
 
 Överst visas **Prioriterade rum nu** och **Alla valda givare**. Under dem
