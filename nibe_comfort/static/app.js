@@ -16,6 +16,8 @@ let entities = [];
 let entityAreas = {};
 let areaError = "";
 let busy = false;
+let settingsRevision = 0;
+let settingsBusy = false;
 let discovery = null;
 let discoveryError = "";
 let dashboardBusy = false;
@@ -62,13 +64,12 @@ function makeAdvanced() {
   }
 }
 
-function selectOptions(id, predicate) {
+function selectOptions(id, predicate, configured = settings[id]) {
   const select = $(id);
   select.replaceChildren(new Option(id === "forecast_entity" ? "Automatiskt · SMHI i första hand" : "Inte vald", ""));
   for (const entity of entities.filter(predicate)) {
     select.add(new Option(`${entity.name} · ${entity.entity_id}`, entity.entity_id));
   }
-  const configured = settings[id];
   if (configured && !Array.from(select.options).some((option) => option.value === configured)) {
     select.add(new Option(`${configured} (saknas / ej tillgänglig)`, configured));
   }
@@ -93,8 +94,8 @@ function entityHints() {
     : "Välj givare för att se prisets enhet. Exempel: 1 kr/kWh = 100 öre/kWh.";
 }
 
-function renderSettings() {
-  for (const [key, value] of Object.entries(settings)) {
+function renderSettings(formSettings = settings, preserveView = false) {
+  for (const [key, value] of Object.entries(formSettings)) {
     const input = $(key);
     if (!input || ["room_sensors", "priority_sensors"].includes(key)) continue;
     if (typeof value === "boolean") input.checked = value;
@@ -102,19 +103,19 @@ function renderSettings() {
   }
   const isTemperature = (entity) => entity.entity_id.startsWith("sensor.")
     && (entity.device_class === "temperature" || ["°C", "°F"].includes(entity.unit));
-  selectOptions("offset_entity", (entity) => entity.entity_id.startsWith("number."));
-  selectOptions("outdoor_entity", (entity) => isTemperature(entity) || entity.entity_id.startsWith("weather."));
-  selectOptions("price_entity", (entity) => entity.entity_id.startsWith("sensor."));
-  selectOptions("forecast_entity", (entity) => entity.entity_id.startsWith("weather."));
+  selectOptions("offset_entity", (entity) => entity.entity_id.startsWith("number."), formSettings.offset_entity);
+  selectOptions("outdoor_entity", (entity) => isTemperature(entity) || entity.entity_id.startsWith("weather."), formSettings.outdoor_entity);
+  selectOptions("price_entity", (entity) => entity.entity_id.startsWith("sensor."), formSettings.price_entity);
+  selectOptions("forecast_entity", (entity) => entity.entity_id.startsWith("weather."), formSettings.forecast_entity);
   const rooms = entities.filter((entity) => isTemperature(entity) || entity.entity_id.startsWith("climate."));
-  for (const id of settings.room_sensors) {
+  for (const id of formSettings.room_sensors) {
     if (!rooms.some((entity) => entity.entity_id === id)) rooms.push({ entity_id: id, name: id, state: "saknas", unit: "" });
   }
   $("room_sensors").replaceChildren();
   for (const entity of rooms) {
     const label = document.createElement("label");
     const input = document.createElement("input");
-    Object.assign(input, { type: "checkbox", value: entity.entity_id, checked: settings.room_sensors.includes(entity.entity_id) });
+    Object.assign(input, { type: "checkbox", value: entity.entity_id, checked: formSettings.room_sensors.includes(entity.entity_id) });
     const text = document.createElement("span");
     const climate = entity.entity_id.startsWith("climate.");
     label.className = "room-choice";
@@ -138,20 +139,24 @@ function renderSettings() {
     label.append(input, text);
     $("room_sensors").append(label);
   }
-  renderPriorityPicker(settings.priority_sensors);
-  renderNearestThermostat(settings.nearest_thermostat);
+  renderPriorityPicker(formSettings.priority_sensors);
+  renderNearestThermostat(formSettings.nearest_thermostat);
   filterRoomPicker();
-  $("room-impact").open = settings.priority_sensors.length > 0;
+  renderRoomPickerAreas();
+  if (!preserveView) $("room-impact").open = settings.priority_sensors.length > 0;
   if (!rooms.length) $("room_sensors").textContent = "Inga temperaturgivare hittades i Home Assistant.";
   $("mode").textContent = settings.enabled ? "Automatik aktiverad" : "Övervakning";
   $("mode").classList.toggle("active", settings.enabled);
   $("discovery-message").textContent = discoveryError || discovery?.message || "Automatisk upptäckt är inte tillgänglig.";
-  $("manual-pump").open = !settings.offset_entity;
-  $("manual-outdoor").open = !settings.outdoor_entity;
-  $("manual-price").open = !settings.price_entity;
-  if (!settings.room_sensors.length || !settings.offset_entity) $("settings-panel").open = true;
+  if (!preserveView) {
+    $("manual-pump").open = !formSettings.offset_entity;
+    $("manual-outdoor").open = !formSettings.outdoor_entity;
+    $("manual-price").open = !formSettings.price_entity;
+    if (!formSettings.room_sensors.length || !formSettings.offset_entity) $("settings-panel").open = true;
+  }
   targetChanged();
   renderIndoorDiff();
+  renderSavedSettingsStatus();
   $("price-discovery").textContent = discovery?.price_message || "Välj prisgivare manuellt om den inte hittas.";
   entityHints();
 }
@@ -400,7 +405,15 @@ async function refreshStatus() {
   if (statusBusy) return;
   statusBusy = true;
   try {
-    const state = await api("status");
+    void refreshSavedSettings();
+    const response = await api("status");
+    const stale = !response.checked_at || Date.now() / 1000 - response.checked_at > 180;
+    const state = stale ? {
+      ...response, indoor: null, outdoor: null, house_indoor: null, current_offset: null,
+      desired_offset: null, next_offset: null, contributions: null, warm_rooms: [], thermostat_control: null,
+      rooms: (response.rooms || []).map((room) => ({ ...room, temperature: null, setpoint: null,
+        error: "Avläsningen är inte aktuell.", thermostat_error: "Avläsningen är inte aktuell." })),
+    } : response;
     if (typeof state.enabled === "boolean") {
       $("mode").textContent = state.enabled ? "Automatik aktiverad" : "Övervakning";
       $("mode").classList.toggle("active", state.enabled);
@@ -421,10 +434,13 @@ async function refreshStatus() {
     $("status-title").textContent = state.error_message ? "Styrningen är pausad" : state.enabled ? "Värmen följer dina inställningar" : "Se förslaget innan du styr";
     $("status-message").textContent = state.error_message || state.message;
     if (summaryPlan) renderSummary(summaryPlan);
-    else renderControlLimit();
+    else renderLiveAdjustment();
     const checked = state.checked_at ? new Date(state.checked_at * 1000).toLocaleTimeString("sv-SE") : "väntar";
-    const stale = !state.checked_at || Date.now() / 1000 - state.checked_at > 180;
     $("updated").textContent = `${stale ? "Avläsningen är inte aktuell. " : ""}Senast avläst: ${checked} · Uppdateras automatiskt${state.wait_seconds ? ` · Nästa ändring tidigast om ${Math.ceil(state.wait_seconds / 60)} min` : ""}`;
+    if (stale) {
+      $("status-title").textContent = "Väntar på aktuell avläsning";
+      $("status-message").textContent = state.error_message || "Temperaturerna visas inte som aktuella. Försöker igen automatiskt.";
+    }
     if (state.contributions) {
       const c = state.contributions;
       const shift = state.target_shift ? `${state.target_shift > 0 ? "Förvärmer före dyrt elpris" : "Dyrt elpris"}: målet är tillfälligt ${displayNumber(settings.target_temperature + state.target_shift)} °C. ` : "";
@@ -441,10 +457,42 @@ async function refreshStatus() {
     for (const id of ["indoor", "outdoor-now", "current-offset", "hero-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
     $("hero-offset-base").textContent = "";
     $("indoor-diff").textContent = "Medel av dina valda rum";
-    $("updated").textContent = "Visningen är inte aktuell.";
+    $("next-change").textContent = "Avvaktar";
+    $("next-change-why").textContent = "Kontakt med tillägget saknas.";
+    $("updated").textContent = "Visningen är inte aktuell. Ansluter igen automatiskt.";
   } finally {
     statusBusy = false;
   }
+}
+
+async function refreshSavedSettings() {
+  if (busy || settingsBusy) return;
+  settingsBusy = true;
+  const revision = settingsRevision;
+  try {
+    const latest = await api("settings");
+    if (busy || revision !== settingsRevision) return;
+    if (JSON.stringify(latest) !== JSON.stringify(settings)) {
+      const draft = readSettings();
+      const merged = { ...latest };
+      const roomFields = ["room_sensors", "priority_sensors", "nearest_thermostat"];
+      const roomDraft = roomFields.some((key) => JSON.stringify(draft[key]) !== JSON.stringify(settings[key]));
+      for (const key of Object.keys(settings)) {
+        if ((roomDraft && roomFields.includes(key)) || JSON.stringify(draft[key]) !== JSON.stringify(settings[key])) merged[key] = draft[key];
+      }
+      settings = latest;
+      renderSettings(merged, true);
+    }
+    renderSavedSettingsStatus();
+  } catch (error) {
+    if (!busy && revision === settingsRevision) $("settings-sync-status").textContent = `Sparade inställningar kunde inte uppdateras: ${error.message}. Försöker igen automatiskt.`;
+  } finally {
+    settingsBusy = false;
+  }
+}
+
+function renderSavedSettingsStatus() {
+  $("settings-sync-status").textContent = `Sparat mål: ${displayNumber(settings.target_temperature)} °C. Osparade ändringar används först när du sparar.`;
 }
 
 function renderIndoorDiff() {
@@ -453,7 +501,7 @@ function renderIndoorDiff() {
     ?? settings?.priority_sensors.length ?? 0;
   const rooms = $("room_sensors")?.querySelectorAll("input:checked").length
     ?? settings?.room_sensors.length ?? 0;
-  const label = priorities ? "Snitt för prioriterade rum" : "Medel av dina valda rum";
+  const label = settings?.priority_sensors.length ? "Snitt för prioriterade rum" : "Medel av dina valda rum";
   $("target-label").textContent = priorities ? "Mål för prioriterade rum · °C" : "Mål för valda rum · °C";
   $("target-scope").textContent = priorities
     ? `Målet gäller snittet av ${priorities} ${priorities === 1 ? "prioriterat rum" : "prioriterade rum"}.`
@@ -495,6 +543,23 @@ function renderControlLimit() {
   $("next-change-why").textContent = `Beräknad förskjutning ${displayNumber(limit.requested)}, men din säkerhetsgräns är ${displayNumber(limit.value)}. Ingen ytterligare justering tillåts.`;
 }
 
+function renderLiveAdjustment() {
+  renderControlLimit();
+  if (!lastStatus?.checked_at || Date.now() / 1000 - lastStatus.checked_at > 180) {
+    $("next-change").textContent = "Avvaktar";
+    $("next-change-why").textContent = "Aktuellt underlag saknas.";
+  } else if (lastStatus.pending_write?.error) {
+    $("next-change").textContent = "Återförsök väntar";
+    $("next-change-why").textContent = `Återläser först; nytt försök tidigast om ${Math.ceil((lastStatus.wait_seconds || 0) / 60)} min om ändringen fortfarande behövs.`;
+  } else if (lastStatus.error_message) {
+    $("next-change").textContent = "Avvaktar";
+    $("next-change-why").textContent = lastStatus.error_message;
+  } else if (lastStatus.pending_write) {
+    $("next-change").textContent = "Inväntar återläsning";
+    $("next-change-why").textContent = "Ändringen är begärd, men har ännu inte bekräftats av Home Assistant.";
+  }
+}
+
 function renderSummary(data) {
   summaryPlan = data;
   const coming = (data.outdoor.forecast || []).filter((point) => point[0] >= data.now && point[0] <= data.now + 86400 && point[1] !== null);
@@ -527,11 +592,12 @@ function renderSummary(data) {
   }
   heroParts.plan = extra;
   renderHeroExtra();
-  renderControlLimit();
+  renderLiveAdjustment();
 }
 
 async function save(config) {
   if (busy) return;
+  settingsRevision++;
   busy = true;
   $("save").disabled = $("save-near").disabled = $("pause").disabled = $("save-target").disabled = true;
   $("settings-save-status").textContent = "Sparar ändringar…";
@@ -1450,8 +1516,11 @@ async function init() {
   try {
     [settings, entities] = await Promise.all([api("settings"), api("entities")]);
     entities.sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    const saved = structuredClone(settings);
     await findPump();
-    renderSettings();
+    const discovered = settings;
+    settings = saved;
+    renderSettings(discovered);
     await refreshAreas();
     $("save").disabled = $("save-near").disabled = $("pause").disabled = false;
     $("notice").hidden = true;

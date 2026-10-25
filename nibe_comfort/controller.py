@@ -671,12 +671,12 @@ class Controller:
         return peers
 
     def settings(self):
-        with self.lock:
-            return copy.deepcopy(self.config)
+        # Published config/status objects are replaced, never edited in place.
+        # Readers must not wait behind network calls made under the control lock.
+        return copy.deepcopy(self.config)
 
     def snapshot(self):
-        with self.lock:
-            return copy.deepcopy(self.status)
+        return copy.deepcopy(self.status)
 
     def save(self, config):
         config = validate(config)
@@ -716,22 +716,22 @@ class Controller:
                     self.events.add("thermostat_resumed", "Giltiga termostatvärden igen.", entity_id=key)
                     state.pop("last_error")
                     atomic_json(self.thermostat_path, self.thermostats)
-                if state.get("pending"):
-                    if abs(setpoint - state["value"]) < 1e-6:
-                        self.events.add("thermostat_observed", "Termostatens nya börvärde återläst.",
-                                        entity_id=key, value=setpoint, request_id=state["request_id"])
-                        state.update(pending=False, outcome="confirmed")
-                        atomic_json(self.thermostat_path, self.thermostats)
-                    elif now - state["attempted_at"] >= 900:
-                        self.events.add("thermostat_unconfirmed", "Termostatens ändring kunde inte bekräftas. Kontrollera i Home Assistant.",
-                                        entity_id=key, value=state["value"], request_id=state["request_id"])
-                        state.update(pending=False, outcome="unconfirmed")
-                        atomic_json(self.thermostat_path, self.thermostats)
-                    else:
-                        row["message"] = "Ändring skickad; väntar på återläsning."
-                        if state.get("outcome") == "failed":
-                            row["error"] = "Serviceanropet misslyckades; kan ändå ha tagits emot. Väntar på återläsning."
-                        continue
+                awaiting = state.get("pending") or state.get("outcome") == "unconfirmed"
+                if awaiting and abs(setpoint - state["value"]) < 1e-6:
+                    self.events.add("thermostat_observed", "Termostatens nya börvärde återläst.",
+                                    entity_id=key, value=setpoint, request_id=state["request_id"])
+                    state.update(pending=False, outcome="confirmed")
+                    atomic_json(self.thermostat_path, self.thermostats)
+                elif state.get("pending") and now - state["attempted_at"] >= 900:
+                    self.events.add("thermostat_unconfirmed", "Termostatens ändring kunde inte bekräftas. Återläser före eventuellt nytt försök.",
+                                    entity_id=key, value=state["value"], request_id=state["request_id"])
+                    state.update(pending=False, outcome="unconfirmed")
+                    atomic_json(self.thermostat_path, self.thermostats)
+                elif state.get("pending"):
+                    row["message"] = "Ändring skickad; väntar på återläsning."
+                    if state.get("outcome") == "failed":
+                        row["error"] = "Serviceanropet misslyckades; kan ändå ha tagits emot. Väntar på återläsning."
+                    continue
                 if state.get("outcome") in ("failed", "unconfirmed"):
                     row["error"] = "Senaste ändringen kunde inte bekräftas. Kontrollera termostaten i Home Assistant."
                 if current <= self.config["target_temperature"] + 0.2:
@@ -750,18 +750,29 @@ class Controller:
                     row["message"] = "Väntar: automatiken är avstängd eller pumptest pågår."
                     continue
                 remaining = max(0, 1800 - (now - state.get("attempted_at", 0)))
-                if state.get("latched"):
+                retry = state.get("outcome") in ("failed", "unconfirmed")
+                if retry and state.get("latched") and (
+                    state.get("previous") != setpoint or state.get("value") != target
+                ):
+                    row["message"] = "Inget återförsök: börvärdet eller målet har ändrats, eller tidigare börvärde saknas. Kontrollera termostaten."
+                    continue
+                if state.get("latched") and not retry:
                     row["message"] = "Redan begränsad under denna varma period; väntar tills rummet svalnat."
                     continue
                 if remaining > 0:
-                    row["message"] = f"Väntar {math.ceil(remaining / 60)} min: minsta intervall 30 min från senaste styrförsök."
+                    row["message"] = (
+                        f"Nytt försök tidigast om {math.ceil(remaining / 60)} min; återläser först."
+                        if retry else
+                        f"Väntar {math.ceil(remaining / 60)} min: minsta intervall 30 min från senaste styrförsök."
+                    )
                     continue
                 request_id = self.events.add("thermostat_attempt", "Begränsar övertemperatur: sätter termostatens börvärde till rumsmålet.",
                                             entity_id=key, previous=setpoint, value=target, current=current,
+                                            retry_of=state.get("request_id") if retry else None,
                                             target_temperature=self.config["target_temperature"],
                                             reported_step=states[key]["attributes"].get("target_temp_step"),
                                             unit=states[key]["attributes"]["temperature_unit"])
-                state = {"attempted_at": now, "value": target, "request_id": request_id,
+                state = {"attempted_at": now, "value": target, "previous": setpoint, "request_id": request_id,
                          "latched": True, "pending": True, "outcome": "sent"}
                 self.thermostats[key] = state
                 atomic_json(self.thermostat_path, self.thermostats)
@@ -775,6 +786,7 @@ class Controller:
                     raise
                 self.events.add("thermostat_sent", "Home Assistant accepterade termostatändringen; inväntar återläsning.",
                                 entity_id=key, request_id=request_id, value=target)
+                row["error"] = None
                 row["message"] = "Ändring skickad; väntar på återläsning."
             except ControlError as exc:
                 row["error"] = str(exc)
@@ -974,8 +986,10 @@ class Controller:
         with self.lock:
             now = time.time()
             readings = {}
+            result = {}
             try:
                 entities = self.ha.states()
+                now = time.time()
                 peers = self.peers()
                 readings = current_readings(self.config, entities, now, peers)
                 self.test_step(entities, now)
@@ -990,10 +1004,13 @@ class Controller:
                 remaining = max(0, self.config["min_interval_minutes"] * 60 - (now - self.last_write))
                 result.update(
                     error_message=None, checked_at=now, enabled=self.config["enabled"],
+                    settings=copy.deepcopy(self.config),
                     wait_seconds=math.ceil(remaining),
                     message="Övervakning: inga ändringar skickas.",
                 )
                 testing = bool(self.test and self.test["phase"] in ("running", "restoring"))
+                self.status = {**copy.deepcopy(result), "message": "Avläst. Kontrollerar styrning och återläsning.",
+                               "control_in_progress": True}
                 result["thermostat_control"] = self.thermostat_step(entities, now, peers, testing)
                 if testing:
                     result["message"] = "Test av styrningen pågår: automatiken väntar tills testet är klart."
@@ -1029,19 +1046,28 @@ class Controller:
                             try:
                                 self.ha.set_offset(self.config["offset_entity"], result["next_offset"])
                             except ControlError as exc:
+                                pending["error"] = str(exc)
+                                atomic_json(self.state_path, {"last_attempt": now, "pending": pending})
                                 self.events.add("write_failed", "Skrivförsöket misslyckades; pumpen kan ändå ha tagit emot det.", request_id=request_id, error=str(exc))
                                 raise
                             self.events.add("write_sent", "Home Assistant accepterade serviceanropet; inväntar återläsning.", request_id=request_id)
                             result["message"] = "Ändring skickad till Home Assistant; inväntar återläsning."
                             result["wait_seconds"] = math.ceil(self.config["min_interval_minutes"] * 60)
+                if self.pending:
+                    result["pending_write"] = copy.deepcopy(self.pending)
+                    if self.pending.get("error"):
+                        result["message"] = "Tidigare styrförsök misslyckades. Återläser; nytt försök efter minsta ändringsintervall om ändringen fortfarande behövs."
                 self.status = result
             except ControlError as exc:
                 if self.last_error != str(exc):
                     self.events.add("paused", "Styrningen pausad på grund av fel.", error=str(exc))
                     self.last_error = str(exc)
                 self.status = {
-                    **readings,
+                    **result, **readings,
                     "error_message": str(exc), "checked_at": now,
+                    "settings": copy.deepcopy(self.config),
+                    "pending_write": copy.deepcopy(self.pending),
+                    "wait_seconds": math.ceil(max(0, self.config["min_interval_minutes"] * 60 - (time.time() - self.last_write))),
                     "enabled": self.config["enabled"],
                     "message": "Styrningen pausad: inga nya ändringar skickas.",
                 }

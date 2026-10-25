@@ -50,11 +50,18 @@ justering behövs. Detta är förskjutningen, inte numret på pumpens grundkurva
 Därunder visas elpriset just nu.
 
 Status och aktuella temperaturer hämtas automatiskt var 15:e sekund.
+Sparade inställningar hämtas samtidigt, men ett långsamt inställningsanrop
+blockerar inte temperaturerna. Ändras målet i en annan flik följer visningen
+med. Egna osparade ändringar ligger kvar och markeras som osparade; de används
+inte av automatiken förrän du sparar. Ändrar du rum, prioritering eller
+markeringen närmast pumpen hålls dessa osparade rumsval ihop.
 Styrloopen läser Home Assistant ungefär varje minut. När du återvänder till
 appen eller får tillbaka nätverket hämtas status och översikt direkt.
 Giltiga temperaturer visas även om ett annat mätvärde pausar styrningen;
 saknade eller gamla värden visas som **—**, inte som aktuella. Kontaktfel
 och en avläsning som är äldre än tre minuter markeras tydligt.
+Status och sparade inställningar kan läsas även medan ett styranrop väntar
+på Home Assistant. Kontaktfel återhämtas automatiskt vid kommande hämtningar.
 
 Längre ner finns värmeplanen med grafer, husmodellen (*Ditt hus lär sig*),
 varmvatten, temperaturhistorik och pumpens drift.
@@ -245,8 +252,8 @@ osparade fält, sparresultat och fel. **Spara ändringar** använder samma
 validering och bekräftelser som knappen längst ner. Ändringar sparas inte
 automatiskt.
 
-Det görs högst ett försök per varm period, med minst **30 minuter**
-mellan försök. Efter omstart återläses värden och återstående tid räknas från
+En bekräftad begränsning görs högst en gång per varm period, med minst
+**30 minuter** mellan försök. Efter omstart återläses värden och återstående tid räknas från
 senaste sparade försök för just termostaten; ingen extra startväntan läggs på.
 Finns inget tidigare försök kan första giltiga avläsningen leda till ändring.
 En ny varm period tillåts först efter att
@@ -255,8 +262,15 @@ Om du manuellt höjer börvärdet under samma varma period sänks det inte igen.
 Egna scheman kan ändra börvärdet; undvik konkurrerande automationer.
 
 Försöket sparas i `/data/thermostat-state.json` före serviceanropet. En
-timeout kan ändå ha nått termostaten och upprepas inte automatiskt under
-samma varma period. Status och ändringslogg visar begäran, accepterat anrop,
+timeout kan ändå ha nått termostaten, så värdet återläses först. Om ett
+försök misslyckas eller inte bekräftas kan det upprepas efter 30 minuter,
+men bara om rummet fortfarande behöver begränsas, börvärdet är samma som
+före försöket och rumsmålet är oförändrat. Ändrade börvärden eller mål
+spelas inte över av ett återförsök. Äldre sparade försök utan känt tidigare
+börvärde upprepas inte inom samma varma period; detta visas i rumsstatus.
+En sen återläsning kan fortfarande bekräfta ändringen och stoppar återförsök.
+Alla vanliga kontroller, avstängning och pumptest gäller även vid återförsök.
+Status och ändringslogg visar begäran, accepterat anrop,
 återläst börvärde och utebliven bekräftelse efter 15 minuter. En HA-återläsning
 bekräftar bara integrationens rapport, inte ventilens fysiska läge eller flöde.
 
@@ -514,6 +528,9 @@ faktisk besparingsberäkning ingår inte.
   första avläsning leda till ändring. Huvudstopp, pumptest och alla vanliga
   kontroller gäller fortfarande. Tidpunkten sparas **innan** HA-anropet:
   även timeout ger väntetid eftersom pumpen kan ha tagit emot ändringen.
+  Misslyckade eller obekräftade pumpförsök följs upp genom återläsning.
+  När intervallet gått ut räknas behovet om från aktuella värden och
+  inställningar; bara en fortfarande nödvändig ändring skickas igen.
   Återläst börvärde eller förskjutning tar inte bort intervallet: det visar
   integrationens rapport, inte att huset redan hunnit reagera på värmen.
 - Ett lyckat serviceanrop betyder bara att Home Assistant accepterat anropet.

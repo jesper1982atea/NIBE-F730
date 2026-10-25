@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## 0.2.25
+
+- Misslyckade eller obekräftade termostatförsök kan upprepas efter ordinarie
+  30 minuter. Värden återläses först; ändrade börvärden och mål skrivs inte
+  över av återförsök. Bekräftade begränsningar behåller spärren per varm period.
+- Pumpens återläsning och återförsök efter det inställda ändringsintervallet
+  visas tydligare, även efter kommunikationsfel. Behovet räknas om, inte
+  gamla kommandon. Varningen för varma rum behålls utan ny spärr.
+- Temperaturer och sparade inställningar uppdateras automatiskt utan att
+  fastna bakom långsamma styranrop. Mål från andra flikar synkas utan att
+  egna osparade ändringar försvinner. Kontaktfel återhämtas automatiskt och
+  inaktuella avläsningar visas inte som aktuella.
+
 ## 0.2.24
 
 - Rumsöversikt och temperaturhistorik grupperas efter Home Assistants

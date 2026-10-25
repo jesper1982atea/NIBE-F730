@@ -2,6 +2,7 @@ import json
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 from controller import ControlError, Controller, HomeAssistant, atomic_json
@@ -125,11 +126,77 @@ class ThermostatTests(unittest.TestCase):
         self.assertFalse(restored.thermostats["climate.living"]["pending"])
         self.assertTrue(restored.thermostats["climate.living"]["latched"])
 
-    def test_accepted_but_unconfirmed_write_does_not_repeat(self):
+    def test_unconfirmed_write_retries_after_interval(self):
         self.step()
         self.assertIsNotNone(self.step(900)["error"])
         self.assertIn("thermostat_unconfirmed", [e["kind"] for e in self.controller.events.recent()])
-        self.step(3600)
+        self.step(1799)
+        self.ha.set_thermostat.assert_called_once()
+        row = self.step(1800)
+        self.assertIsNone(row["error"])
+        self.assertEqual(self.ha.set_thermostat.call_count, 2)
+        self.assertEqual(self.controller.thermostats["climate.living"]["attempted_at"], self.now + 1800)
+
+    def test_failed_retry_survives_restart_and_uses_readback(self):
+        self.ha.set_thermostat.side_effect = ControlError("Timeout")
+        self.step()
+        original = self.controller.thermostats["climate.living"]["request_id"]
+        restored = Controller(self.ha, self.temp.name)
+        restored.thermostat_step(self.ha.states(), self.now + 1799, {}, False)
+        self.ha.set_thermostat.assert_called_once()
+        self.ha.set_thermostat.side_effect = None
+        restored.thermostat_step(self.ha.states(), self.now + 1800, {}, False)
+        self.assertEqual(self.ha.set_thermostat.call_count, 2)
+        attempts = [e for e in restored.events.recent() if e["kind"] == "thermostat_attempt"]
+        self.assertEqual(attempts[0]["details"]["retry_of"], original)
+        self.room["attributes"]["temperature"] = 22
+        restored.thermostat_step(self.ha.states(), self.now + 1860, {}, False)
+        self.assertEqual(restored.thermostats["climate.living"]["outcome"], "confirmed")
+
+    def test_failure_that_was_received_does_not_retry_even_after_restart(self):
+        self.ha.set_thermostat.side_effect = ControlError("Timeout")
+        self.step()
+        restored = Controller(self.ha, self.temp.name)
+        self.room["attributes"]["temperature"] = 22
+        restored.thermostat_step(self.ha.states(), self.now + 1800, {}, False)
+        self.ha.set_thermostat.assert_called_once()
+        self.assertEqual(restored.thermostats["climate.living"]["outcome"], "confirmed")
+
+    def test_late_confirmation_clears_failure_and_keeps_warm_period_latch(self):
+        self.step()
+        self.step(900)
+        self.room["attributes"]["temperature"] = 22
+        row = self.step(1200)
+        self.assertIsNone(row["error"])
+        self.assertEqual(self.controller.thermostats["climate.living"]["outcome"], "confirmed")
+        self.room["attributes"]["temperature"] = 25
+        self.step(1800)
+        self.ha.set_thermostat.assert_called_once()
+
+    def test_retry_never_overrides_changed_setpoint_or_goal(self):
+        self.step()
+        for changes in ({"temperature": 24}, {"temperature": 21}):
+            self.room["attributes"].update(changes)
+            self.step(1800)
+        self.room["attributes"]["temperature"] = 25
+        self.controller.config["target_temperature"] = 21
+        self.step(1801)
+        self.ha.set_thermostat.assert_called_once()
+
+    def test_retry_requires_valid_fresh_room_and_enabled_control(self):
+        self.step()
+        self.controller.config["enabled"] = False
+        self.step(1800)
+        self.controller.config["enabled"] = True
+        self.step(1801, testing=True)
+        self.room["state"] = "unavailable"
+        self.step(1802)
+        self.room["state"] = "heat"
+        self.room["attributes"]["current_temperature"] = 22.2
+        self.step(1803)
+        self.room["attributes"]["current_temperature"] = 22.5
+        self.room["last_reported"] = (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
+        self.step(1804)
         self.ha.set_thermostat.assert_called_once()
 
     def test_persistence_before_service_and_disk_failure(self):
