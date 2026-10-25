@@ -28,6 +28,12 @@ const entities = [
   { entity_id: "sensor.nibe_f730_heating_offset_smart_price_adaption_extra_long", name: "NIBE F730 Heating offset smart price adaption", state: "0", unit: "°C", device_class: "temperature" },
   { entity_id: "weather.smhi_home", name: "SMHI hemma", state: "cloudy" },
 ];
+const areaMap = {
+  "sensor.living": { area_id: "living", area_name: "Vardagsrum" },
+  [thermostat]: { area_id: "allrum", area_name: "Allrum" },
+  "climate.living": { area_id: "living", area_name: "Vardagsrum" },
+  "climate.lk_badrum_overvaningen_thermostat_with_a_very_long_identifier": { area_id: "bathroom", area_name: "Badrum" },
+};
 const history = () => ({
   start: now - 86400, end: now, target: settings.target_temperature,
   series: settings.room_sensors.map((id, i) => ({
@@ -78,6 +84,10 @@ const server = createServer(async (request, response) => {
     indoor: 22, outdoor: 10, current_offset: 3, desired_offset: 1.5, next_offset: 2,
     enabled: settings.enabled, checked_at: now, wait_seconds: 1800,
     message: "Väntar på nästa tillåtna ändring.", contributions: { room: -1.5, weather: 0, price: 0 },
+    house_indoor: 22, warm_rooms: [], rooms: settings.room_sensors.map((id) => ({
+      entity_id: id, name: entities.find((entity) => entity.entity_id === id)?.name || id,
+      temperature: 22, priority: settings.priority_sensors.includes(id),
+    })),
   };
   else if (path === "/api/version") data = { version: "0.2.8" };
   else if (path === "/api/test" && request.method === "PUT") {
@@ -130,7 +140,8 @@ const server = createServer(async (request, response) => {
   else if (path === "/api/history") {
     if (failHistory) { response.writeHead(502); response.end('{"error":"Recorder saknas"}'); return; }
     data = history();
-  } else if (path === "/api/forecast") data = {
+  } else if (path === "/api/areas") data = areaMap;
+  else if (path === "/api/forecast") data = {
     name: "SMHI hemma", entity_id: "weather.smhi_home", type: "hourly", fetched_at: now,
     note: "Prognosen ändrar inte värmestyrningen.",
     points: Array.from({ length: 25 }, (_, i) => ({ timestamp: now + i * 3600, temperature: 10 + Math.cos(i / 3) * 3 })),
@@ -445,6 +456,9 @@ try {
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await page.waitForFunction(() => document.getElementById("hero-offset").textContent === "3");
   assert.equal(await page.locator("#indoor").textContent(), "22");
+  assert.match(await page.locator("#room-impact-list").textContent(), /Vardagsrum/);
+  assert.ok(await page.locator("#room-impact-list .room-area-group").count() >= 1);
+  assert.equal(await page.locator("#room_sensors .room-choice-area").filter({ hasText: "Home Assistant-rum: Vardagsrum" }).count(), 1);
   assert.equal(await page.locator("#next-change").textContent(), "Ingen behövs");
   assert.match(await page.locator("#updated").textContent(), /Uppdateras automatiskt/);
   failHistory = true;
@@ -482,7 +496,12 @@ try {
     series: priorityConfig.room_sensors.map((id) => ({
       entity_id: id, name: id, points: [[now - 7200, id === "sensor.living" ? 20 : id === thermostat ? 22 : 24], [now, id === "sensor.living" ? 21 : id === thermostat ? 23 : 25]],
     })),
+    changes: [{ id: 501, timestamp: now - 3600, kind: "thermostat", entity_id: thermostat,
+      status: "confirmed", value: 22, previous: 23, indoor: 23, target: 22 }],
   } }));
+  await priorityPage.route("**/api/areas", (route) => route.fulfill({ json: Object.fromEntries(
+    priorityConfig.room_sensors.map((id) => [id, areaMap[id] || { area_id: null, area_name: null }]),
+  ) }));
   await priorityPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await priorityPage.locator("#room-impact-list .room-impact-row").first().waitFor({ state: "attached" });
   assert.equal(await priorityPage.locator("#indoor").textContent(), "23");
@@ -500,6 +519,11 @@ try {
   await priorityPage.waitForFunction(() => !document.getElementById("history-status").textContent.startsWith("Hämtar"));
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /\+1 °C senaste timmen/, await priorityPage.locator("#history-status").textContent());
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /Vardagsrum · prioriterat.*21 °C · 1° under målet/);
+  assert.equal(await priorityPage.locator("#room-impact-list .room-area-group").count(), 3);
+  assert.match(await priorityPage.locator("#history-area-status").textContent(), /rumstilldelningen i Home Assistant/);
+  const allrumCard = priorityPage.locator(".thermostat-history").filter({ hasText: "Allrum" });
+  assert.match(await allrumCard.textContent(), /LK Allrum.*Övertemperaturbegränsning/);
+  assert.match(await allrumCard.locator(".room-history-changes").textContent(), /Övertemperaturbegränsning/);
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /25 °C · 3° över målet/);
   assert.match(await priorityPage.locator("#comfort-advice").textContent(), /Vardagsrum.*inställd på 20 °C.*begränsa värmen/);
   assert.match(await priorityPage.locator("#comfort-advice").textContent(), /Andra rum är redan minst 2 °C/);
@@ -613,8 +637,8 @@ try {
   await thermostatPage.waitForFunction(() => document.querySelectorAll("#thermostat-charts svg").length === 2);
   await thermostatPage.locator("#thermostat-charts").screenshot({ path: `${artifacts}/thermostat-history.png` });
   assert.equal(await thermostatPage.locator("#temperature-chart .chart-event").count(), 3);
-  assert.equal(await thermostatPage.locator(".thermostat-history").first().locator(".chart-event").count(), 2);
-  assert.equal(await thermostatPage.locator(".thermostat-history").last().locator(".chart-event").count(), 2);
+  assert.equal(await thermostatPage.locator(".thermostat-history").first().locator(".chart-event").count(), 1);
+  assert.equal(await thermostatPage.locator(".thermostat-history").last().locator(".chart-event").count(), 1);
   for (const svg of await thermostatPage.locator("#thermostat-charts svg").all()) {
     const expected = await svg.evaluate((element) => Math.round(element.parentElement.clientWidth));
     const width = Number((await svg.getAttribute("viewBox")).split(" ")[2]);

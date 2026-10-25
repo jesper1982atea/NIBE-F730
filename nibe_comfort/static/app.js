@@ -13,6 +13,8 @@ const advanced = [
 ];
 let settings;
 let entities = [];
+let entityAreas = {};
+let areaError = "";
 let busy = false;
 let discovery = null;
 let discoveryError = "";
@@ -130,7 +132,9 @@ function renderSettings() {
     text.append(title, measured, detail);
     const id = document.createElement("small");
     id.textContent = entity.entity_id;
-    text.append(id);
+    const area = document.createElement("small");
+    area.className = "room-choice-area";
+    text.append(id, area);
     label.append(input, text);
     $("room_sensors").append(label);
   }
@@ -249,26 +253,38 @@ function roomTrend(room) {
 function renderRoomImpact() {
   $("indoor-label").textContent = settings?.priority_sensors.length ? "Prioriterade rum nu" : "Inne nu";
   $("house-indoor").textContent = displayNumber(lastStatus?.house_indoor);
-  $("room-impact-list").replaceChildren(...(lastStatus?.rooms || []).map((room) => {
-    const row = document.createElement("div");
-    row.className = "room-impact-row";
-    const name = document.createElement("strong");
-    name.textContent = `${room.name}${room.priority ? " · prioriterat" : ""}${room.nearest ? " · närmast pumpen" : ""}`;
-    const value = document.createElement("span");
-    const diff = room.temperature == null ? null : room.temperature - settings.target_temperature;
-    value.textContent = `${displayNumber(room.temperature)} °C${diff == null ? "" : Math.abs(diff) < 0.1 ? " · vid målet" : ` · ${displayNumber(Math.abs(diff))}° ${diff > 0 ? "över" : "under"} målet`}`;
-    const trend = document.createElement("small");
-    trend.textContent = roomTrend(room);
-    row.classList.toggle("too-warm", lastStatus.warm_rooms?.includes(room.entity_id) || false);
-    row.append(name, value, trend);
-    const thermostat = document.createElement("small");
-    const control = lastStatus?.thermostat_control?.rooms.find((entry) => entry.entity_id === room.entity_id);
-    thermostat.textContent = [
-      room.setpoint != null ? `Termostat inställd på ${displayNumber(room.setpoint)} °C` : room.thermostat_error || "",
-      [control?.error || control?.message || "", control?.warning || ""].filter(Boolean).join(" "),
-    ].filter(Boolean).join(" · ");
-    if (thermostat.textContent) row.append(thermostat);
-    return row;
+  const rooms = lastStatus?.rooms || [];
+  const groups = groupRooms(rooms, (room) => room.entity_id);
+  $("room-area-status").textContent = areaError
+    ? `Home Assistant-rummens namn kunde inte läsas: ${areaError}. Visar givarna utan rumsgruppering.`
+    : "Rumsnamnen hämtas från områdena i Home Assistant.";
+  $("room-impact-list").replaceChildren(...[...groups.values()].map(({ name, rooms: members }) => {
+    const group = document.createElement("section");
+    group.className = "room-area-group";
+    const heading = document.createElement("h3");
+    heading.textContent = name;
+    group.append(heading, ...members.map((room) => {
+      const row = document.createElement("div");
+      row.className = "room-impact-row";
+      const title = document.createElement("strong");
+      title.textContent = `${room.name}${room.priority ? " · prioriterat" : ""}${room.nearest ? " · närmast pumpen" : ""}`;
+      const value = document.createElement("span");
+      const diff = room.temperature == null ? null : room.temperature - settings.target_temperature;
+      value.textContent = `${displayNumber(room.temperature)} °C${diff == null ? "" : Math.abs(diff) < 0.1 ? " · vid målet" : ` · ${displayNumber(Math.abs(diff))}° ${diff > 0 ? "över" : "under"} målet`}`;
+      const trend = document.createElement("small");
+      trend.textContent = roomTrend(room);
+      row.classList.toggle("too-warm", lastStatus.warm_rooms?.includes(room.entity_id) || false);
+      row.append(title, value, trend);
+      const thermostat = document.createElement("small");
+      const control = lastStatus?.thermostat_control?.rooms.find((entry) => entry.entity_id === room.entity_id);
+      thermostat.textContent = [
+        room.setpoint != null ? `Termostat inställd på ${displayNumber(room.setpoint)} °C` : room.thermostat_error || "",
+        [control?.error || control?.message || "", control?.warning || ""].filter(Boolean).join(" "),
+      ].filter(Boolean).join(" · ");
+      if (thermostat.textContent) row.append(thermostat);
+      return row;
+    }));
+    return group;
   }));
   const warm = (lastStatus?.rooms || []).filter((room) => lastStatus.warm_rooms?.includes(room.entity_id));
   $("warm-room-warning").hidden = !warm.length;
@@ -291,6 +307,27 @@ function renderRoomImpact() {
     li.textContent = `${entities.find((e) => e.entity_id === room.entity_id)?.name || room.entity_id}: ${room.error || room.message} ${room.warning || ""}`;
     return li;
   }));
+}
+
+function groupRooms(rooms, entityId) {
+  const groups = new Map();
+  for (const room of rooms) {
+    const area = entityAreas[entityId(room)] || {};
+    const key = area.area_id || area.area_name || "__unassigned__";
+    if (!groups.has(key)) groups.set(key, { name: area.area_name || "Inget område i Home Assistant", rooms: [] });
+    groups.get(key).rooms.push(room);
+  }
+  return groups;
+}
+
+function renderRoomPickerAreas() {
+  for (const label of $("room_sensors").querySelectorAll(".room-choice")) {
+    const id = label.querySelector("input").value;
+    const area = label.querySelector(".room-choice-area");
+    area.textContent = areaError ? "Home Assistant-rum kunde inte läsas"
+      : entityAreas[id]?.area_name ? `Home Assistant-rum: ${entityAreas[id].area_name}`
+        : "Inget område i Home Assistant";
+  }
 }
 
 function renderComfort() {
@@ -779,33 +816,64 @@ function renderHistory() {
     item.textContent = historyChangeText(change);
     return item;
   }));
+  $("history-area-status").textContent = areaError
+    ? `Home Assistant-rummens namn kunde inte läsas: ${areaError}. Historiken visas i en gemensam grupp.`
+    : "Varje kort följer rumstilldelningen i Home Assistant. Kurvändringar påverkar hela huset och räknas inte som en ändring i ett enskilt rum.";
   $("thermostat-charts").replaceChildren();
-  const charts = [];
-  for (const line of (single ? [single] : lines).filter((entry) => entry.kind === "climate")) {
+  const roomGroups = groupRooms(single ? [single] : lines, (line) => line.entity_id);
+  for (const { name, rooms: members } of roomGroups.values()) {
     const card = document.createElement("section");
     card.className = "thermostat-history";
     const title = document.createElement("h3");
-    title.textContent = line.name;
+    title.textContent = name;
+    const summary = document.createElement("p");
+    summary.className = "room-history-summary";
+    summary.textContent = members.map((line) => {
+      const readings = line.points.filter((point) => point[1] !== null);
+      if (!readings.length) return `${line.name}: ingen temperaturhistorik`;
+      const first = readings[0][1], current = readings.at(-1)[1];
+      const change = current - first;
+      return `${line.name}: ${displayNumber(current)} °C nu · ${change >= 0 ? "+" : ""}${displayNumber(change)} °C under dygnet`;
+    }).join(" · ");
     const chart = document.createElement("div");
     chart.className = "chart";
     chart.setAttribute("role", "img");
-    chart.setAttribute("aria-label", `${line.name}: uppmätt temperatur, börvärde och styrbegäranden senaste dygnet`);
-    const roomSeries = [
-      { name: "Uppmätt °C", points: line.points, until: data.end, color: 0 },
-      { name: "Termostatens börvärde °C", points: line.setpoints || [], until: data.end, color: 1, dashed: true },
-    ];
+    chart.setAttribute("aria-label", `${name}: rumstemperaturer och termostatbörvärden senaste dygnet`);
+    const roomSeries = members.flatMap((line, index) => [
+      { name: `${line.name} · uppmätt °C`, points: line.points, until: data.end, color: index },
+      ...(line.kind === "climate" ? [{
+        name: `${line.name} · termostat °C`, points: line.setpoints || [], until: data.end, color: index, dashed: true,
+      }] : []),
+    ]);
     const roomLegend = document.createElement("div");
     roomLegend.className = "chart-legend";
-    card.append(title, chart, roomLegend);
+    const roomChanges = (data.changes || []).filter((change) => change.kind === "thermostat"
+      && members.some((line) => line.entity_id === change.entity_id));
+    const changeList = document.createElement("ul");
+    changeList.className = "room-history-changes";
+    if (roomChanges.length) {
+      for (const change of roomChanges) {
+        const item = document.createElement("li");
+        item.className = change.status === "confirmed" ? "done-auto" : "done-other";
+        item.textContent = `${clock(change.timestamp)} · ${entities.find((entity) => entity.entity_id === change.entity_id)?.name || change.entity_id}: ${historyChangeText(change)}`;
+        changeList.append(item);
+      }
+    } else {
+      const item = document.createElement("li");
+      item.textContent = "Inga termostatändringar loggade i detta rum under dygnet.";
+      changeList.append(item);
+    }
+    card.append(title, summary, chart, roomLegend, changeList);
     $("thermostat-charts").append(card);
-    charts.push({ chart, roomSeries, line });
     legend(roomLegend, roomSeries);
+    drawChart(chart, roomSeries, { start: data.start, end: data.end, guides: members.length === 1 && members[0].kind === "sensor"
+      ? [{ value: data.target, label: `mål ${displayNumber(data.target)}°` }] : [],
+    markers: historyMarkers(roomChanges) });
   }
-  for (const { chart, roomSeries, line } of charts) {
-    drawChart(chart, roomSeries, { start: data.start, end: data.end,
-      markers: historyMarkers(changes.filter((change) => change.kind === "offset" || change.entity_id === line.entity_id)) });
-  }
-  $("thermostat-charts-title").hidden = charts.length === 0;
+  window.requestAnimationFrame(() => {
+    for (const chart of $("thermostat-charts").querySelectorAll(".chart")) chartRedraws.get(chart)?.();
+  });
+  $("thermostat-charts-title").hidden = roomGroups.size === 0;
   const last = (points) => [...(points || [])].reverse().find((point) => point[1] !== null)?.[1] ?? null;
   const count = lines.reduce((sum, line) => sum + line.points.filter((point) => point[1] !== null).length, 0);
   let status = count
@@ -841,6 +909,7 @@ function renderHistory() {
 async function refreshHistory() {
   $("refresh-history").disabled = true;
   try {
+    await refreshAreas();
     historyData = await api("history");
     renderHistory();
     renderRoomImpact();
@@ -856,6 +925,19 @@ async function refreshHistory() {
     $("history-changes-status").textContent = "Ändringshistoriken är inte tillgänglig.";
     $("history-status").textContent = `Kunde inte hämta historik: ${error.message}`;
   } finally { $("refresh-history").disabled = false; }
+}
+
+async function refreshAreas() {
+  try {
+    entityAreas = await api("areas");
+    areaError = "";
+  } catch (error) {
+    entityAreas = {};
+    areaError = error.message;
+  }
+  renderRoomPickerAreas();
+  if (lastStatus) renderRoomImpact();
+  if (historyData) renderHistory();
 }
 
 async function refreshForecast() {
@@ -1370,6 +1452,7 @@ async function init() {
     entities.sort((a, b) => a.name.localeCompare(b.name, "sv"));
     await findPump();
     renderSettings();
+    await refreshAreas();
     $("save").disabled = $("save-near").disabled = $("pause").disabled = false;
     $("notice").hidden = true;
   } catch (error) {

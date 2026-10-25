@@ -1,5 +1,5 @@
 name: NIBE Comfort
-version: "0.2.23"
+version: "0.2.24"
 slug: nibe_comfort
 stage: experimental
 description: Enkel temperaturstyrning med rumsgivare, väder och elpris via myUplink

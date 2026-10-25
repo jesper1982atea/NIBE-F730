@@ -184,6 +184,21 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("Authorization", json.dumps(entities))
         self.assertNotIn("last_updated", entities[0])
 
+    def test_area_endpoint_maps_only_selected_rooms_and_requires_auth(self):
+        cfg = config(room_sensors=["sensor.living"])
+        self.controller.save(cfg)
+        expected = {"sensor.living": {"area_id": "living", "area_name": "Vardagsrum"}}
+        self.ha.entity_areas.return_value = expected
+        self.assertEqual(self.request("/api/areas"), (200, expected))
+        self.ha.entity_areas.assert_called_once_with(["sensor.living"])
+        self.assertEqual(self.request("/api/areas", token=False)[0], 401)
+
+    def test_area_endpoint_surfaces_home_assistant_lookup_failure(self):
+        self.ha.entity_areas.side_effect = ControlError("Områdesuppslag misslyckades")
+        status, body = self.request("/api/areas")
+        self.assertEqual(status, 502)
+        self.assertIn("Områdesuppslag misslyckades", body["error"])
+
     def test_ha_failure_has_explicit_response(self):
         self.ha.states.side_effect = ControlError("Ingen kontakt")
         status, body = self.request("/api/entities")

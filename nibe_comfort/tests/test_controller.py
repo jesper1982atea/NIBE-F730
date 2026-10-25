@@ -118,6 +118,24 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn("device_entities(did)", template)
         self.assertIn("did not in ns.items", template)
 
+    def test_client_resolves_entity_and_device_area_assignments(self):
+        ha = HomeAssistant("token")
+        ha.request = Mock(return_value=[
+            {"entity_id": "sensor.living", "area_id": "area_living", "area_name": "Vardagsrum"},
+            {"entity_id": "climate.living", "area_id": "area_living", "area_name": "Vardagsrum"},
+        ])
+        result = ha.entity_areas(["sensor.living", "climate.living"])
+        self.assertEqual(result["sensor.living"], {"area_id": "area_living", "area_name": "Vardagsrum"})
+        template = ha.request.call_args.args[1]["template"]
+        self.assertIn("area_id(eid)", template)
+        self.assertIn("area_name(aid)", template)
+        for malformed in ([None], [{"entity_id": "sensor.other", "area_id": None, "area_name": None}],
+                          [{"entity_id": "sensor.living", "area_id": 3, "area_name": "Fel"}]):
+            with self.subTest(malformed=malformed):
+                ha.request.return_value = malformed
+                with self.assertRaises(ControlError):
+                    ha.entity_areas(["sensor.living"])
+
 
 class ValidationTests(unittest.TestCase):
     def test_defaults_are_monitor_only(self):
