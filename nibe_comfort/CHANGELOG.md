@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 0.2.23
+
+- Temperaturmålet märks nu tydligt som mål för prioriterade rum när sådana
+  valts. Texten visar att målet gäller deras snitt; utan prioritering gäller
+  det snittet av alla valda rum.
+- Förtydligar måltexten direkt i rumsväljaren och uppdaterar förklaringen
+  högst upp. Styrningen är oförändrad: prioriterade rum väger lika och
+  kurvförskjutningen påverkar hela huset.
+
 ## 0.2.22
 
 - Ingen extra väntetid enbart för att tillägget startas om eller uppdateras.

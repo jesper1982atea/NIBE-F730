@@ -412,7 +412,16 @@ async function refreshStatus() {
 
 function renderIndoorDiff() {
   const indoor = lastStatus?.indoor, target = settings?.target_temperature;
-  const label = settings?.priority_sensors.length ? "Snitt för prioriterade rum" : "Medel av dina valda rum";
+  const priorities = $("priority_sensors")?.querySelectorAll("input:checked").length
+    ?? settings?.priority_sensors.length ?? 0;
+  const rooms = $("room_sensors")?.querySelectorAll("input:checked").length
+    ?? settings?.room_sensors.length ?? 0;
+  const label = priorities ? "Snitt för prioriterade rum" : "Medel av dina valda rum";
+  $("target-label").textContent = priorities ? "Mål för prioriterade rum · °C" : "Mål för valda rum · °C";
+  $("target-scope").textContent = priorities
+    ? `Målet gäller snittet av ${priorities} ${priorities === 1 ? "prioriterat rum" : "prioriterade rum"}.`
+    : rooms ? `Utan prioritering gäller målet snittet av alla ${rooms} valda rum.`
+      : "Välj prioriterade rum eller rumsgivare för att ange vad målet gäller.";
   if (typeof indoor !== "number" || typeof target !== "number") { $("indoor-diff").textContent = label; return; }
   const diff = indoor - target;
   $("indoor-diff").textContent = `${label} · ` + (Math.abs(diff) < 0.15 ? "Precis som du vill ha det"
@@ -1433,6 +1442,7 @@ async function init() {
     renderPriorityPicker(Array.from($("priority_sensors").querySelectorAll("input:checked"), (input) => input.value));
     renderNearestThermostat($("nearest_thermostat").value);
     filterRoomPicker();
+    renderIndoorDiff();
   });
   $("room-search").addEventListener("input", filterRoomPicker);
   $("show-room-sensors").addEventListener("change", filterRoomPicker);
@@ -1442,7 +1452,10 @@ async function init() {
     }
     $("room_sensors").dispatchEvent(new Event("change", { bubbles: true }));
   });
-  $("priority_sensors").addEventListener("change", limitPriorityPicker);
+  $("priority_sensors").addEventListener("change", () => {
+    limitPriorityPicker();
+    renderIndoorDiff();
+  });
   $("offset_entity").addEventListener("change", entityHints);
   $("outdoor_entity").addEventListener("change", entityHints);
   $("price_entity").addEventListener("change", entityHints);

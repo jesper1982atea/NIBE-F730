@@ -41,12 +41,13 @@
       <div class="now-grid">
         <div class="now-tile"><span id="indoor-label">Inne nu</span><strong><span id="indoor">—</span> °C</strong><small id="indoor-diff">Medel av dina valda rum</small><small>Alla valda givare: <b id="house-indoor">—</b> °C</small></div>
         <div class="now-tile target-tile">
-          <label for="target_temperature">Du vill ha · °C</label>
+          <label id="target-label" for="target_temperature">Mål för valda rum · °C</label>
           <div class="target-control">
             <button type="button" id="target-down" aria-label="Sänk måltemperaturen">−</button>
             <input id="target_temperature" name="target_temperature" form="settings" type="number" min="10" max="30" step="0.1" required>
             <button type="button" id="target-up" aria-label="Höj måltemperaturen">+</button>
           </div>
+          <small id="target-scope">Målet gäller snittet av valda rum.</small>
           <button type="submit" form="settings" id="save-target" hidden>Spara ny temperatur</button>
         </div>
         <div class="now-tile"><span>Ute nu</span><strong><span id="outdoor-now">—</span> °C</strong><small id="outdoor-forecast">Hämtar prognos…</small></div>
@@ -57,7 +58,7 @@
       <details class="disclosure hero-help">
         <summary>Så fungerar värmen · tre saker att känna till</summary>
         <div class="explainer-grid">
-          <div><strong>1. Du väljer ett mål</strong><p>Temperaturen jämförs med snittet i dina valda eller prioriterade rum. Målet är inte samma sak som termostatens börvärde.</p></div>
+          <div><strong>1. Du väljer ett mål</strong><p>Målet gäller snittet av dina prioriterade rum, eller alla valda rum om du inte har valt några. Det är inte samma sak som termostatens börvärde.</p></div>
           <div><strong>2. Pumpen värmer hela huset</strong><p>Kurvförskjutningen höjer eller sänker värmen från pumpen. Ett kurvsteg är inte en grads rumstemperatur. Förändringen märks långsamt.</p></div>
           <div><strong>3. Du ser vad som händer</strong><p>Nästa justering är en plan, inte en garanti. En skickad begäran bekräftas först när Home Assistant läser tillbaka värdet. Övervakningsläge skickar inga nya automatiska ändringar.</p></div>
         </div>
@@ -223,7 +224,7 @@
           <p class="hint" id="room-help">Markera rummen som ska visas. Utan prioriterade givare styr deras gemensamma snitt värmen. Även golvvärme (climate) kan väljas: vi läser uppmätt temperatur, inte termostatens börvärde. Välj inte både en termostat och dess separata givare för samma rum, eftersom rummet då räknas dubbelt.</p>
           <div id="room_sensors" class="room-picker" role="group" aria-describedby="room-help"></div>
           <label for="priority_sensors">Prioriterade rum · valfritt, högst 2 givare</label>
-          <p class="hint" id="priority-help">Välj 1–2 av rummen ovan vars snittemperatur ska nå ditt mål, till exempel vardagsrummet. Övriga rum visas men styr inte. Även de kan bli varmare. Ingen prioritering väljs automatiskt.</p>
+          <p class="hint" id="priority-help">Välj 1–2 av rummen ovan. Temperaturmålet gäller deras snitt (om du väljer två väger de lika); övriga rum visas men styr inte mot målet och kan ändå bli varmare. Ingen prioritering väljs automatiskt.</p>
           <div id="priority_sensors" class="sensor-list" role="group" aria-describedby="priority-help"></div>
           <label for="nearest_thermostat">Termostat närmast värmepumpen</label>
           <select id="nearest_thermostat"><option value="">Inte markerad</option></select>

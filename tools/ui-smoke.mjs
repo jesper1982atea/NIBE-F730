@@ -213,6 +213,8 @@ try {
   // Simple summary first: inside, wanted, outside and next adjustment.
   assert.notEqual(await page.locator("#indoor").textContent(), "—");
   assert.match(await page.locator("#indoor-diff").textContent(), /(under|över) det du vill ha|Precis/);
+  assert.equal(await page.locator("#target-label").textContent(), "Mål för valda rum · °C");
+  assert.match(await page.locator("#target-scope").textContent(), /snittet av alla 1 valda rum/);
   assert.match(await page.locator("#outdoor-now").textContent(), /^\d/);
   assert.match(await page.locator("#outdoor-forecast").textContent(), /Närmaste dygnet .* °C · kallast/);
   assert.match(await page.locator("#next-change").textContent(), /^(kl|i morgon) \d\d:\d\d$/);
@@ -245,6 +247,13 @@ try {
   assert.match(await page.locator("#hero-extra").textContent(), /Varmvatten 50% \(14 min\)/);
   assert.equal(await page.locator("#settings-panel").getAttribute("open"), null, "Configured settings start folded");
   assert.equal(await page.locator("#log-panel").getAttribute("open"), null);
+  await page.locator("#settings-panel > summary").click();
+  await page.locator("#priority_sensors input").check();
+  assert.equal(await page.locator("#target-label").textContent(), "Mål för prioriterade rum · °C");
+  assert.match(await page.locator("#target-scope").textContent(), /snittet av 1 prioriterat rum/);
+  await page.locator("#priority_sensors input").uncheck();
+  assert.equal(await page.locator("#target-label").textContent(), "Mål för valda rum · °C");
+  await page.locator("#settings-panel > summary").click();
   assert.equal(await page.locator("#save-target").isVisible(), false);
   await page.locator("#target-up").click();
   assert.equal(await page.locator("#save-target").isVisible(), true);
