@@ -48,6 +48,7 @@
             <button type="button" id="target-up" aria-label="Höj måltemperaturen">+</button>
           </div>
           <small id="target-scope">Målet gäller snittet av valda rum.</small>
+          <small id="settings-sync-status" role="status">Hämtar sparat temperaturmål…</small>
           <button type="submit" form="settings" id="save-target" hidden>Spara ny temperatur</button>
         </div>
         <div class="now-tile"><span>Ute nu</span><strong><span id="outdoor-now">—</span> °C</strong><small id="outdoor-forecast">Hämtar prognos…</small></div>
@@ -236,7 +237,7 @@
           <details class="disclosure">
             <summary>Så fungerar termostatbegränsningen · krav och skydd</summary>
           <p class="hint">Steglängd kontrolleras när den rapporteras. Om den saknas skickas målet utan avrundning inom termostatens gränser; exakt återläsning krävs fortfarande.</p>
-          <p class="hint">Av från början. Kräver att alla valda rum är termostater i värmeläge (heat), att huvudautomatiken är på och att målet passar termostaternas steglängd. Vid minst 0,5 °C över ditt sparade mål sänks ett högre börvärde till rumsmålet, även vid förvärmning. Lägre börvärden höjs aldrig och värmen stängs inte av. Återställning gör du själv; avstängning återställer inte redan ändrade värden. Högst en ändring under varje varm period, minst 30 minuter mellan försök. Omstart återläser värden och behåller återstående väntetid från senaste sparade försök, utan extra startväntan. Ny period kan börja först när rummet svalnat till högst 0,2 °C över målet. Kontrollera att anläggningen har tillräckligt flöde när termostaterna stryper.</p>
+          <p class="hint">Av från början. Kräver att alla valda rum är termostater i värmeläge (heat), att huvudautomatiken är på och att målet passar termostaternas steglängd. Vid minst 0,5 °C över ditt sparade mål sänks ett högre börvärde till rumsmålet, även vid förvärmning. Lägre börvärden höjs aldrig och värmen stängs inte av. Återställning gör du själv; avstängning återställer inte redan ändrade värden. Högst en bekräftad begränsning under varje varm period, minst 30 minuter mellan försök. Misslyckade eller obekräftade försök kan upprepas efter återläsning om börvärdet och målet är oförändrade. Omstart behåller återstående väntetid från senaste sparade försök, utan extra startväntan. Ny period kan börja först när rummet svalnat till högst 0,2 °C över målet. Kontrollera att anläggningen har tillräckligt flöde när termostaterna stryper.</p>
           </details>
           <p id="thermostat-control-status" role="status"></p>
           <ul id="thermostat-control-rooms"></ul>

@@ -746,6 +746,109 @@ try {
   assert.equal(await thermostatPage.locator("#plan-details svg").count(), 0, "Opening details must not resurrect cleared stale charts");
   assert.equal(thermostatSaves, savesBeforeDisclosure);
   await thermostatPage.close();
+  const livePage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  livePage.on("pageerror", (error) => errors.push(error.message));
+  await livePage.clock.install({ time: new Date(now * 1000) });
+  let liveSettings = { ...settings, target_temperature: 21, room_sensors: [thermostat],
+    priority_sensors: [thermostat], nearest_thermostat: thermostat };
+  let liveIndoor = 21, liveOutdoor = 7, liveHouse = 21.2;
+  let statusFails = false, settingsFail = false, staleReadings = false;
+  let delayNextSettings = false, releaseSettings;
+  let pendingWrite = null;
+  let liveWrites = 0;
+  await livePage.route("**/api/settings", async (route) => {
+    if (route.request().method() !== "GET") {
+      liveWrites++;
+      liveSettings = route.request().postDataJSON();
+    }
+    const captured = structuredClone(liveSettings);
+    if (delayNextSettings && route.request().method() === "GET") {
+      delayNextSettings = false;
+      await new Promise((resolve) => { releaseSettings = resolve; });
+    }
+    return route.fulfill(settingsFail ? { status: 502, json: { error: "Inställningskontakt saknas" } }
+      : { json: captured });
+  });
+  await livePage.route("**/api/status", (route) => route.fulfill(statusFails
+    ? { status: 502, json: { error: "Tillfälligt statusfel" } }
+    : { json: {
+      checked_at: now - (staleReadings ? 600 : 0), enabled: true, indoor: liveIndoor,
+      outdoor: liveOutdoor, house_indoor: liveHouse, current_offset: 3,
+      next_offset: 3, desired_offset: 3, wait_seconds: pendingWrite ? 600 : 0,
+      pending_write: pendingWrite, message: "Ingen ändring behövs.",
+    } }));
+  await livePage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await livePage.waitForFunction(() => document.getElementById("indoor").textContent === "21");
+  liveSettings = { ...liveSettings, target_temperature: 22 };
+  liveIndoor = 21.4; liveOutdoor = 5; liveHouse = 21.6;
+  await livePage.clock.fastForward(16000);
+  await livePage.waitForFunction(() => document.getElementById("outdoor-now").textContent === "5"
+    && document.getElementById("target_temperature").value === "22");
+  assert.equal(await livePage.locator("#indoor").textContent(), "21,4");
+  assert.equal(await livePage.locator("#house-indoor").textContent(), "21,6");
+  assert.equal(await livePage.locator("#target_temperature").inputValue(), "22");
+  await livePage.locator("#target_temperature").fill("24");
+  await livePage.locator("#settings-panel > summary").click();
+  await livePage.locator("#manual-price").evaluate((node) => { node.open = true; });
+  await livePage.locator("#price_entity").selectOption(outdoor);
+  await livePage.locator(`#priority_sensors input[value="${thermostat}"]`).uncheck();
+  liveSettings = { ...liveSettings, target_temperature: 20, min_interval_minutes: 45,
+    room_sensors: ["sensor.living"], priority_sensors: [], nearest_thermostat: "" };
+  await livePage.clock.fastForward(16000);
+  await livePage.waitForFunction(() => document.getElementById("settings-sync-status").textContent.includes("Sparat mål: 20"));
+  assert.equal(await livePage.locator("#target_temperature").inputValue(), "24", "Polling preserves the unsaved target");
+  assert.equal(await livePage.locator("#price_entity").inputValue(), outdoor, "Polling preserves unsaved selectors");
+  assert.equal(await livePage.locator(`#room_sensors input[value="${thermostat}"]`).isChecked(), true);
+  assert.equal(await livePage.locator(`#priority_sensors input[value="${thermostat}"]`).isChecked(), false);
+  assert.equal(await livePage.locator("#nearest_thermostat").inputValue(), thermostat, "Coupled room drafts stay together");
+  assert.equal(await livePage.locator("#min_interval_minutes").inputValue(), "45", "Unedited settings follow external changes");
+  assert.match(await livePage.locator("#settings-save-status").textContent(), /Osparade.*Måltemperatur/);
+  settingsFail = true;
+  liveOutdoor = 4;
+  await livePage.clock.fastForward(16000);
+  await livePage.waitForFunction(() => document.getElementById("outdoor-now").textContent === "4"
+    && document.getElementById("settings-sync-status").textContent.includes("Inställningskontakt saknas"));
+  assert.match(await livePage.locator("#settings-sync-status").textContent(), /Inställningskontakt saknas/);
+  settingsFail = false;
+  statusFails = true;
+  await livePage.clock.fastForward(16000);
+  await livePage.waitForFunction(() => document.getElementById("status-message").textContent === "Tillfälligt statusfel");
+  assert.equal(await livePage.locator("#indoor").textContent(), "—");
+  assert.equal(await livePage.locator("#target_temperature").inputValue(), "24");
+  statusFails = false;
+  liveIndoor = 21.5;
+  await livePage.clock.fastForward(16000);
+  await livePage.waitForFunction(() => document.getElementById("indoor").textContent === "21,5");
+  staleReadings = true;
+  await livePage.clock.fastForward(16000);
+  await livePage.waitForFunction(() => document.getElementById("status-title").textContent === "Väntar på aktuell avläsning");
+  assert.equal(await livePage.locator("#outdoor-now").textContent(), "—");
+  assert.equal(await livePage.locator("#house-indoor").textContent(), "—");
+  staleReadings = false;
+  await livePage.clock.fastForward(16000);
+  await livePage.waitForFunction(() => document.getElementById("outdoor-now").textContent === "4");
+  assert.equal(liveWrites, 0, "Background refresh must never save settings or issue control commands");
+  pendingWrite = { error: "Home Assistant kunde inte nås" };
+  await livePage.clock.fastForward(16000);
+  await livePage.waitForFunction(() => document.getElementById("next-change").textContent === "Återförsök väntar");
+  assert.match(await livePage.locator("#next-change-why").textContent(), /Återläser.*10 min.*fortfarande behövs/);
+  pendingWrite = null;
+  delayNextSettings = true;
+  liveOutdoor = 2;
+  await livePage.clock.fastForward(16000);
+  await livePage.waitForFunction(() => document.getElementById("outdoor-now").textContent === "2");
+  assert.equal(typeof releaseSettings, "function", "Status refresh does not wait for a slow settings request");
+  livePage.on("dialog", (dialog) => dialog.accept());
+  await livePage.locator("#save-target").click();
+  await livePage.waitForFunction(() => document.getElementById("notice").textContent.includes("Inställningarna är sparade"));
+  assert.match(await livePage.locator("#settings-sync-status").textContent(), /Sparat mål: 24 °C/);
+  const oldSettingsResponse = livePage.waitForResponse((response) => response.url().endsWith("/api/settings")
+    && response.request().method() === "GET");
+  releaseSettings();
+  await oldSettingsResponse;
+  assert.equal(await livePage.locator("#target_temperature").inputValue(), "24", "An old in-flight read cannot overwrite a successful save");
+  assert.equal(liveWrites, 1, "Only the explicit save may write settings");
+  await livePage.close();
   assert.deepEqual(errors, []);
   console.log("Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
 } finally {

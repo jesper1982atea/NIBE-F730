@@ -2,6 +2,7 @@ import copy
 import json
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timezone
@@ -479,6 +480,74 @@ class ControllerTests(unittest.TestCase):
         self.allow_write()
         self.controller.tick()
         self.ha.set_offset.assert_not_called()
+
+    def test_status_and_settings_reads_do_not_wait_for_slow_service(self):
+        self.enable()
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_write(*_):
+            entered.set()
+            if not release.wait(3):
+                raise ControlError("Test service timed out")
+
+        self.ha.set_offset.side_effect = slow_write
+        worker = threading.Thread(target=self.controller.tick)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            finished = threading.Event()
+            snapshots = []
+
+            def read():
+                snapshots.append((self.controller.snapshot(), self.controller.settings()))
+                finished.set()
+
+            reader = threading.Thread(target=read)
+            reader.start()
+            self.assertTrue(finished.wait(0.5), "Read APIs must not block behind service calls")
+            reader.join(1)
+            status, saved = snapshots[0]
+            self.assertEqual(status["indoor"], 21)
+            self.assertTrue(status["control_in_progress"])
+            self.assertEqual(saved["target_temperature"], 23)
+        finally:
+            release.set()
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+
+    def test_failed_pump_attempt_retries_only_after_interval_with_current_demand(self):
+        self.enable()
+        self.ha.set_offset.side_effect = ControlError("Timeout")
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        failed = self.controller.snapshot()
+        self.assertEqual(failed["pending_write"]["error"], "Timeout")
+        self.assertEqual(failed["indoor"], 21)
+        self.assertGreater(failed["wait_seconds"], 1790)
+        attempted = self.controller.last_write
+        restored = Controller(self.ha, self.temp.name)
+        with patch("controller.time.time", return_value=attempted + 1799):
+            restored.tick()
+        self.ha.set_offset.assert_called_once()
+        self.ha.set_offset.side_effect = None
+        with patch("controller.time.time", return_value=attempted + 1800):
+            restored.tick()
+        self.assertEqual(self.ha.set_offset.call_count, 2)
+        self.assertNotIn("error", restored.pending)
+        self.assertIn("write_unconfirmed", [e["kind"] for e in restored.events.recent()])
+
+    def test_failed_pump_attempt_does_not_replay_obsolete_goal(self):
+        self.enable()
+        self.ha.set_offset.side_effect = ControlError("Timeout")
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        attempted = self.controller.last_write
+        self.controller.save(config(enabled=True, target_temperature=21))
+        self.ha.set_offset.side_effect = None
+        with patch("controller.time.time", return_value=attempted + 1800):
+            self.controller.tick()
+        self.ha.set_offset.assert_called_once()
+        self.assertIsNone(self.controller.pending)
 
     def test_bound_explains_why_no_write_when_cold(self):
         self.controller.save(config(enabled=True, base_offset=3, target_temperature=22, priority_sensors=["sensor.living"]))
