@@ -130,13 +130,18 @@
       <div id="learn-legend" class="chart-legend"></div>
       <p class="hint chart-key"><span class="key preheat">Rött fält</span> = förvärmning före dyrt elpris, <span class="key coast">blått fält</span> = dyra timmar då huset får bli lite svalare. Förutsägelsen följer värmeplanen och väderprognosen.</p>
       </details>
-      <h3>Förvärmning före dyra timmar</h3>
+      <div id="preheat-settings">
+      <h3>Lagra lite värme före dyra timmar</h3>
+      <p>Värm huset lite extra när timmarna före en dyrperiod är billigare. Under dyrperioden sänks det tillfälliga rumsmålet, så att huset kan använda den lagrade värmen och svalna försiktigt. Kurvförskjutningen anpassas genom den vanliga rumsstyrningen.</p>
       <div class="learn-controls">
-        <label class="toggle"><input type="checkbox" id="preheat_enabled" name="preheat_enabled" form="settings"> Låt huset förvärmas när elen är billig</label>
-        <div><label for="preheat_degrees">Hur mycket varmare/svalare · °C</label><input id="preheat_degrees" name="preheat_degrees" form="settings" type="number" min="0.1" max="1.5" step="0.1" required></div>
-        <button type="submit" form="settings" id="save-preheat">Spara</button>
+        <label class="toggle"><input type="checkbox" id="preheat_enabled" name="preheat_enabled" form="settings"> Planera värmen före dyra timmar</label>
+        <div><label for="preheat_degrees">Tillfällig måländring uppåt/nedåt · °C</label><input id="preheat_degrees" name="preheat_degrees" form="settings" type="number" min="0.1" max="1.5" step="0.1" required></div>
+        <button type="submit" form="settings" id="save-preheat">Spara inställningar</button>
       </div>
-      <p class="hint">Före tydligt dyra timmar (minst 25 % över dygnets mittpris) höjs måltemperaturen tillfälligt, och under de dyra timmarna får det bli lika mycket svalare. Kräver Tibber-priser. Automatiken måste vara aktiverad för att något ska skickas till pumpen. Av från början.</p>
+      <p id="preheat-example" class="explanation" role="status"></p>
+      <p class="hint">Måländringen är inte en garanti för rummens temperatur eller besparing. Huset reagerar långsamt; kurvgränser, tolerans och väntetid gäller fortfarande. Sparad termostatbegränsning kan bromsa förvärmningen eftersom den följer ditt vanliga mål.</p>
+      <details class="disclosure"><summary>Hur väljs tiderna?</summary><p>Kräver kommande Tibber-priser, inte bara en givare med priset just nu. Dyra perioder är minst en timme med pris minst 25 % över det kommande dygnets mittpris. Förvärmning planeras bara om timmarna före är minst 20 % billigare. Ett lägre mål kan planeras under dyrperioden även utan föregående förvärmning. Starttiden är normalt tre timmar före och anpassas till 1–6 timmar när husmodellen har tillräckligt underlag. Saknas prisunderlag används ditt vanliga mål och orsaken visas i planen.</p></details>
+      </div>
       <ul id="learn-windows" class="plan-changes"></ul>
     </section>
 
@@ -291,7 +296,10 @@
         <section class="card">
           <span class="section-number">04 / ELPRIS</span>
           <h2>Flytta värme till billigare tid</h2>
-          <p>Välj exempelvis en givare för aktuellt Nord Pool-pris. Sätt påverkan till 0 för att stänga av.</p>
+          <p>Vill du värma lite extra före en dyrperiod och låta huset svalna försiktigt när elen blir dyr? Använd <strong>förvärmning med kommande priser</strong>, inte bara priset just nu.</p>
+          <p><a href="#preheat-settings">Ställ in förvärmning och se temperaturmålen ↑</a></p>
+          <p class="hint">Förvärmningen använder kommande Tibber-priser och behöver inga fasta låg- eller högprisgränser. Den är av tills du aktiverar och sparar den. Huvudautomatiken måste också vara på för att styra pumpen.</p>
+          <h3>Givare för priset just nu</h3>
           <p id="price-discovery" role="status"></p>
           <details id="manual-price">
             <summary>Ändra elprisgivare manuellt</summary>
@@ -299,13 +307,17 @@
             <select id="price_entity" name="price_entity"></select>
           </details>
           <p id="price-unit" class="hint"></p>
+          <details id="fixed-price-settings" class="disclosure">
+          <summary>Avancerat · extra kurvpåverkan från priset just nu</summary>
+          <p>Detta är en separat regel utan framförhållning: höj vid lågt pris och sänk vid högt. Den kan läggas ovanpå förvärmningen. Sätt båda stegvärdena till 0 om du bara vill använda förvärmningen; det stänger inte av förvärmningen.</p>
           <div class="field-pair">
             <div><label for="price_low">Billigt vid eller under</label><input id="price_low" name="price_low" type="number" min="-10000" max="10000" step="any" required></div>
             <div><label for="price_high">Dyrt vid eller över</label><input id="price_high" name="price_high" type="number" min="-10000" max="10000" step="any" required></div>
             <div><label for="cheap_boost">Höjning vid lågt pris · steg</label><input id="cheap_boost" name="cheap_boost" type="number" min="0" max="3" step="0.1" required></div>
             <div><label for="expensive_reduction">Sänkning vid högt pris · steg</label><input id="expensive_reduction" name="expensive_reduction" type="number" min="0" max="3" step="0.1" required></div>
           </div>
-          <p class="hint">Prisgränser anges i givarens enhet, utan omräkning. Elpriset får inte sänka värmen när hemmet redan är för kallt eller höja den när det är för varmt. Detta är inte prognosbaserad schemaläggning.</p>
+          <p class="hint">Prisgränser anges i givarens enhet, utan omräkning. Steg är kurvförskjutning, inte grader inne. Regeln får inte förstärka en temperaturavvikelse utanför toleransen mot det mål som gäller just då, inklusive eventuell förvärmning.</p>
+          </details>
         </section>
       </div>
 

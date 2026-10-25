@@ -1,5 +1,16 @@
 # Ändringslogg
 
+## 0.2.26
+
+- Förklarar förvärmning som att lagra lite värme före dyra timmar och låta
+  huset svalna försiktigt under dyrperioden. Elpriskortet länkar direkt till
+  inställningen och skiljer kommande priser från en givare med priset just nu.
+- Visar vanliga och tillfälliga temperaturmål med dina valda värden, tydligt
+  märkta när de inte sparats. Fasta prisgränser och extra kurvpåverkan samlas
+  under avancerat. Alla inställningar och styrregler är oförändrade.
+- Förtydligar att faktisk temperatur och besparing inte garanteras och att
+  termostatbegränsningen kan bromsa förvärmningen.
+
 ## 0.2.25
 
 - Misslyckade eller obekräftade termostatförsök kan upprepas efter ordinarie
