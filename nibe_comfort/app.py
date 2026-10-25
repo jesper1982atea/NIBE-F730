@@ -18,8 +18,9 @@ LOG = logging.getLogger("nibe_comfort")
 STATIC = Path(__file__).parent / "static"
 
 
-def handler_for(controller, api_token=None):
-    insights = Insights(controller.ha, getattr(controller, "data_dir", None))
+def handler_for(controller, api_token=None, insights=None):
+    if insights is None:
+        insights = Insights(controller.ha, getattr(controller, "data_dir", None))
     insights.fireplace_provider = controller.fireplace_observations
     if getattr(controller, "preheat_provider", 1) is None:
         controller.preheat_provider = insights.preheat
@@ -214,9 +215,10 @@ def main():
                 return
             stop.wait(60)
 
-    servers = [ThreadingHTTPServer(("0.0.0.0", 8098), handler_for(controller))]
+    insights = Insights(controller.ha, controller.data_dir)
+    servers = [ThreadingHTTPServer(("0.0.0.0", 8098), handler_for(controller, insights=insights))]
     if local_token:
-        servers.append(ThreadingHTTPServer(("0.0.0.0", 8099), handler_for(controller, local_token)))
+        servers.append(ThreadingHTTPServer(("0.0.0.0", 8099), handler_for(controller, local_token, insights)))
     for server in servers:
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()

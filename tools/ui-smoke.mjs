@@ -475,6 +475,42 @@ try {
   assert.equal(await page.locator("#room_sensors .room-choice-area").filter({ hasText: "Home Assistant-rum: Vardagsrum" }).count(), 1);
   assert.equal(await page.locator("#next-change").textContent(), "Ingen behövs");
   assert.match(await page.locator("#updated").textContent(), /Uppdateras automatiskt/);
+  const heavyEndpoints = ["history", "plan", "hotwater", "learning"];
+  const heavyReads = Object.fromEntries(heavyEndpoints.map((name) => [name, 0]));
+  const heavyActive = { ...heavyReads };
+  const heavyPeak = { ...heavyReads };
+  let releaseHeavy;
+  const heavyGate = new Promise((resolve) => { releaseHeavy = resolve; });
+  for (const name of heavyEndpoints) {
+    await page.route(`**/api/${name}`, async (route) => {
+      heavyReads[name]++;
+      heavyActive[name]++;
+      heavyPeak[name] = Math.max(heavyPeak[name], heavyActive[name]);
+      const response = await route.fetch();
+      await heavyGate;
+      await route.fulfill({ response });
+      heavyActive[name]--;
+    });
+  }
+  await page.evaluate(() => { refreshHistory(); refreshPlan(); refreshHotWater(); refreshLearning(); });
+  for (let attempt = 0; attempt < 100 && !heavyEndpoints.every((name) => heavyReads[name] === 1); attempt++) {
+    await page.waitForTimeout(20);
+  }
+  assert.ok(heavyEndpoints.every((name) => heavyReads[name] === 1));
+  await page.evaluate(() => {
+    for (let i = 0; i < 8; i++) {
+      refreshHistory(); refreshPlan(); refreshHotWater(); refreshLearning();
+    }
+  });
+  await page.waitForTimeout(100);
+  assert.ok(heavyEndpoints.every((name) => heavyReads[name] === 1), "Burst refreshes must not duplicate in-flight requests");
+  releaseHeavy();
+  for (let attempt = 0; attempt < 100 && !heavyEndpoints.every((name) => heavyReads[name] === 2 && heavyActive[name] === 0); attempt++) {
+    await page.waitForTimeout(20);
+  }
+  assert.ok(heavyEndpoints.every((name) => heavyReads[name] === 2), "Coalesce refreshes into one fresh follow-up, not a queue of eight");
+  assert.ok(heavyEndpoints.every((name) => heavyPeak[name] === 1), "Each expensive endpoint allows only one in-flight request");
+  for (const name of heavyEndpoints) await page.unroute(`**/api/${name}`);
   failHistory = true;
   await page.locator("#refresh-history").click();
   await page.waitForFunction(() => document.getElementById("history-status").textContent.includes("Recorder saknas"));
