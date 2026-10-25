@@ -434,6 +434,24 @@ tidsaxel, med en linje för *nu*:
   - Listan *Justeringar* visar kommande ändringar med orsak och gjorda
     ändringar senaste dygnet med källa.
 
+### Historikhämtning och minne
+
+Ingress, lokalt API och förvärmning delar hämtat underlag. Samtidiga
+förfrågningar om samma underlag gör inte flera identiska hämtningar,
+och Recorder-historik hämtas ett anrop i taget. Cachen behåller högst
+24 varianter av underlagen.
+
+Husmodellens första inläsning delas upp i högst ett dygn per anrop.
+Senare inläsningar kompletterar de sparade timvärdena med två dygns
+överlapp. Klimatentiteternas temperaturattribut behålls.
+
+Enskilda historiksvar över 8 MiB stoppas före JSON-avkodning och visas
+som ett fel, inte som en tom eller lyckad hämtning. Väntan på en redan
+pågående hämtning eller ledig historikanslutning avbryts efter 15 sekunder;
+ett senare försök kan lyckas. Historikfel ändrar inte dina styrinställningar.
+Detta begränsar tilläggets belastning men är ingen garanti mot minnesbrist
+orsakad av andra integrationer eller en Docker-bilduppdatering.
+
 ### Mörkt läge
 
 Knappen **Tema** uppe till höger växlar mellan *auto*, *ljust* och *mörkt*.

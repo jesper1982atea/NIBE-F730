@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import handler_for
 from controller import ControlError, Controller
+from insights import Insights
 from test_controller import config, fixtures
 
 
@@ -62,6 +63,28 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status["fireplace"]["rooms"], ["sensor.living"])
         self.ha.set_offset.assert_not_called()
         self.ha.set_thermostat.assert_not_called()
+
+    def test_ingress_and_local_api_share_insights_with_controller(self):
+        insights = Insights(self.ha, self.temp.name)
+        self.controller.preheat_provider = None
+        handler_for(self.controller, insights=insights)
+        shared = handler_for(self.controller, self.token, insights)
+        self.assertIs(self.controller.preheat_provider.__self__, insights)
+        shared_server = ThreadingHTTPServer(("127.0.0.1", 0), shared)
+        shared_server.daemon_threads = True
+        thread = threading.Thread(target=shared_server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            insights.cached("registry", 300, lambda: [{"entity_id": "sensor.shared", "platform": "test"}])
+            req = Request(f"http://127.0.0.1:{shared_server.server_port}/api/overview",
+                          headers={"Authorization": f"Bearer {self.token}"})
+            with urlopen(req, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+            self.ha.integration_registry.assert_not_called()
+        finally:
+            shared_server.shutdown()
+            shared_server.server_close()
+            thread.join()
 
     def test_ingress_serves_static_files_including_theme(self):
         handler = handler_for(self.controller, None)

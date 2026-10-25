@@ -21,6 +21,11 @@ let settingsBusy = false;
 let discovery = null;
 let discoveryError = "";
 let dashboardBusy = false;
+let historyBusy = false;
+let planBusy = false;
+let learningBusy = false;
+let hotWaterBusy = false;
+const pendingRefreshes = new Set();
 let eventRows = [];
 let eventsError = "";
 let lastStatus = null;
@@ -1036,6 +1041,8 @@ function renderHistory() {
 }
 
 async function refreshHistory() {
+  if (historyBusy) { pendingRefreshes.add("history"); return; }
+  historyBusy = true;
   $("refresh-history").disabled = true;
   try {
     await refreshAreas();
@@ -1053,7 +1060,10 @@ async function refreshHistory() {
     $("thermostat-charts-title").hidden = true;
     $("history-changes-status").textContent = "Ändringshistoriken är inte tillgänglig.";
     $("history-status").textContent = `Kunde inte hämta historik: ${error.message}`;
-  } finally { $("refresh-history").disabled = false; }
+  } finally {
+    historyBusy = false; $("refresh-history").disabled = false;
+    if (pendingRefreshes.delete("history")) refreshHistory();
+  }
 }
 
 async function refreshAreas() {
@@ -1092,6 +1102,8 @@ async function refreshForecast() {
 }
 
 async function refreshPlan() {
+  if (planBusy) { pendingRefreshes.add("plan"); return; }
+  planBusy = true;
   $("refresh-plan").disabled = true;
   try {
     const data = await api("plan");
@@ -1180,7 +1192,10 @@ async function refreshPlan() {
   } catch (error) {
     for (const id of ["plan-outdoor", "plan-price", "plan-offset", "plan-curve", "plan-changes"]) $(id).replaceChildren();
     $("plan-status").textContent = `Kunde inte hämta värmeplanen: ${error.message}`;
-  } finally { $("refresh-plan").disabled = false; }
+  } finally {
+    planBusy = false; $("refresh-plan").disabled = false;
+    if (pendingRefreshes.delete("plan")) refreshPlan();
+  }
 }
 
 const hourRange = (from, to) => `${String(from).padStart(2, "0")}–${String((to + 1) % 24).padStart(2, "0")}`;
@@ -1250,6 +1265,8 @@ function drawHourBars(container, events) {
 }
 
 async function refreshHotWater() {
+  if (hotWaterBusy) { pendingRefreshes.add("hot-water"); return; }
+  hotWaterBusy = true;
   $("refresh-hot-water").disabled = true;
   try {
     const data = await api("hotwater");
@@ -1334,7 +1351,10 @@ async function refreshHotWater() {
     $("hw-status").textContent = `Uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE")}. Bedömningen bygger på pumpens givare och är ungefärlig.`;
   } catch (error) {
     $("hw-status").textContent = `Kunde inte läsa varmvattnet: ${error.message}`;
-  } finally { $("refresh-hot-water").disabled = false; }
+  } finally {
+    hotWaterBusy = false; $("refresh-hot-water").disabled = false;
+    if (pendingRefreshes.delete("hot-water")) refreshHotWater();
+  }
 }
 
 function progressRow(label, value, needed, text) {
@@ -1354,6 +1374,8 @@ function progressRow(label, value, needed, text) {
 }
 
 async function refreshLearning() {
+  if (learningBusy) { pendingRefreshes.add("learning"); return; }
+  learningBusy = true;
   $("refresh-learning").disabled = true;
   try {
     const data = await api("learning");
@@ -1408,7 +1430,10 @@ async function refreshLearning() {
     $("learn-windows").replaceChildren(head, ...items);
   } catch (error) {
     $("learn-status").textContent = `Kunde inte läsa husmodellen: ${error.message}`;
-  } finally { $("refresh-learning").disabled = false; }
+  } finally {
+    learningBusy = false; $("refresh-learning").disabled = false;
+    if (pendingRefreshes.delete("learning")) refreshLearning();
+  }
 }
 
 const fieldLabels = {

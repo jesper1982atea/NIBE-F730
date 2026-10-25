@@ -2,8 +2,10 @@
 
 import copy
 import json
+import math
 import threading
 import time
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
@@ -617,6 +619,8 @@ class Insights:
         self.ha = ha
         self.cache = {}
         self.lock = threading.Lock()
+        self.loading = {}
+        self.history_lock = threading.Lock()
         self.store = LearningStore(f"{data_dir}/learning.sqlite" if data_dir else None)
         self.fireplace_provider = None
 
@@ -629,12 +633,42 @@ class Insights:
             entry = self.cache.get(key)
             if entry and now - entry[0] < seconds:
                 return copy.deepcopy(entry[1])
-        value = loader()
-        with self.lock:
-            self.cache[key] = (time.time(), value)
-            for old in [k for k, (stamp, _) in self.cache.items() if time.time() - stamp > 3600]:
-                del self.cache[old]
+            pending = self.loading.get(key)
+            owner = pending is None
+            if owner:
+                pending = self.loading[key] = Future()
+        if not owner:
+            try:
+                return copy.deepcopy(pending.result(timeout=15))
+            except FutureTimeout as exc:
+                if pending.done():
+                    raise
+                raise ControlError("Underlaget håller redan på att hämtas. Försök igen när hämtningen är klar.") from exc
+        try:
+            value = loader()
+            with self.lock:
+                self.cache[key] = (time.time(), value)
+                for old in [k for k, (stamp, _) in self.cache.items() if time.time() - stamp > 3600]:
+                    del self.cache[old]
+                while len(self.cache) > 24:
+                    del self.cache[min(self.cache, key=lambda k: self.cache[k][0])]
+            pending.set_result(value)
+        except BaseException as exc:
+            pending.set_exception(exc)
+            raise
+        finally:
+            with self.lock:
+                del self.loading[key]
         return copy.deepcopy(value)
+
+    def history_request(self, path):
+        # Different dashboards must not allocate large Recorder responses concurrently.
+        if not self.history_lock.acquire(timeout=15):
+            raise ControlError("Historikhämtningen är upptagen. Försök igen om en stund.")
+        try:
+            return self.ha.request(path)
+        finally:
+            self.history_lock.release()
 
     def registry(self):
         return self.cached("registry", 300, self.ha.integration_registry)
@@ -659,7 +693,7 @@ class Insights:
                     "minimal_response": "", "no_attributes": "", "significant_changes_only": "0",
                 })
                 stamp = datetime.fromtimestamp(now - 7 * 86400, timezone.utc).isoformat()
-                groups = history_groups(self.ha.request("/history/period/" + quote(stamp, safe="") + "?" + query))
+                groups = history_groups(self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query))
             return hot_water(states, registry, config, groups, now)
         return self.cached(key, 120, load)
 
@@ -679,7 +713,7 @@ class Insights:
                 "filter_entity_id": ",".join(ids),
                 "end_time": datetime.fromtimestamp(end, timezone.utc).isoformat(),
             })
-            histories = self.ha.request("/history/period/" + quote(stamp, safe="") + "?" + query)
+            histories = self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query)
             states = self.ha.states()
             return history_series(histories, config, states, self.ha._temperature_unit, start, end)
         return self.cached(key, 300, load)
@@ -777,7 +811,7 @@ class Insights:
                     "minimal_response": "", "no_attributes": "", "significant_changes_only": "0",
                 })
                 stamp = datetime.fromtimestamp(curve_start, timezone.utc).isoformat()
-                groups = history_groups(self.ha.request("/history/period/" + quote(stamp, safe="") + "?" + query))
+                groups = history_groups(self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query))
 
             def steps(eid, since):
                 unit = states.get(eid, {}).get("attributes", {}).get("unit_of_measurement")
@@ -864,22 +898,31 @@ class Insights:
             if not rooms or not config["offset_entity"]:
                 result["error"] = "Välj rum och pumpens kurvförskjutning först."
                 return result
-            start = now - 7 * 86400
-            stamp = quote(datetime.fromtimestamp(start, timezone.utc).isoformat(), safe="")
-            end_time = datetime.fromtimestamp(now, timezone.utc).isoformat()
             ids = rooms + ([config["outdoor_entity"]] if config["outdoor_entity"].startswith("sensor.") else [])
-            histories = self.ha.request("/history/period/" + stamp + "?" + urlencode({"filter_entity_id": ",".join(ids), "end_time": end_time}))
             states = self.ha.states()
-            series = history_series(histories, config, states, self.ha._temperature_unit, start, now)["series"]
-            rows = []
-            for line in series:
-                rows += [(line["entity_id"], h, v) for h, v in hourly_means(line["points"], start, now).items()]
-            offset_rows = history_groups(self.ha.request("/history/period/" + stamp + "?" + urlencode({
-                "filter_entity_id": config["offset_entity"], "end_time": end_time,
-                "minimal_response": "", "no_attributes": "", "significant_changes_only": "0"})))
-            offset_steps = numeric_steps(offset_rows.get(config["offset_entity"], []), config["offset_entity"], start)
-            rows += [(config["offset_entity"], h, v) for h, v in hourly_means(offset_steps, start, now).items()]
-            self.store.add(rows, now)
+            stored = self.store.load(ids + [config["offset_entity"]])
+            latest = [max(stored[e]) for e in ids + [config["offset_entity"]] if stored[e]]
+            # Backfill once, then refresh only recent hours, retaining a two-day overlap.
+            start = max(now - 7 * 86400, min(latest) - 2 * 86400) if len(latest) == len(ids) + 1 else now - 7 * 86400
+            start = math.floor(start / 3600) * 3600
+            while start < now:
+                end = min(start + 86400, now)
+                stamp = quote(datetime.fromtimestamp(start, timezone.utc).isoformat(), safe="")
+                end_time = datetime.fromtimestamp(end, timezone.utc).isoformat()
+                histories = self.history_request("/history/period/" + stamp + "?" + urlencode({
+                    "filter_entity_id": ",".join(ids), "end_time": end_time, "significant_changes_only": "0"}))
+                series = history_series(histories, config, states, self.ha._temperature_unit, start, end)["series"]
+                rows = [(line["entity_id"], h, v) for line in series
+                        for h, v in hourly_means(line["points"], start, end).items()]
+                del histories, series
+                offset_rows = history_groups(self.history_request("/history/period/" + stamp + "?" + urlencode({
+                    "filter_entity_id": config["offset_entity"], "end_time": end_time,
+                    "minimal_response": "", "no_attributes": "", "significant_changes_only": "0"})))
+                offset_steps = numeric_steps(offset_rows.get(config["offset_entity"], []), config["offset_entity"], start)
+                rows += [(config["offset_entity"], h, v) for h, v in hourly_means(offset_steps, start, end).items()]
+                self.store.add(rows, now)
+                del offset_rows, offset_steps, rows
+                start = end
             stored = self.store.load(rooms + [config["outdoor_entity"], config["offset_entity"]])
             hours = set.intersection(*(set(stored[e]) for e in rooms))
             indoor = {h: sum(stored[e][h] for e in rooms) / len(rooms) for h in hours}

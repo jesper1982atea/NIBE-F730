@@ -1,5 +1,20 @@
 # Ändringslogg
 
+## 0.2.28
+
+- Samtidiga läsningar av samma underlag delar en pågående hämtning.
+  Ingress, lokalt API och förvärmning använder samma cache. Historikanrop
+  till Recorder körs ett i taget och cacheminnet begränsas till 24 varianter.
+- Husmodellen hämtar temperaturhistorik högst ett dygn per anrop.
+  Efter första inläsningen uppdateras nya timmar med två dygns överlapp,
+  utan att hämta hela veckan igen. Sparade timvärden behålls.
+- Historiksvar över 8 MiB stoppas före JSON-avkodning med ett tydligt fel,
+  i stället för att riskera en stor minnestopp. Väntan på redan pågående
+  hämtningar är tidsbegränsad och ett misslyckat försök kan göras om.
+- Webbgränssnittets tunga uppdateringar överlappar inte längre.
+  Upprepade uppdateringar samlas till en ny hämtning efter den pågående,
+  så att ändringar inte tappas bort. Styrreglerna är oförändrade.
+
 ## 0.2.27
 
 - Valfri braskamin med val av temperaturkällor i kaminrum. Försiktig

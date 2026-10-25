@@ -177,6 +177,12 @@ class HomeAssistant:
         )
         try:
             with urlopen(request, timeout=15) as response:
+                if path.startswith("/history/period/"):
+                    limit = 8 * 1024 * 1024
+                    payload = response.read(limit + 1)
+                    if len(payload) > limit:
+                        raise ControlError("Historiksvaret överstiger 8 MiB. Hämtningen stoppades för att skydda minnet.")
+                    return json.loads(payload)
                 return json.load(response)
         except HTTPError as exc:
             exc.close()
