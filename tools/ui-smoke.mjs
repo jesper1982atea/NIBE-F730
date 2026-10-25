@@ -247,6 +247,14 @@ try {
   assert.match(await page.locator("#learn-windows").textContent(), /Förvärmning är av.*3 timmar före \(standard.*förvärm \+0,5°.*0,5° svalare/);
   assert.equal(await page.locator("#preheat_enabled").isChecked(), false, "Pre-heating starts off");
   assert.equal(await page.locator("#preheat_degrees").inputValue(), "0.5");
+  assert.match(await page.locator("#preheat-example").textContent(), /vanligt mål 21 °C.*före dyrperiod 21,5 °C.*under dyrperiod 20,5 °C.*tillbaka till 21 °C.*Planeringen är av/);
+  await page.locator("#preheat_degrees").fill("0.3");
+  await page.locator("#preheat_enabled").check();
+  assert.match(await page.locator("#preheat-example").textContent(), /osparade.*före dyrperiod 21,3 °C.*under dyrperiod 20,7 °C.*först när du sparar/);
+  assert.match(await page.locator("#settings-save-status").textContent(), /Osparade.*Förvärmning/);
+  assert.equal(writes, 0, "Preheat preview must not change saved settings");
+  await page.locator("#preheat_degrees").fill("0.5");
+  await page.locator("#preheat_enabled").uncheck();
   assert.equal(await page.locator("#hw-verdict").textContent(), "Varmvattnet räcker bra");
   assert.match(await page.locator("#hw-tank").textContent(), /50%/);
   assert.match(await page.locator("#hw-verdict-text").textContent(), /ungefär 14 minuter.*Senast laddat/);
@@ -260,6 +268,7 @@ try {
   assert.equal(await page.locator("#log-panel").getAttribute("open"), null);
   await page.locator("#settings-panel > summary").click();
   await page.locator("#priority_sensors input").check();
+  assert.match(await page.locator("#preheat-example").textContent(), /osparade.*prioriterade rum/);
   assert.equal(await page.locator("#target-label").textContent(), "Mål för prioriterade rum · °C");
   assert.match(await page.locator("#target-scope").textContent(), /snittet av 1 prioriterat rum/);
   await page.locator("#priority_sensors input").uncheck();
@@ -273,6 +282,9 @@ try {
   assert.equal(await page.locator("#enabled").isChecked(), true);
   assert.equal(await page.locator("#price_entity").inputValue(), price);
   assert.equal(await page.locator("#manual-price").getAttribute("open"), null);
+  assert.equal(await page.locator("#fixed-price-settings").getAttribute("open"), null);
+  assert.match(await page.locator("#fixed-price-settings").textContent(), /separat regel utan framförhållning/);
+  assert.match(await page.locator("#price-unit").textContent(), /bekräftar inte att kommande priser finns/);
   assert.equal(writes, 0, "Discovery and dashboard reads must not save or activate anything");
   assert.equal(await page.locator("#temperature-chart path").count(), 1);
   assert.equal(await page.locator("#forecast-chart path").count(), 1);

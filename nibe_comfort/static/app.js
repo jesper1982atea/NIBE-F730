@@ -90,8 +90,24 @@ function entityHints() {
     : "Utan vald entitet kan du se temperaturförslag, men inte styra pumpen.";
   const price = entities.find((entity) => entity.entity_id === $("price_entity").value);
   $("price-unit").textContent = price
-    ? `Givarens värde: ${price.state} ${price.unit}. Ange båda prisgränserna i ${price.unit || "samma enhet som givaren"}.`
+    ? `Senast hämtade givarvärde: ${price.state} ${price.unit}. Givaren avser priset just nu; den bekräftar inte att kommande priser finns. Enheten används för de fasta prisgränserna under Avancerat.`
     : "Välj givare för att se prisets enhet. Exempel: 1 kr/kWh = 100 öre/kWh.";
+}
+
+function renderPreheatExample() {
+  const target = $("target_temperature").valueAsNumber;
+  const degrees = $("preheat_degrees").valueAsNumber;
+  if (!Number.isFinite(target) || !Number.isFinite(degrees)) {
+    $("preheat-example").textContent = "Ange måltemperatur och tillfällig måländring för att se exemplet.";
+    return;
+  }
+  const scope = $("priority_sensors").querySelector("input:checked") ? "prioriterade rum" : "valda rum";
+  const draft = readSettings();
+  const saved = settings && target === settings.target_temperature
+    && degrees === settings.preheat_degrees && $("preheat_enabled").checked === settings.preheat_enabled
+    && JSON.stringify(draft.priority_sensors) === JSON.stringify(settings.priority_sensors)
+    && JSON.stringify(draft.room_sensors) === JSON.stringify(settings.room_sensors);
+  $("preheat-example").textContent = `${saved ? "Dina inställningar" : "Exempel med osparade värden"}: vanligt mål ${displayNumber(target)} °C för ${scope} → före dyrperiod ${displayNumber(target + degrees)} °C → under dyrperiod ${displayNumber(target - degrees)} °C → tillbaka till ${displayNumber(target)} °C. ${$("preheat_enabled").checked ? "Planeringen är vald." : "Planeringen är av."}${saved ? "" : " Ändringarna börjar gälla först när du sparar."}`;
 }
 
 function renderSettings(formSettings = settings, preserveView = false) {
@@ -521,6 +537,7 @@ function targetChanged() {
 
 function updateSaveState() {
   if (!settings) return;
+  renderPreheatExample();
   const next = readSettings();
   const changed = Object.keys(settings).filter((key) => JSON.stringify(next[key]) !== JSON.stringify(settings[key]));
   $("settings-save-status").textContent = changed.length
@@ -1590,11 +1607,14 @@ async function init() {
     });
   }
   $("target_temperature").addEventListener("input", targetChanged);
+  $("preheat_degrees").addEventListener("input", updateSaveState);
+  $("preheat_enabled").addEventListener("change", updateSaveState);
   $("room_sensors").addEventListener("change", () => {
     renderPriorityPicker(Array.from($("priority_sensors").querySelectorAll("input:checked"), (input) => input.value));
     renderNearestThermostat($("nearest_thermostat").value);
     filterRoomPicker();
     renderIndoorDiff();
+    renderPreheatExample();
   });
   $("room-search").addEventListener("input", filterRoomPicker);
   $("show-room-sensors").addEventListener("change", filterRoomPicker);
@@ -1607,6 +1627,7 @@ async function init() {
   $("priority_sensors").addEventListener("change", () => {
     limitPriorityPicker();
     renderIndoorDiff();
+    renderPreheatExample();
   });
   $("offset_entity").addEventListener("change", entityHints);
   $("outdoor_entity").addEventListener("change", entityHints);

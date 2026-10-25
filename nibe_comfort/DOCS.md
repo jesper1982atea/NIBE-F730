@@ -152,10 +152,20 @@ Grafen visar innetemperaturen senaste dygnet och vad modellen tror händer
 nästa dygn med den planerade värmekurvan och väderprognosen.
 
 **Förvärmning före dyra timmar** är av från början och kräver Tibber-priser.
+Inställningen **Lagra lite värme före dyra timmar** finns vid husmodellen;
+elpriskortet länkar direkt dit. Där visas ett exempel med ditt mål: med
+21 °C och måländring 0,5 °C blir det tillfälliga målet 21,5 °C före
+dyrperioden och 20,5 °C under den, sedan 21 °C igen. Exemplet följer
+osparade värden men ändrar inget förrän du sparar. Detta är mål, inte en
+garanti att huset håller sig inom dessa temperaturer eller att du sparar
+en viss summa. Termostatbegränsningen följer det vanliga målet och kan
+bromsa förvärmningen. Huvudautomatiken måste vara på för att styra pumpen.
+
 Timmar minst 25 % över dygnets mittpris räknas som dyra. Före dem höjs
 måltemperaturen tillfälligt med vald mängd (0,1–1,5 °C, standard 0,5), om
 timmarna innan är minst 20 % billigare. Under de dyra timmarna får det bli
-lika mycket svalare. Förvärmningen börjar 3 timmar före tills modellen *känner
+lika mycket svalare, även när ingen föregående förvärmning kunde planeras.
+Förvärmningen börjar 3 timmar före tills modellen *känner
 huset väl*; därefter räknas tiden ut från modellen (1–6 timmar). Ändringen går
 genom vanliga rumsregeln, så alla gränser, steglängd och minsta tid mellan
 ändringar gäller. Saknas priser eller blir något fel används vanlig
@@ -497,11 +507,18 @@ Flera Tibber-hem kräver manuellt val. Redan sparat val ersätts aldrig.
 Tryck **Spara inställningar** för att behålla ett nytt förslag; att hitta
 en givare aktiverar inte prisstyrning eller ändrar prisgränserna.
 
+De fasta prisgränserna finns under **Avancerat · extra kurvpåverkan från
+priset just nu**. Detta är en separat regel, inte förvärmningsplanen, och
+kan läggas ovanpå den. Förvärmningen behöver inga fasta prisgränser.
+En givare med priset just nu bekräftar inte att kommande Tibber-priser finns.
+
 Vid eller under lågprisgränsen läggs vald höjning till. Vid eller över
 högprisgränsen dras vald sänkning av. Mellan gränserna är påverkan 0.
 Prisoptimering får inte sänka när medeltemperaturen ligger under
 komfortbandet, eller höja när den ligger över. Säkerhetsgränserna gäller alltid.
-Påverkan 0 inaktiverar elprisstyrningen. Framtida priser används bara av
+Sätt båda stegvärdena till 0 för att stänga av enbart denna extra
+kurvpåverkan; förvärmningen stängs av med sin egen kryssruta.
+Framtida priser används bara av
 förvärmningen (se *Ditt hus lär sig och förvärmning*). Varmvattenstyrning och
 faktisk besparingsberäkning ingår inte.
 
