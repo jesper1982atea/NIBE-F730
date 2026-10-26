@@ -1,5 +1,22 @@
 # Ändringslogg
 
+## 0.2.30
+
+- Förvärmningens valfria pris- och historikanalys körs i en enda
+  bakgrundsarbetare och blockerar inte längre styrloopens nya avläsningar.
+  Saknad, utgången eller felaktig plan ger vanligt temperaturmål och en
+  synlig förklaring. Ny konfiguration använder aldrig en gammal plan.
+  Aktuellt elpris kontrolleras även när en bakgrundsplan finns.
+- Temperaturer och övriga enhetsvärden i inställningarna hämtas löpande
+  i stället för bara när sidan öppnas. Osparade val behålls.
+- Webbförfrågningar får en explicit tidsgräns även för svaret. När sidan
+  återfår fokus eller återansluter avbryts fastnade statusläsningar och
+  en ny hämtning görs. Tunga historikanrop dupliceras inte av detta.
+- Basimagen hämtas från den publika ECR-spegeln av officiella
+  Python 3.12 Alpine. Detta undviker den Docker Hub-anslutning som gav
+  nätverkstimeout vid uppdatering; bygget kräver fortfarande nätverk och
+  lediga värdresurser. Ingen garanti mot annan minnesbelastning i HA.
+
 ## 0.2.29
 
 - Tydligt val av **Tibber** eller **Nord Pool** som elpriskälla. Tibber är

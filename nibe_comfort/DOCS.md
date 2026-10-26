@@ -438,6 +438,13 @@ tidsaxel, med en linje för *nu*:
 
 ### Historikhämtning och minne
 
+Styrloopens förvärmningsplan hämtas av en ensam bakgrundsarbetare.
+Pris- eller historikhämtning för denna valfria optimering blockerar inte
+nya temperaturavläsningar. Saknas aktuell plan används vanligt mål med en
+synlig förklaring. En gammal plan används inte med andra inställningar,
+och planer äldre än 15 minuter används inte. En bakgrundshämtning kan
+uppdatera planen tidigast efter en minut, även efter ett fel.
+
 Ingress, lokalt API och förvärmning delar hämtat underlag. Samtidiga
 förfrågningar om samma underlag gör inte flera identiska hämtningar,
 och Recorder-historik hämtas ett anrop i taget. Cachen behåller högst
@@ -453,6 +460,17 @@ pågående hämtning eller ledig historikanslutning avbryts efter 15 sekunder;
 ett senare försök kan lyckas. Historikfel ändrar inte dina styrinställningar.
 Detta begränsar tilläggets belastning men är ingen garanti mot minnesbrist
 orsakad av andra integrationer eller en Docker-bilduppdatering.
+
+Enhetsvärdena i inställningarna läses om varje minut medan sidan är aktiv,
+utan att osparade val försvinner. Status hämtas var 15:e sekund. När
+webbsidan återupptas avbryts en fastnad statusläsning så att en ny kan
+starta. Den underliggande styrloopen läser normalt HA varje minut;
+visningen gör inte en ny fysisk pumpavläsning vid varje webbuppdatering.
+
+Tilläggets lokala Docker-bygge använder den publika ECR-spegeln av
+officiella Python-imagen. Uppdateringen behöver fortfarande fungerande
+nätverk, Docker och tillräckligt med värdminne. En nätverkstimeout till
+ett bildregister är inte i sig bevis för att tillägget har en minnesläcka.
 
 ### Mörkt läge
 

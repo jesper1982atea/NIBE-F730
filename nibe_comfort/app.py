@@ -23,7 +23,7 @@ def handler_for(controller, api_token=None, insights=None):
         insights = Insights(controller.ha, getattr(controller, "data_dir", None))
     insights.fireplace_provider = controller.fireplace_observations
     if getattr(controller, "preheat_provider", 1) is None:
-        controller.preheat_provider = insights.preheat
+        controller.preheat_provider = insights.control_preheat
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):

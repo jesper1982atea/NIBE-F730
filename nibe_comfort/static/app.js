@@ -26,6 +26,9 @@ let planBusy = false;
 let learningBusy = false;
 let hotWaterBusy = false;
 const pendingRefreshes = new Set();
+const readRequests = new Map();
+let entitiesBusy = false;
+let entitiesReadAt = 0;
 let eventRows = [];
 let eventsError = "";
 let lastStatus = null;
@@ -46,10 +49,35 @@ function notice(message, error = false) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`./api/${path}`, { cache: "no-store", ...options, signal: AbortSignal.timeout(20000) });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-  return body;
+  const controller = new AbortController();
+  const read = !options.method || options.method === "GET";
+  if (read) readRequests.set(path, controller);
+  const timeout = window.setTimeout(() => controller.abort(new Error("Hämtningen tog för lång tid. Försöker igen automatiskt.")), 20000);
+  try {
+    const response = await fetch(`./api/${path}`, { cache: "no-store", ...options, signal: controller.signal });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    return body;
+  } finally {
+    window.clearTimeout(timeout);
+    if (readRequests.get(path) === controller) readRequests.delete(path);
+  }
+}
+
+async function refreshEntities() {
+  if (entitiesBusy || Date.now() - entitiesReadAt < 60000) return;
+  entitiesBusy = true;
+  try {
+    const latest = await api("entities");
+    entities = latest.sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    entitiesReadAt = Date.now();
+    renderSettings(readSettings(), true);
+    $("entities-status").textContent = "";
+  } catch (error) {
+    $("entities-status").textContent = `Enhetsvärden kunde inte uppdateras: ${error.message}. Försöker igen automatiskt.`;
+  } finally {
+    entitiesBusy = false;
+  }
 }
 
 function makeAdvanced() {
@@ -495,10 +523,11 @@ function displayNumber(value) {
 let statusBusy = false;
 
 async function refreshStatus() {
-  if (statusBusy) return;
+  if (statusBusy) { pendingRefreshes.add("status"); return; }
   statusBusy = true;
   try {
     void refreshSavedSettings();
+    void refreshEntities();
     const response = await api("status");
     const stale = !response.checked_at || Date.now() / 1000 - response.checked_at > 180;
     const state = stale ? {
@@ -558,6 +587,7 @@ async function refreshStatus() {
     $("updated").textContent = "Visningen är inte aktuell. Ansluter igen automatiskt.";
   } finally {
     statusBusy = false;
+    if (pendingRefreshes.delete("status")) void refreshStatus();
   }
 }
 
@@ -1642,6 +1672,7 @@ async function init() {
   $("save").disabled = $("save-near").disabled = $("pause").disabled = true;
   try {
     [settings, entities] = await Promise.all([api("settings"), api("entities")]);
+    entitiesReadAt = Date.now();
     entities.sort((a, b) => a.name.localeCompare(b.name, "sv"));
     const saved = structuredClone(settings);
     await findPump();
@@ -1777,6 +1808,9 @@ async function init() {
   window.setInterval(refreshPlan, 300000);
   const resumeDashboard = () => {
     if (document.visibilityState === "hidden") return;
+    // A suspended WebView can retain a stalled request after returning to the app.
+    readRequests.get("status")?.abort();
+    readRequests.get("settings")?.abort();
     void refreshStatus();
     void refreshDashboard();
     void refreshPlan();
@@ -1786,6 +1820,7 @@ async function init() {
   document.addEventListener("visibilitychange", resumeDashboard);
   window.addEventListener("pageshow", resumeDashboard);
   window.addEventListener("online", resumeDashboard);
+  window.addEventListener("focus", resumeDashboard);
   let lastWidth = window.innerWidth, resizeTimer;
   window.addEventListener("resize", () => {
     window.clearTimeout(resizeTimer);

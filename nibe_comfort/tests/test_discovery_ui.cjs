@@ -15,6 +15,8 @@ async function run(config, response = result, state = "3", fail = false) {
   const context = vm.createContext({
     document: {},
     AbortSignal,
+    AbortController,
+    window: { setTimeout, clearTimeout },
     fetch: async () => {
       if (fail) throw new Error("Home Assistant frånkopplad");
       return { ok: true, json: async () => response };
