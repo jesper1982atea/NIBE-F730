@@ -462,7 +462,21 @@ try {
   } }));
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await page.waitForFunction(() => document.getElementById("next-change").textContent === "Övre gränsen nådd");
-  assert.match(await page.locator("#next-change-why").textContent(), /4,35.*säkerhetsgräns är 3/);
+  assert.match(await page.locator("#next-change-why").textContent(), /4,35.*sparade gräns är 3/);
+  assert.equal(await page.locator("#adjust-offset-limits").isVisible(), true);
+  await page.locator("#adjust-offset-limits").click();
+  assert.equal(await page.locator("#max_offset").isVisible(), true, "Limit warning opens directly to editable limits");
+  assert.equal(await page.locator("#max_offset").inputValue(), String(settings.max_offset));
+  await page.locator("#max_offset").fill("5");
+  await page.locator("#max_offset").dispatchEvent("input");
+  assert.match(await page.locator("#settings-save-status").textContent(), /Osparade ändringar.*Högsta förskjutning/);
+  assert.equal(settings.max_offset, 3, "Changing a limit is a draft, never automatic");
+  await page.locator("#offset-limits button").click();
+  await page.waitForFunction(() => document.getElementById("offset-limits-saved").textContent.includes("till 5"));
+  assert.equal(settings.max_offset, 5, "New limit is persisted through the ordinary settings endpoint");
+  await page.locator("#max_offset").fill("3");
+  await page.locator("#offset-limits button").click();
+  await page.waitForFunction(() => document.getElementById("offset-limits-saved").textContent.includes("till 3"));
   await page.locator("#refresh-plan").click();
   await page.waitForTimeout(300);
   assert.equal(await page.locator("#next-change").textContent(), "Övre gränsen nådd");
@@ -474,6 +488,7 @@ try {
   assert.ok(await page.locator("#room-impact-list .room-area-group").count() >= 1);
   assert.equal(await page.locator("#room_sensors .room-choice-area").filter({ hasText: "Home Assistant-rum: Vardagsrum" }).count(), 1);
   assert.equal(await page.locator("#next-change").textContent(), "Ingen behövs");
+  assert.equal(await page.locator("#adjust-offset-limits").isVisible(), false);
   assert.match(await page.locator("#updated").textContent(), /Uppdateras automatiskt/);
   const heavyEndpoints = ["history", "plan", "hotwater", "learning"];
   const heavyReads = Object.fromEntries(heavyEndpoints.map((name) => [name, 0]));
@@ -540,10 +555,16 @@ try {
       nordpool: { price_entity: nordpoolId, price_message: "Nord Pools aktuella elpris hittades automatiskt." },
     },
   } }));
+  await nordpoolPage.route("**/api/overview", (route) => route.fulfill({ json: nordpoolSettings.price_provider === "nordpool"
+    ? { ...overview, house: [{ label: "Husets effekt just nu", value: null, error: "Ingen förbrukningsmätare vald." }],
+      price: { label: "Aktuellt elpris · Nord Pool", value: "0.5", unit: "SEK/kWh" },
+      electricity_note: "Elpriset kommer från Nord Pool. Enegics förbrukningsmätning är separat." }
+    : overview }));
   await nordpoolPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await nordpoolPage.waitForFunction((id) => document.getElementById("price_entity").value === id, price);
   assert.equal(await nordpoolPage.locator("#price_provider").inputValue(), "tibber");
   assert.match(await nordpoolPage.locator("#price-provider-status").textContent(), /Sparad elpriskälla: Tibber/);
+  assert.equal(await nordpoolPage.locator("#nordpool-help").isVisible(), false);
   await nordpoolPage.locator("#settings-panel > summary").click();
   await nordpoolPage.locator("#price_provider").selectOption("nordpool");
   await nordpoolPage.waitForFunction((id) => document.getElementById("price_entity").value === id, nordpoolId);
@@ -554,6 +575,7 @@ try {
   assert.equal(await nordpoolPage.locator("#price_provider").inputValue(), "nordpool", "External settings polling preserves the source draft");
   assert.equal(await nordpoolPage.locator("#price_entity").inputValue(), nordpoolId, "Source and sensor drafts remain paired");
   assert.match(await nordpoolPage.locator("#price-discovery").textContent(), /Nord Pool/);
+  assert.doesNotMatch(await nordpoolPage.locator("#price-provider-status").textContent(), /Tibber/);
   assert.match(await nordpoolPage.locator("#price-unit").textContent(), /SEK\/kWh/);
   assert.equal(await nordpoolPage.locator("#preheat_enabled").isChecked(), false, "Discovering Nord Pool never activates preheating");
   assert.match(await nordpoolPage.locator("#manual-price").locator("..").textContent(), /Enegic mäter förbrukning/);
@@ -562,6 +584,9 @@ try {
   assert.equal(providerWrites, 1);
   assert.equal(nordpoolSettings.price_provider, "nordpool");
   assert.equal(nordpoolSettings.price_entity, nordpoolId);
+  await nordpoolPage.waitForFunction(() => document.getElementById("electricity-note").textContent.includes("Nord Pool"));
+  assert.doesNotMatch(await nordpoolPage.locator("#electricity-metrics").textContent(), /Tibber/);
+  assert.equal(await nordpoolPage.locator("#nordpool-help").isVisible(), true);
   await nordpoolPage.reload();
   await nordpoolPage.waitForFunction(() => document.getElementById("price_provider").value === "nordpool");
   assert.equal(await nordpoolPage.locator("#price_entity").inputValue(), nordpoolId, "Saved Nord Pool selection survives reload with Tibber present");

@@ -93,6 +93,32 @@ class OverviewTests(unittest.TestCase):
         data = overview(self.states, [], self.config, self.now)
         self.assertTrue(all(item["value"] is None for item in data["pump"]))
 
+    def test_nordpool_overview_never_uses_tibber_meters_or_text(self):
+        price_id = "sensor.nord_pool_se3_aktuellt_pris"
+        self.states.append(entity(price_id, 0.5, unit_of_measurement="SEK/kWh"))
+        self.config.update(price_provider="nordpool", price_entity=price_id)
+        for registry in (self.registry, []):
+            with self.subTest(tibber_installed=bool(registry)):
+                data = overview(self.states, registry, self.config, self.now)
+                self.assertEqual(data["price"]["entity_id"], price_id)
+                self.assertEqual(data["price"]["value"], "0.5")
+                self.assertIn("Nord Pool", data["price"]["label"])
+                self.assertTrue(all(item["value"] is None for item in data["house"]))
+                self.assertNotIn("Tibber", str(data))
+                self.assertIn("hämtas inte automatiskt", data["electricity_note"])
+
+    def test_overview_cache_follows_saved_provider_when_switching_back(self):
+        ha = Mock()
+        ha.states.return_value = self.states
+        ha.integration_registry.return_value = self.registry
+        insights = Insights(ha)
+        tibber = insights.overview(self.config)
+        nordpool = insights.overview({**self.config, "price_provider": "nordpool"})
+        self.assertEqual(tibber["house"][0]["value"], "1200")
+        self.assertIsNone(nordpool["house"][0]["value"])
+        self.assertNotIn("Tibber", str(nordpool))
+        self.assertEqual(insights.overview(self.config), tibber)
+
 
 class HistoryTests(unittest.TestCase):
     def setUp(self):
@@ -302,6 +328,10 @@ class PlanTests(unittest.TestCase):
         plan = planned_offsets(cfg, status, [], prices, self.now, self.now + 86400, False)
         self.assertTrue(any("Tibber" in note for note in plan["notes"]))
         self.assertEqual(plan["changes"], [])
+        cfg["price_provider"] = "nordpool"
+        plan = planned_offsets(cfg, status, [], [], self.now, self.now + 86400, False)
+        self.assertTrue(any("Nord Pool" in note for note in plan["notes"]))
+        self.assertNotIn("Tibber", str(plan))
 
     def test_plan_respects_wait_time_and_max_step(self):
         cfg = config(offset_entity=self.offset, base_offset=3, min_offset=-3, max_offset=3, max_step=1, min_interval_minutes=30)

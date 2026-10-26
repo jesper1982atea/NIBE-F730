@@ -3,8 +3,6 @@
 const $ = (id) => document.getElementById(id);
 const advanced = [
   ["base_offset", "Basförskjutning · steg", -10, 10, 0.1, "Utgångsläget som all kompensation läggs till på."],
-  ["min_offset", "Lägsta förskjutning", -10, 10, 0.1, "Absolut nedre säkerhetsgräns."],
-  ["max_offset", "Högsta förskjutning", -10, 10, 0.1, "Absolut övre säkerhetsgräns."],
   ["room_gain", "Rumspåverkan · steg/°C", 0, 5, 0.1, "Hur mycket en grads avvikelse påverkar förskjutningen."],
   ["deadband", "Tolerans runt målet · °C", 0, 2, 0.1, "Inom detta band ger rummen ingen extra kompensation."],
   ["max_step", "Maximal ändring per gång", 0.1, 2, 0.1, "Måste vara minst entitetens steglängd."],
@@ -139,9 +137,10 @@ function renderPriceProvider() {
   const label = provider === "nordpool" ? "Nord Pool" : "Tibber";
   $("price-provider-status").textContent = `${saved ? "Sparad elpriskälla" : "Osparat val"}: ${label}. ${
     provider === "tibber"
-      ? "Kommande priser hämtas från Tibber, inte Nord Pool. Förbrukningsöversikten kan visa Tibbers husmätare."
+      ? "Kommande priser hämtas från Tibber. Förbrukningsöversikten kan visa Tibbers husmätare."
       : "Kommande priser hämtas från vald Nord Pool-givare/integration. Enegics förbrukningsmätning är separat."
   }${saved ? "" : " Börjar gälla först när du sparar."}`;
+  $("nordpool-help").hidden = provider !== "nordpool";
   $("price-discovery").textContent = priceDiscovery(provider)?.price_message || `Välj en prisgivare för ${label} manuellt.`;
 }
 
@@ -584,6 +583,7 @@ async function refreshStatus() {
     $("indoor-diff").textContent = "Medel av dina valda rum";
     $("next-change").textContent = "Avvaktar";
     $("next-change-why").textContent = "Kontakt med tillägget saknas.";
+    $("adjust-offset-limits").hidden = true;
     $("updated").textContent = "Visningen är inte aktuell. Ansluter igen automatiskt.";
   } finally {
     statusBusy = false;
@@ -622,6 +622,7 @@ async function refreshSavedSettings() {
 
 function renderSavedSettingsStatus() {
   $("settings-sync-status").textContent = `Sparat mål: ${displayNumber(settings.target_temperature)} °C. Osparade ändringar används först när du sparar.`;
+  $("offset-limits-saved").textContent = `Sparat intervall: ${displayNumber(settings.min_offset)} till ${displayNumber(settings.max_offset)} steg.`;
 }
 
 function renderIndoorDiff() {
@@ -668,9 +669,13 @@ const valueAt = (points, time) => {
 
 function renderControlLimit() {
   const limit = lastStatus?.control_limit;
-  if (!limit || lastStatus.error_message || lastStatus.next_offset !== lastStatus.current_offset) return;
+  const limited = limit && !lastStatus.error_message && lastStatus.checked_at
+    && Date.now() / 1000 - lastStatus.checked_at <= 180
+    && lastStatus.next_offset === lastStatus.current_offset;
+  $("adjust-offset-limits").hidden = !limited;
+  if (!limited) return;
   $("next-change").textContent = limit.direction === "upper" ? "Övre gränsen nådd" : "Nedre gränsen nådd";
-  $("next-change-why").textContent = `Beräknad förskjutning ${displayNumber(limit.requested)}, men din säkerhetsgräns är ${displayNumber(limit.value)}. Ingen ytterligare justering tillåts.`;
+  $("next-change-why").textContent = `Beräknad förskjutning ${displayNumber(limit.requested)}, men din sparade gräns är ${displayNumber(limit.value)}. Automatiken stannar vid gränsen. Du kan ändra tillåtet intervall i inställningarna.`;
 }
 
 function renderLiveAdjustment() {
@@ -924,8 +929,10 @@ function metric(item) {
 }
 
 async function refreshOverview() {
+  const provider = settings.price_provider;
   try {
     const data = await api("overview");
+    if (provider !== settings.price_provider) return;
     $("pump-metrics").replaceChildren(...data.pump.map(metric));
     $("electricity-metrics").replaceChildren(...data.pump_electricity.map(metric), ...data.house.map(metric));
     if (data.price) $("electricity-metrics").append(metric(data.price));
@@ -935,6 +942,7 @@ async function refreshOverview() {
     $("electricity-note").textContent = data.electricity_note;
     $("overview-status").textContent = `Senast hämtat ${new Date(data.checked_at * 1000).toLocaleTimeString("sv-SE")}.`;
   } catch (error) {
+    if (provider !== settings.price_provider) return;
     $("pump-metrics").replaceChildren();
     $("electricity-metrics").replaceChildren();
     $("overview-status").textContent = `Kunde inte läsa pumpstatus: ${error.message}`;
@@ -1573,10 +1581,13 @@ async function refreshEvents(older = false) {
 }
 
 async function refreshDashboard() {
-  if (dashboardBusy) return;
+  if (dashboardBusy) { pendingRefreshes.add("dashboard"); return; }
   dashboardBusy = true;
   try { await Promise.all([refreshOverview(), refreshEvents()]); }
-  finally { dashboardBusy = false; }
+  finally {
+    dashboardBusy = false;
+    if (pendingRefreshes.delete("dashboard")) void refreshDashboard();
+  }
 }
 
 const clock = (time) => new Date(time * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
@@ -1669,6 +1680,11 @@ async function showVersion() {
 
 async function init() {
   makeAdvanced();
+  $("adjust-offset-limits").onclick = () => {
+    $("settings-panel").open = true;
+    const id = lastStatus?.control_limit?.direction === "lower" ? "min_offset" : "max_offset";
+    $(id).focus({ preventScroll: true });
+  };
   $("save").disabled = $("save-near").disabled = $("pause").disabled = true;
   try {
     [settings, entities] = await Promise.all([api("settings"), api("entities")]);

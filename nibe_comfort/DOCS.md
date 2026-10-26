@@ -418,6 +418,19 @@ visas ett uttryckligt fel; temperaturhistoriken behålls utan markeringar.
 
 ### Värmeplan · väder och elpris
 
+**Tillåten kurvförskjutning** finns direkt i inställningarna. Du kan ändra
+lägsta och högsta förskjutning; varningen om nådd gräns länkar direkt dit.
+Värdet 4 är inte ett fast tak. Befintliga gränser behålls tills du själv
+ändrar och sparar dem. Pumpens tillåtna intervall, maximal ändring per gång
+och väntetid gäller fortfarande. Högre förskjutning påverkar hela huset,
+även redan varma rum, och ett kurvsteg är inte en grads rumstemperatur.
+
+Den sparade elpriskällan styr prisunderlaget och förbrukningsöversiktens
+leverantörstexter. Med Nord Pool visas inte husmätare eller feltexter från
+Tibber, även om integrationen också är installerad. Nord Pool är en
+priskälla, inte en förbrukningsmätare; värden från exempelvis Enegic hämtas
+inte automatiskt till förbrukningsöversikten.
+
 Ett eget kort visar senaste dygnet och kommande cirka 36 timmar på samma
 tidsaxel, med en linje för *nu*:
 

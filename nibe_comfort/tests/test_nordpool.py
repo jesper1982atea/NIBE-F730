@@ -106,15 +106,19 @@ class NordPoolPricesTests(PriceFixture, unittest.TestCase):
     def test_current_only_sensor_supports_immediate_control_but_reports_missing_forecast(self):
         self.ha.states.return_value[-1]["attributes"] = {"unit_of_measurement": "SEK/kWh"}
         self.ha.integration_registry.return_value = [{"entity_id": "sensor.tibber", "platform": "tibber"}]
-        with self.assertRaisesRegex(ControlError, "saknar kommande priser"):
+        with self.assertRaisesRegex(ControlError, "saknar kommande priser") as error:
             self.insights.preheat(self.cfg)
+        self.assertNotIn("Tibber", str(error.exception))
+        self.assertIn("Nord Pool", str(error.exception))
         self.ha.request.assert_not_called()
         self.insights.house_model.assert_not_called()
 
     def test_missing_selection_does_not_use_tibber_implicitly(self):
         self.ha.integration_registry.return_value = [{"entity_id": "sensor.tibber", "platform": "tibber"}]
-        with self.assertRaisesRegex(ControlError, "Välj en elprisgivare"):
+        with self.assertRaisesRegex(ControlError, "Välj en elprisgivare") as error:
             self.insights.prices({**self.cfg, "price_entity": ""})
+        self.assertIn("Nord Pool", str(error.exception))
+        self.assertNotIn("Tibber", str(error.exception))
         self.ha.request.assert_not_called()
 
     def test_unavailable_and_stale_source_disable_preheat_even_with_cached_schedule(self):

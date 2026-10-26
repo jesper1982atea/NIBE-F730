@@ -134,7 +134,8 @@ def overview(states, registry, config, now):
             word in text for word in ("consumption", "consumed", "electrical", "electricity", "electric power", "energy_spent")
         ):
             pump_electricity.append(reading(entity, attrs.get("friendly_name", eid), config["max_age_minutes"], now, pump_states))
-    tibber_ids = {r["entity_id"] for r in registry if r.get("platform") == "tibber"}
+    tibber_ids = {r["entity_id"] for r in registry
+                  if config["price_provider"] == "tibber" and r.get("platform") == "tibber"}
     house = []
     for device_class, label in (("power", "Husets effekt just nu"), ("energy", "Husets förbrukning i dag")):
         candidates = []
@@ -150,15 +151,23 @@ def overview(states, registry, config, now):
         if len(candidates) == 1:
             house.append(reading(candidates[0], label, config["max_age_minutes"], now))
         else:
-            house.append({"label": label, "value": None, "error": "Saknad eller flertydig Tibber-mätare."})
+            house.append({"label": label, "value": None, "error": (
+                "Ingen förbrukningsmätare vald. Nord Pool ger elpris, inte husets förbrukning."
+                if config["price_provider"] == "nordpool" else "Saknad eller flertydig Tibber-mätare."
+            )})
     price = None
     price_id = config["price_entity"] or discover_prices(states, registry, config["price_provider"])["price_entity"]
     if price_id in by_id:
-        price = reading(by_id[price_id], "Aktuellt elpris", config["max_age_minutes"], now)
+        provider = "Nord Pool" if config["price_provider"] == "nordpool" else "Tibber"
+        price = reading(by_id[price_id], f"Aktuellt elpris · {provider}", config["max_age_minutes"], now)
     return {
         "checked_at": now, "pump": pump, "pump_electricity": pump_electricity,
         "house": house, "price": price,
-        "electricity_note": "Husets Tibber-värden gäller hela huset, inte bara pumpen. Pumpens elförbrukning kräver en separat mätare eller en tydlig förbrukningsgivare från myUplink.",
+        "electricity_note": (
+            "Elpriset kommer från Nord Pool. Husets förbrukning från exempelvis Enegic är separat och hämtas inte automatiskt här. "
+            if config["price_provider"] == "nordpool" else
+            "Husets Tibber-värden gäller hela huset, inte bara pumpen. "
+        ) + "Pumpens elförbrukning kräver en separat mätare eller en tydlig förbrukningsgivare från myUplink.",
     }
 
 
@@ -565,7 +574,8 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
     if not weather_on and not price_on and not preheat_on:
         plan["notes"].append("Väder- och elprispåverkan är 0, så planen följer bara rumstemperaturen.")
     if price_configured and not use_prices:
-        plan["notes"].append("Prisplanen kräver kommande priser från vald elprisgivare (Tibber eller Nord Pool), i samma enhet som givaren.")
+        provider = "Nord Pool" if config["price_provider"] == "nordpool" else "Tibber"
+        plan["notes"].append(f"Prisplanen kräver kommande priser från vald {provider}-givare, i samma enhet som givaren.")
     if price_on and prices_until is not None and prices_until < end:
         plan["notes"].append("Prislistan täcker inte hela planen. Efter sista prisperioden antas ingen extra kurvpåverkan från priset; framtida priser gissas inte.")
     if not config["enabled"]:
@@ -868,7 +878,8 @@ class Insights:
     def prices(self, config):
         price_id = config["price_entity"]
         if not price_id:
-            raise ControlError("Välj en elprisgivare för kommande priser från Tibber eller Nord Pool.")
+            provider = "Nord Pool" if config["price_provider"] == "nordpool" else "Tibber"
+            raise ControlError(f"Välj en elprisgivare för kommande priser från {provider}.")
 
         def load():
             registry = self.registry()
@@ -891,7 +902,7 @@ class Insights:
             if config["price_provider"] == "nordpool" and platform == "nordpool":
                 return self.nordpool_service_prices(entity, states, registry)
             if config["price_provider"] == "nordpool":
-                raise ControlError("Vald elprisgivare saknar kommande priser. Tibber, Nord Pool med raw_today/raw_tomorrow eller Nord Pools prisåtgärd behövs.")
+                raise ControlError("Vald Nord Pool-givare saknar kommande priser. Nord Pool med raw_today/raw_tomorrow eller Nord Pools prisåtgärd behövs.")
             now = time.time()
             local = datetime.fromtimestamp(now).astimezone()
             midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
