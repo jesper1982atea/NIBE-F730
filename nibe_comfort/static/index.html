@@ -342,6 +342,7 @@
             <select id="price_entity" name="price_entity"></select>
           </details>
           <p id="price-unit" class="hint"></p>
+          <p id="entities-status" class="hint" role="status"></p>
           <details class="disclosure"><summary>Enegic och Nord Pool utan Tibber</summary>
             <p>Har du Enegic för husets förbrukning? Du behöver inte Tibber för värmestyrningen. Välj <strong>Nord Pool som elpriskälla</strong> ovan och din aktuella Nord Pool-prisgivare, exempelvis <code>sensor.nord_pool_se3_aktuellt_pris</code>. Enegic mäter förbrukning; Nord Pool levererar priset.</p>
             <p>Förvärmning stöder Nord Pools <code>raw_today</code>/<code>raw_tomorrow</code> eller Home Assistants officiella Nord Pool-integration för SE1–SE4. För den officiella integrationen behöver givarens entitets-id innehålla elområdet. Utan kommande priser fungerar fortfarande den separata regeln för priset just nu. Prisgränser följer givarens enhet; moms och avgifter läggs inte till.</p>

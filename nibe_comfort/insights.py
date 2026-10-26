@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import math
 import re
 import threading
@@ -684,6 +685,42 @@ class Insights:
         self.history_lock = threading.Lock()
         self.store = LearningStore(f"{data_dir}/learning.sqlite" if data_dir else None)
         self.fireplace_provider = None
+        self.control_schedule = None
+        self.control_loading = False
+
+    def control_preheat(self, config):
+        """Never let optional historical analysis delay current control readings."""
+        key = json.dumps(config, sort_keys=True), self.fireplace_intervals()
+        with self.lock:
+            entry = self.control_schedule
+            matching = entry is not None and entry[0] == key
+            age = time.monotonic() - entry[1] if matching else float("inf")
+            if not self.control_loading and age >= 60:
+                self.control_loading = True
+                threading.Thread(target=self._load_control_preheat, args=(key, copy.deepcopy(config)),
+                                 daemon=True).start()
+            if matching and age < 900:
+                if isinstance(entry[2], str):
+                    raise ControlError(entry[2])
+                return copy.deepcopy(entry[2])
+        raise ControlError("Förvärmningsplanen hämtas i bakgrunden. Vanligt temperaturmål används tills den är klar.")
+
+    def _load_control_preheat(self, key, config):
+        result = "Förvärmningshämtningen avbröts. Vanligt temperaturmål används."
+        try:
+            result = self.preheat(config)
+        except ControlError as exc:
+            result = str(exc)
+            logging.getLogger("nibe_comfort").warning("Förvärmningsplanen kunde inte hämtas: %s", exc)
+        except Exception as exc:
+            logging.getLogger("nibe_comfort").exception("Internt fel vid hämtning av förvärmningsplan")
+            result = f"Internt fel i förvärmningsplaneringen: {type(exc).__name__}. Kontrollera tilläggsloggen."
+        else:
+            result = copy.deepcopy(result)
+        finally:
+            with self.lock:
+                self.control_schedule = (key, time.monotonic(), result)
+                self.control_loading = False
 
     def fireplace_intervals(self):
         return self.fireplace_provider() if self.fireplace_provider else []

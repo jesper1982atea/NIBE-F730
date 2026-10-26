@@ -861,6 +861,13 @@ try {
   let delayNextSettings = false, releaseSettings;
   let pendingWrite = null;
   let liveWrites = 0;
+  let liveEntityTemperature = 22.2;
+  let entityReads = 0;
+  await livePage.route("**/api/entities", (route) => {
+    entityReads++;
+    return route.fulfill({ json: entities.map((e) => e.entity_id === thermostat
+      ? { ...e, current_temperature: liveEntityTemperature } : e) });
+  });
   await livePage.route("**/api/settings", async (route) => {
     if (route.request().method() !== "GET") {
       liveWrites++;
@@ -874,10 +881,10 @@ try {
     return route.fulfill(settingsFail ? { status: 502, json: { error: "Inställningskontakt saknas" } }
       : { json: captured });
   });
-  await livePage.route("**/api/status", (route) => route.fulfill(statusFails
+  await livePage.route("**/api/status", async (route) => route.fulfill(statusFails
     ? { status: 502, json: { error: "Tillfälligt statusfel" } }
     : { json: {
-      checked_at: now - (staleReadings ? 600 : 0), enabled: true, indoor: liveIndoor,
+      checked_at: await livePage.evaluate(() => Date.now() / 1000) - (staleReadings ? 600 : 0), enabled: true, indoor: liveIndoor,
       outdoor: liveOutdoor, house_indoor: liveHouse, current_offset: 3,
       next_offset: 3, desired_offset: 3, wait_seconds: pendingWrite ? 600 : 0,
       pending_write: pendingWrite, message: "Ingen ändring behövs.",
@@ -906,6 +913,13 @@ try {
   assert.equal(await livePage.locator(`#room_sensors input[value="${thermostat}"]`).isChecked(), true);
   assert.equal(await livePage.locator(`#priority_sensors input[value="${thermostat}"]`).isChecked(), false);
   assert.equal(await livePage.locator("#nearest_thermostat").inputValue(), thermostat, "Coupled room drafts stay together");
+  liveEntityTemperature = 23.4;
+  await livePage.clock.fastForward(61000);
+  await livePage.waitForFunction(() => [...document.querySelectorAll("#room_sensors label")]
+    .some((label) => label.textContent.includes("23,4")));
+  assert.ok(entityReads >= 2, "Sensor values in settings refresh without leaving the page");
+  assert.equal(await livePage.locator("#target_temperature").inputValue(), "24", "Refreshing entities preserves unsaved target");
+  assert.equal(await livePage.locator("#price_entity").inputValue(), outdoor, "Refreshing entities preserves unsaved sensor choice");
   assert.equal(await livePage.locator("#min_interval_minutes").inputValue(), "45", "Unedited settings follow external changes");
   assert.match(await livePage.locator("#settings-save-status").textContent(), /Osparade.*Måltemperatur/);
   settingsFail = true;
@@ -953,6 +967,23 @@ try {
   await oldSettingsResponse;
   assert.equal(await livePage.locator("#target_temperature").inputValue(), "24", "An old in-flight read cannot overwrite a successful save");
   assert.equal(liveWrites, 1, "Only the explicit save may write settings");
+  let heldStatus;
+  const heldGate = new Promise((resolve) => { heldStatus = resolve; });
+  let statusStarted = false;
+  await livePage.route("**/api/status", async (route) => {
+    statusStarted = true;
+    await heldGate;
+    await route.fulfill({ json: { checked_at: Date.now() / 1000, indoor: 10 } });
+  }, { times: 1 });
+  await livePage.evaluate(() => void refreshStatus());
+  for (let attempt = 0; attempt < 50 && !statusStarted; attempt++) await page.waitForTimeout(20);
+  assert.ok(statusStarted);
+  liveIndoor = 21.7;
+  await livePage.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await livePage.waitForFunction(() => document.getElementById("indoor").textContent === "21,7");
+  heldStatus();
+  await page.waitForTimeout(100);
+  assert.equal(await livePage.locator("#indoor").textContent(), "21,7", "Resuming cancels stalled reads and ignores their late response");
   await livePage.close();
   const firePage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   firePage.on("pageerror", (error) => errors.push(error.message));

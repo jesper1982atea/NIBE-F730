@@ -1054,6 +1054,13 @@ class Controller:
                 fireplace = self.fireplace_step(entities, now, peers)
                 self.test_step(entities, now)
                 self.observe(entities, now, peers)
+                if self.config["preheat_enabled"]:
+                    try:
+                        price = fresh_entity({e["entity_id"]: e for e in entities}, self.config["price_entity"],
+                                             self.config["max_age_minutes"], now)
+                        number(price["state"], "Aktuellt elpris")
+                    except ControlError as exc:
+                        schedule = {"error": str(exc)}
                 preheat = self.preheat(now, schedule)
                 result = evaluate(self.config, entities, now, peers, preheat["shift"],
                                   fireplace_active=fireplace["phase"] == "active")
