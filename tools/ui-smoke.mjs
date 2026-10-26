@@ -516,6 +516,29 @@ try {
   await page.waitForFunction(() => document.getElementById("history-status").textContent.includes("Recorder saknas"));
   assert.equal(await page.locator("#temperature-chart svg").count(), 0);
   assert.equal(await page.locator("#enabled").isChecked(), true, "History failure must not change automation");
+  const nordpoolPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  nordpoolPage.on("pageerror", (error) => errors.push(error.message));
+  const nordpoolId = "sensor.nord_pool_se3_aktuellt_pris";
+  const nordpoolSettings = { ...settings, price_entity: "", preheat_enabled: false };
+  await nordpoolPage.route("**/api/settings", (route) => route.fulfill({ json: nordpoolSettings }));
+  await nordpoolPage.route("**/api/entities", (route) => route.fulfill({ json: [
+    ...entities, { entity_id: nordpoolId, name: "Nord Pool SE3 Aktuellt pris", state: "0.5", unit: "SEK/kWh" },
+  ] }));
+  await nordpoolPage.route("**/api/discovery", (route) => route.fulfill({ json: {
+    offset_entity: offset, outdoor_entity: outdoor, price_entity: nordpoolId,
+    message: "NIBE hittad", price_message: "Nord Pools aktuella elpris hittades automatiskt.",
+  } }));
+  await nordpoolPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await nordpoolPage.waitForFunction((id) => document.getElementById("price_entity").value === id, nordpoolId);
+  assert.match(await nordpoolPage.locator("#price-discovery").textContent(), /Nord Pool/);
+  assert.match(await nordpoolPage.locator("#price-unit").textContent(), /SEK\/kWh/);
+  assert.equal(await nordpoolPage.locator("#preheat_enabled").isChecked(), false, "Discovering Nord Pool never activates preheating");
+  assert.match(await nordpoolPage.locator("#manual-price").locator("..").textContent(), /Enegic mäter förbrukning/);
+  nordpoolSettings.price_entity = price;
+  await nordpoolPage.reload();
+  await nordpoolPage.waitForFunction((id) => document.getElementById("price_entity").value === id, price);
+  assert.equal(await nordpoolPage.locator("#price_entity").inputValue(), price, "Discovery preserves an already saved provider");
+  await nordpoolPage.close();
   const priorityPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
   priorityPage.on("pageerror", (error) => errors.push(error.message));
   const thirdRoom = entities.find((entity) => entity.name.startsWith("LK Badrum")).entity_id;

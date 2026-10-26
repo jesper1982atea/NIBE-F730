@@ -9,8 +9,8 @@ tekniska värden kan fällas ut när du behöver dem; alla funktioner finns kvar
 Genvägar hjälper dig hitta rum, varmvatten och inställningar.
 
 Visar även temperaturgrafer per rum med termostaternas börvärde, en värmeplan
-med väder, Tibbers kvartspriser och planerad förskjutning, en uppskattad
-värmekurva, SMHI/HA-väderprognos, Tibbers aktuella pris samt pumpens tillgängliga larm- och driftvärden. Golvvärme via
+med väder, Tibber-/Nord Pool-priser och planerad förskjutning, en uppskattad
+värmekurva, SMHI/HA-väderprognos, aktuellt elpris samt pumpens tillgängliga larm- och driftvärden. Golvvärme via
 `climate` stöds som rumsgivare. Inställningsändringar och automatiska
 skrivförsök sparas i en beständig ändringslogg.
 Varje vald termostat har en dygnsgraf för uppmätt temperatur och börvärde,

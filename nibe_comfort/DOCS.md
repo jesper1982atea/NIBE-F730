@@ -151,7 +151,8 @@ anpassas till mätvärdena:
 Grafen visar innetemperaturen senaste dygnet och vad modellen tror händer
 nästa dygn med den planerade värmekurvan och väderprognosen.
 
-**Förvärmning före dyra timmar** är av från början och kräver Tibber-priser.
+**Förvärmning före dyra timmar** är av från början och kräver kommande
+priser från vald Tibber- eller Nord Pool-givare.
 Inställningen **Lagra lite värme före dyra timmar** finns vid husmodellen;
 elpriskortet länkar direkt dit. Där visas ett exempel med ditt mål: med
 21 °C och måländring 0,5 °C blir det tillfälliga målet 21,5 °C före
@@ -421,8 +422,9 @@ Ett eget kort visar senaste dygnet och kommande cirka 36 timmar på samma
 tidsaxel, med en linje för *nu*:
 
 - **Utetemperatur**: NIBE-givarens historik och väderprognosen (streckad).
-- **Elpris**: Tibbers kvartspriser via `tibber.get_prices`, med dina gränser
-  för billigt och dyrt. Kräver exakt ett Tibber-hem; annars visas ett fel.
+- **Elpris**: priser från vald Tibber- eller Nord Pool-givare, med dina gränser
+  för billigt och dyrt. Tibber hämtas via `tibber.get_prices` och kräver exakt
+  ett hem; annars visas ett fel. Nord Pool beskrivs under *Elpris* nedan.
 - **Kurvförskjutning**: faktisk förskjutning, planerad förskjutning
   (streckad lila) och beräknat mål (tunn streckad). Planen simulerar samma
   regler som automatiken: hela steg, största steg och minsta ändringsintervall,
@@ -593,17 +595,63 @@ Nord Pool-integration. Kontrollera enheten i gränssnittet: gränserna använder
 exakt samma enhet. Tillägget räknar inte om öre till kronor och lägger inte
 automatiskt till skatt, moms eller nätavgifter.
 
-Tillägget försöker fylla i prisgivaren automatiskt från Tibber-integrationen,
-om exakt en prisgivare med enheten valuta/kWh eller valuta/MWh finns.
+Tillägget försöker fylla i prisgivaren automatiskt från Tibber eller Nord Pool,
+om exakt en aktuell prisgivare med enheten valuta/kWh eller valuta/MWh finns.
 Månadspris, energiförbrukning och kostnad väljs inte som aktuellt pris.
-Flera Tibber-hem kräver manuellt val. Redan sparat val ersätts aldrig.
+Flera hem, elområden eller prisleverantörer kräver manuellt val.
+Redan sparat val ersätts aldrig.
 Tryck **Spara inställningar** för att behålla ett nytt förslag; att hitta
 en givare aktiverar inte prisstyrning eller ändrar prisgränserna.
 
 De fasta prisgränserna finns under **Avancerat · extra kurvpåverkan från
 priset just nu**. Detta är en separat regel, inte förvärmningsplanen, och
 kan läggas ovanpå den. Förvärmningen behöver inga fasta prisgränser.
-En givare med priset just nu bekräftar inte att kommande Tibber-priser finns.
+En givare med priset just nu bekräftar inte att kommande priser finns.
+
+### Enegic och Nord Pool utan Tibber
+
+Du kan använda Enegic för att mäta husets förbrukning och Nord Pool för
+elpriset utan att ha Tibber. Välj exempelvis
+`sensor.nord_pool_se3_aktuellt_pris` under **Ändra elprisgivare manuellt**,
+kontrollera enheten och spara. En förbrukningsgivare i W eller kWh ska inte
+väljas som prisgivare. Den befintliga förbrukningsöversikten är fortfarande
+Tibber-specifik; detta stöd lägger inte till Enegics API eller en separat
+Enegic-mätaröversikt.
+
+Priset just nu fungerar med den numeriska givarens värde och enhet.
+För **förvärmning och kommande prisgraf** stöds två varianter:
+
+- **HACS Nord Pool**: vald givare har `raw_today` och eventuellt
+  `raw_tomorrow`, med `start`, `end` och `value` per period.
+  Morgondagen används bara när `tomorrow_valid` är sann. Värdena behålls i
+  givarens enhet, inklusive öre/kWh. Tidsstämplarna måste ha tidszon.
+- **Officiella Nord Pool-integrationen i Home Assistant**: SE1–SE4 stöds.
+  Givarens entitets-id ska innehålla elområdet, som i exemplet ovan
+  (alternativt ha attributet `region`). Tillägget hittar givarens konfiguration
+  och hämtar priser med `nordpool.get_prices_for_date` i samma valuta.
+  Åtgärdens valuta/MWh räknas om till valuta/kWh om givaren använder kWh.
+  Datum hämtas från Home Assistants lokala klocka. Morgondagens lista
+  hämtas bara när samma elområdes diagnostiska binärgivare anger att
+  priserna är tillgängliga. Saknas den givaren används endast dagens lista.
+
+Prisgrafen slutar vid sista kända prisperioden. Om prislistan inte täcker
+hela förhandsplanen anges det i planens förklaring; efter sista perioden
+antas ingen extra kurvpåverkan från den separata prisregeln.
+
+Tim- och kvartsperioder stöds, inklusive sommar-/vintertid.
+Luckor, överlappningar, felaktiga priser eller okänd konfiguration ger
+ett uttryckligt fel. Inga priser gissas och ingen annan Tibber-givare används
+som reserv för en vald Nord Pool-givare. Moms, påslag och nätavgifter läggs
+inte till. Den officiella integrationen visar normalt spotpris utan moms,
+medan en HACS-givare kan vara inställd med moms eller tillägg.
+
+Saknas kommande prisdata, eller finns för få kommande perioder, visas orsaken
+och förvärmningen använder vanligt temperaturmål. Den separata regeln för
+priset just nu kan fortfarande användas när dess givare är giltig.
+Nord Pool-stödet är verifierat med testdata mot dokumenterade dataformat,
+inte mot en fysisk installation.
+Formatreferenser: [Home Assistants Nord Pool-åtgärd](https://www.home-assistant.io/actions/nordpool.get_prices_for_date/)
+och [HACS Nord Pool](https://github.com/custom-components/nordpool).
 
 Vid eller under lågprisgränsen läggs vald höjning till. Vid eller över
 högprisgränsen dras vald sänkning av. Mellan gränserna är påverkan 0.
@@ -682,7 +730,7 @@ Token ger behörighet att både läsa och ändra alla styrinställningar.
 | GET | `/api/history` | Senaste dygnets temperaturhistorik för sparade givare |
 | GET | `/api/forecast` | Prognos från vald eller entydigt upptäckt HA-väderkälla |
 | GET | `/api/hotwater` | Varmvattnets nivå, temperaturer, tappningar och laddningar senaste 7 dygnen (endast läsning) |
-| GET | `/api/plan` | Utetemperatur, Tibber-priser, faktisk/planerad förskjutning och uppskattad värmekurva (endast läsning) |
+| GET | `/api/plan` | Utetemperatur, Tibber-/Nord Pool-priser, faktisk/planerad förskjutning och uppskattad värmekurva (endast läsning) |
 | GET | `/api/events` | Senaste 100 logghändelser; `?before=<id>` hämtar äldre |
 | GET | `/api/settings` | Komplett sparad styrkonfiguration |
 | PUT | `/api/settings` | Ersätt komplett konfiguration med JSON |

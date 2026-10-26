@@ -121,7 +121,7 @@ class ApiTests(unittest.TestCase):
         self.ha.request.return_value = []
         status, plan = self.request("/api/plan")
         self.assertEqual(status, 200)
-        self.assertIn("Ingen Tibber", plan["prices"]["error"])
+        self.assertIn("Välj en elprisgivare", plan["prices"]["error"])
         self.assertEqual(plan["offset"]["planned"], [])
         self.ha.set_offset.assert_not_called()
 

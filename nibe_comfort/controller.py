@@ -146,7 +146,7 @@ def validate(config):
     if (result["cheap_boost"] or result["expensive_reduction"]) and not result["price_entity"]:
         raise ControlError("Välj elprisgivare för elprisstyrning.")
     if result["preheat_enabled"] and not result["price_entity"]:
-        raise ControlError("Välj elprisgivare (Tibber) för förvärmning.")
+        raise ControlError("Välj elprisgivare för förvärmning.")
     if result["enabled"] and (not rooms or not result["offset_entity"]):
         raise ControlError("Välj rumsgivare och kurvförskjutning innan aktivering.")
     return result
@@ -220,10 +220,11 @@ class HomeAssistant:
     def integration_registry(self):
         template = (
             "{% set ns = namespace(items=[]) %}"
-            "{% for platform in ['myuplink', 'tibber', 'smhi', 'met'] %}"
+            "{% for platform in ['myuplink', 'tibber', 'nordpool', 'smhi', 'met'] %}"
             "{% for eid in integration_entities(platform) %}"
             "{% set ns.items = ns.items + "
-            "[{'entity_id': eid, 'device_id': device_id(eid), 'platform': platform}] %}"
+            "[{'entity_id': eid, 'device_id': device_id(eid), 'platform': platform, "
+            "'config_entry_id': config_entry_id(eid)}] %}"
             "{% endfor %}{% endfor %}"
             "{% for climate in states.climate %}"
             "{% set did = device_id(climate.entity_id) %}"
@@ -264,11 +265,11 @@ class HomeAssistant:
         return {row["entity_id"]: {"area_id": row["area_id"], "area_name": row["area_name"]} for row in rows}
 
     def discover(self):
-        from insights import discover_tibber
+        from insights import discover_prices
         registry = self.integration_registry()
         states = self.states()
         result = discover_nibe(states, registry)
-        result.update(discover_tibber(states, registry))
+        result.update(discover_prices(states, registry))
         return result
 
 

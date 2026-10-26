@@ -56,5 +56,10 @@ async function run(config, response = result, state = "3", fail = false) {
   assert.equal(actual.settings.enabled, false);
   actual = await run({ ...defaults, price_entity: "sensor.manual_price" }, { ...result, price_entity: "sensor.tibber" });
   assert.equal(actual.settings.price_entity, "sensor.manual_price");
+  actual = await run({ ...defaults, price_entity: "" }, { ...result, price_entity: "sensor.nord_pool_se3_aktuellt_pris" });
+  assert.equal(actual.settings.price_entity, "sensor.nord_pool_se3_aktuellt_pris");
+  assert.equal(actual.settings.enabled, false);
+  actual = await run({ ...defaults, price_entity: "sensor.manual_price" }, { ...result, price_entity: "sensor.nord_pool_se3_aktuellt_pris" });
+  assert.equal(actual.settings.price_entity, "sensor.manual_price");
   console.log("UI discovery: automatic pairing, manual choices, room selection, bounds and errors passed.");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

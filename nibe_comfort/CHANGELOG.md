@@ -1,5 +1,24 @@
 # Ändringslogg
 
+## 0.2.29
+
+- Elprisstyrning utan Tibber, exempelvis med Enegic som förbrukningsmätare
+  och `sensor.nord_pool_se3_aktuellt_pris` som prisgivare. Entydiga aktuella
+  Nord Pool-prisgivare föreslås automatiskt; flera elområden eller hem kräver val.
+- Förvärmning och prisgraf kan använda HACS Nord Pools tidsstämplade
+  `raw_today`/`raw_tomorrow` eller den officiella Nord Pool-integrationens
+  prisåtgärd för SE1–SE4. Åtgärdens MWh-priser anpassas till vald givares
+  kWh/MWh-enhet. Moms och avgifter läggs inte till.
+- Framtidspriser följer vald givare, även vid byte. En vald Nord Pool-givare
+  använder aldrig ett annat hems Tibber-priser. Otillgängliga prisgivare
+  stoppar förvärmning även när en tidigare plan finns i cache.
+- Kvarts- och timpriser stöds med tidszoner och validerade sammanhängande
+  perioder. Morgondagens priser hämtas först när de är tillgängliga.
+  Saknas kommande prisdata visas orsaken; regeln för priset just nu är separat.
+- Hjälptexter förklarar skillnaden mellan Enegic-förbrukning och Nord Pool-pris.
+  Stödet är verifierat med testdata, inte på en fysisk Enegic/Nord Pool-installation.
+  Ingen separat Enegic-mätaröversikt eller Enegic-API-anslutning läggs till.
+
 ## 0.2.28
 
 - Samtidiga läsningar av samma underlag delar en pågående hämtning.

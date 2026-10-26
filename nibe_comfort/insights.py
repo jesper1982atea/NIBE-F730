@@ -3,6 +3,7 @@
 import copy
 import json
 import math
+import re
 import threading
 import time
 from concurrent.futures import Future, TimeoutError as FutureTimeout
@@ -33,6 +34,28 @@ def discover_tibber(states, registry):
             if candidates else "Ingen Tibber-prisgivare hittades. Välj prisgivare manuellt."
         ),
     }
+
+
+def nordpool_sensor(entity):
+    return entity["entity_id"].startswith(("sensor.nord_pool_", "sensor.nordpool_"))
+
+
+def discover_prices(states, registry):
+    tibber = discover_tibber(states, registry)
+    candidates = {s["entity_id"] for s in states if nordpool_sensor(s)
+                  and (s["entity_id"].endswith(("_aktuellt_pris", "_current_price"))
+                       or "raw_today" in s["attributes"])
+                  and re.fullmatch(r"[^\s/]+/(?:kWh|MWh)", s["attributes"].get("unit_of_measurement", ""), re.I)}
+    tibber_ids = {r["entity_id"] for r in registry if r.get("platform") == "tibber"}
+    candidates.update(s["entity_id"] for s in states if s["entity_id"] in tibber_ids
+                      and re.fullmatch(r"[^\s/]+/(?:kWh|MWh)", s["attributes"].get("unit_of_measurement", ""), re.I))
+    if len(candidates) == 1:
+        selected = next(iter(candidates))
+        return tibber if selected in tibber_ids else {
+            "price_entity": selected, "price_message": "Nord Pools aktuella elpris hittades automatiskt."}
+    return {"price_entity": "", "price_message": (
+        "Flera elprisgivare finns. Välj rätt hem och elområde manuellt." if candidates else
+        "Ingen Tibber- eller Nord Pool-prisgivare hittades. Välj prisgivare manuellt.")}
 
 
 LABELS = {
@@ -130,7 +153,7 @@ def overview(states, registry, config, now):
         else:
             house.append({"label": label, "value": None, "error": "Saknad eller flertydig Tibber-mätare."})
     price = None
-    price_id = config["price_entity"] or discover_tibber(states, registry)["price_entity"]
+    price_id = config["price_entity"] or discover_prices(states, registry)["price_entity"]
     if price_id in by_id:
         price = reading(by_id[price_id], "Aktuellt elpris", config["max_age_minutes"], now)
     return {
@@ -435,6 +458,41 @@ def tibber_prices(response):
     return sorted(prices)
 
 
+def nordpool_prices(rows, value_key="value", factor=1):
+    if not isinstance(rows, list) or len(rows) > 300:
+        raise ControlError("Nord Pool returnerade ogiltig eller för stor prislista.")
+    intervals = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ControlError("Nord Pool returnerade en ogiltig prisperiod.")
+        bounds = []
+        for key in ("start", "end"):
+            try:
+                stamp = datetime.fromisoformat(row[key].replace("Z", "+00:00"))
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                raise ControlError("Nord Pool: ogiltig tidsstämpel.") from exc
+            if stamp.tzinfo is None:
+                raise ControlError("Nord Pools prisperioder måste ha tidszon.")
+            bounds.append(stamp.timestamp())
+        start, end = bounds
+        if end - start not in (900, 3600):
+            raise ControlError("Nord Pools prisperiod måste vara 15 eller 60 minuter.")
+        intervals.append((start, end, number(row.get(value_key), "Nord Pool-pris") * factor))
+    intervals.sort()
+    if any(a[1] != b[0] for a, b in zip(intervals, intervals[1:])):
+        raise ControlError("Nord Pools prisperioder överlappar eller har luckor.")
+    resolution = min((end - start for start, end, _ in intervals), default=900)
+    return [[start + i * resolution, value] for start, end, value in intervals
+            for i in range(int((end - start) / resolution))]
+
+
+def price_end(prices):
+    if not prices:
+        return None
+    slot = min((b[0] - a[0] for a, b in zip(prices, prices[1:]) if b[0] > a[0]), default=900)
+    return prices[-1][0] + slot
+
+
 def planned_offsets(config, status, forecast, prices, now, end, use_prices, windows=None):
     """Simulate what the controller would write later, if the room stays as it is now.
 
@@ -448,6 +506,7 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
     weather_on = bool(config["weather_gain"])
     price_configured = bool(config["cheap_boost"] or config["expensive_reduction"])
     price_on = price_configured and use_prices
+    prices_until = price_end(prices)
     preheat_on = bool(config.get("preheat_enabled")) and bool(windows)
     fireplace_active = (status.get("fireplace") or {}).get("phase") == "active"
     fireplace = status["contributions"].get("fireplace", 0) if config["fireplace_enabled"] and fireplace_active else 0
@@ -468,7 +527,7 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
                 return None, []
             weather = (config["weather_reference"] - outdoor) * config["weather_gain"]
         if price_on:
-            price = value_at(prices, stamp)
+            price = value_at(prices, stamp) if prices_until is not None and stamp < prices_until else None
             if price is not None:
                 price_adjustment = price_contribution(config, price, error)
         value = config["base_offset"] + room + weather + price_adjustment + fireplace
@@ -492,6 +551,8 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
     slots = [now]
     if price_on:
         slots += [t for t, _ in prices if now < t <= end]
+        if prices_until is not None and now < prices_until <= end:
+            slots.append(prices_until)
     if weather_on:
         slots += [t for t, _ in forecast if now < t <= end]
     if preheat_on:
@@ -505,7 +566,9 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
     if not weather_on and not price_on and not preheat_on:
         plan["notes"].append("Väder- och elprispåverkan är 0, så planen följer bara rumstemperaturen.")
     if price_configured and not use_prices:
-        plan["notes"].append("Prisplanen kräver Tibber-priser och att elprisgivaren är Tibbers, så att priserna har samma enhet.")
+        plan["notes"].append("Prisplanen kräver kommande priser från vald elprisgivare (Tibber eller Nord Pool), i samma enhet som givaren.")
+    if price_on and prices_until is not None and prices_until < end:
+        plan["notes"].append("Prislistan täcker inte hela planen. Efter sista prisperioden antas ingen extra kurvpåverkan från priset; framtida priser gissas inte.")
     if not config["enabled"]:
         plan["notes"].append("Automatiken är avstängd: planen visar vad som skulle ske, men inget skickas till pumpen.")
     limits = status.get("offset_limits")
@@ -767,10 +830,29 @@ class Insights:
             }
         return self.cached(("forecast", configured), 1800, load)
 
-    def prices(self):
+    def prices(self, config):
+        price_id = config["price_entity"]
+        if not price_id:
+            raise ControlError("Välj en elprisgivare för kommande priser från Tibber eller Nord Pool.")
+
         def load():
-            if not any(r.get("platform") == "tibber" for r in self.registry()):
-                raise ControlError("Ingen Tibber-integration hittades; elprisgrafen kräver Tibber.")
+            registry = self.registry()
+            states = {s["entity_id"]: s for s in self.ha.states()}
+            entity = fresh_entity(states, price_id, config["max_age_minutes"], time.time())
+            number(entity["state"], "Aktuellt elpris")
+            platform = next((r.get("platform") for r in registry if r["entity_id"] == price_id), None)
+            if "raw_today" in entity["attributes"]:
+                attrs = entity["attributes"]
+                if not re.fullmatch(r"[^\s/]+/(?:kWh|MWh)", attrs.get("unit_of_measurement", ""), re.I):
+                    raise ControlError("Nord Pool-givarens prisenhet måste vara valuta/kWh eller valuta/MWh.")
+                tomorrow = attrs.get("raw_tomorrow", []) if attrs.get("tomorrow_valid") is True else []
+                if not isinstance(attrs["raw_today"], list) or not isinstance(tomorrow, list):
+                    raise ControlError("Nord Pool-givaren har ogiltiga prisattribut.")
+                return nordpool_prices(attrs["raw_today"] + tomorrow)
+            if platform == "nordpool":
+                return self.nordpool_service_prices(entity, states, registry)
+            if platform != "tibber":
+                raise ControlError("Vald elprisgivare saknar kommande priser. Tibber, Nord Pool med raw_today/raw_tomorrow eller Nord Pools prisåtgärd behövs.")
             now = time.time()
             local = datetime.fromtimestamp(now).astimezone()
             midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -779,7 +861,44 @@ class Insights:
                 "end": (midnight + timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"),
             }
             return tibber_prices(self.ha.request("/services/tibber/get_prices?return_response", body))
-        return self.cached("prices", 900, load)
+        return self.cached(("prices", price_id, config["max_age_minutes"]), 900, load)
+
+    def nordpool_service_prices(self, entity, states, registry):
+        selected = next(r for r in registry if r["entity_id"] == entity["entity_id"])
+        entry = selected.get("config_entry_id")
+        area = entity["attributes"].get("region")
+        if area not in ("SE1", "SE2", "SE3", "SE4"):
+            match = re.search(r"(?:^|_)(se[1-4])(?:_|$)", entity["entity_id"], re.I)
+            area = match[1].upper() if match else None
+        unit = entity["attributes"].get("unit_of_measurement", "")
+        match = re.fullmatch(r"([A-Z]{3})/(kWh|MWh)", unit)
+        if not isinstance(entry, str) or not entry or not area or not match:
+            raise ControlError("Nord Pool: kan inte identifiera konfiguration, valuta eller elområde. Behåll SE1–SE4 i givarens entitets-id och använd valuta/kWh eller valuta/MWh.")
+        local_date = self.ha.request("/template", {"template": "{{ now().date().isoformat() | to_json }}"})
+        try:
+            today = datetime.strptime(local_date, "%Y-%m-%d").date()
+        except (TypeError, ValueError) as exc:
+            raise ControlError("Home Assistant returnerade ett ogiltigt lokalt datum för Nord Pool.") from exc
+        days = [today]
+        # The official integration has one tomorrow-availability sensor per area/device.
+        availability = [states[r["entity_id"]] for r in registry if r.get("platform") == "nordpool"
+                        and r.get("device_id") and r.get("device_id") == selected.get("device_id")
+                        and r["entity_id"].startswith("binary_sensor.") and r["entity_id"] in states]
+        if len(availability) == 1 and availability[0]["state"] == "on":
+            fresh_entity(states, availability[0]["entity_id"], 24 * 60, time.time())
+            days.append(today + timedelta(days=1))
+        rows = []
+        for day in days:
+            response = self.ha.request("/services/nordpool/get_prices_for_date?return_response", {
+                "config_entry": entry, "date": day.isoformat(), "areas": [area], "currency": match[1]})
+            try:
+                values = response["service_response"][area]
+            except (KeyError, TypeError) as exc:
+                raise ControlError(f"Nord Pool saknar priser för {area} {day}.") from exc
+            if not isinstance(values, list) or not values:
+                raise ControlError(f"Nord Pool saknar priser för {area} {day}.")
+            rows.extend(values)
+        return nordpool_prices(rows, "price", 0.001 if match[2] == "kWh" else 1)
 
     def plan(self, config, status, events=None):
         key = ("plan", json.dumps(config, sort_keys=True))
@@ -837,15 +956,15 @@ class Insights:
 
             prices = []
             try:
-                prices = self.prices()
+                prices = self.prices(config)
             except ControlError as exc:
                 result["prices"]["error"] = str(exc)
             result["prices"]["points"] = [p for p in prices if start - 3600 <= p[0] <= end]
+            result["prices"]["end"] = price_end(prices)
             price_id = config["price_entity"]
-            platform = next((r.get("platform") for r in registry if r["entity_id"] == price_id), None)
             if price_id in states:
                 result["prices"]["unit"] = states[price_id]["attributes"].get("unit_of_measurement", "")
-            use_prices = bool(prices) and platform == "tibber"
+            use_prices = bool(prices)
 
             result["_forecast"], result["_prices"], result["_use_prices"] = forecast, prices, use_prices
 
@@ -940,18 +1059,24 @@ class Insights:
         return self.cached(key, 3600, load)
 
     def preheat(self, config):
-        """Pre-heating windows from Tibber prices and the learned lead time. Cached 15 minutes."""
+        """Pre-heating windows from the selected price source and learned lead time."""
+        if config["preheat_enabled"]:
+            entity = fresh_entity({s["entity_id"]: s for s in self.ha.states()}, config["price_entity"],
+                                  config["max_age_minutes"], time.time())
+            number(entity["state"], "Aktuellt elpris")
         key = ("preheat", tuple(control_rooms(config)), config["offset_entity"], config["preheat_degrees"],
+               config["price_entity"], config["max_age_minutes"],
                tuple((e["start"], e["end"]) for e in self.fireplace_intervals()))
 
         def load():
+            prices = self.prices(config)
             model = None
             try:
                 model = self.house_model(config)["model"]
             except Exception:  # the model only tunes the lead time; defaults work without it
                 model = None
             lead = lead_hours(model, config["preheat_degrees"])
-            result = preheat_windows(self.prices(), time.time(), lead, config["preheat_degrees"])
+            result = preheat_windows(prices, time.time(), lead, config["preheat_degrees"])
             result["lead_hours"] = lead
             result["lead_source"] = "learned" if model and model["status"] == "good" else "default"
             return result

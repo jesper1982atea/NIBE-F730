@@ -1116,7 +1116,7 @@ async function refreshPlan() {
     legend($("plan-outdoor-legend"), outdoor);
     $("plan-outdoor-status").textContent = data.outdoor.error || "";
 
-    const prices = [{ name: `Elpris${data.prices.unit ? ` · ${data.prices.unit}` : ""}`, points: data.prices.points, until: data.end, color: 1 }];
+    const prices = [{ name: `Elpris${data.prices.unit ? ` · ${data.prices.unit}` : ""}`, points: data.prices.points, until: data.prices.end ?? data.end, color: 1 }];
     drawChart($("plan-price"), prices, {
       ...range, height: 200, unit: "", integer: false, pad: 0.1, empty: data.prices.error || undefined,
       guides: [{ value: data.prices.low, label: "billigt under" }, { value: data.prices.high, label: "dyrt över" }],
