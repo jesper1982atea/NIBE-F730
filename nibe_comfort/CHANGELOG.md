@@ -2,9 +2,13 @@
 
 ## 0.2.29
 
+- Tydligt val av **Tibber** eller **Nord Pool** som elpriskälla. Tibber är
+  standard även vid uppdatering av befintliga installationer; sparade
+  givare och inställningar behålls. Nord Pool används först efter eget val
+  och sparande. Upptäckt byter aldrig källa automatiskt.
 - Elprisstyrning utan Tibber, exempelvis med Enegic som förbrukningsmätare
   och `sensor.nord_pool_se3_aktuellt_pris` som prisgivare. Entydiga aktuella
-  Nord Pool-prisgivare föreslås automatiskt; flera elområden eller hem kräver val.
+  Nord Pool-prisgivare föreslås när Nord Pool är vald; flera elområden eller hem kräver val.
 - Förvärmning och prisgraf kan använda HACS Nord Pools tidsstämplade
   `raw_today`/`raw_tomorrow` eller den officiella Nord Pool-integrationens
   prisåtgärd för SE1–SE4. Åtgärdens MWh-priser anpassas till vald givares

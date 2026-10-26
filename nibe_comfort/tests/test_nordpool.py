@@ -23,7 +23,7 @@ def intervals(start=MIDNIGHT, count=96, seconds=900, key="value", factor=1):
 
 class NordPoolDiscoveryTests(unittest.TestCase):
     def test_richards_sensor_is_found_without_tibber_or_registry_entry(self):
-        result = discover_prices([entity(PRICE, 0.3, unit_of_measurement="SEK/kWh")], [])
+        result = discover_prices([entity(PRICE, 0.3, unit_of_measurement="SEK/kWh")], [], "nordpool")
         self.assertEqual(result["price_entity"], PRICE)
         self.assertIn("Nord Pool", result["price_message"])
 
@@ -31,16 +31,18 @@ class NordPoolDiscoveryTests(unittest.TestCase):
         price = entity("sensor.nordpool_kwh_se3_sek", 1, unit_of_measurement="SEK/kWh", raw_today=[])
         average = entity("sensor.nord_pool_se3_daily_average", 1, unit_of_measurement="SEK/kWh")
         enegic = entity("sensor.enegic_power", 1000, unit_of_measurement="W")
-        self.assertEqual(discover_prices([price, average, enegic], [])["price_entity"], price["entity_id"])
-        self.assertEqual(discover_prices([average, enegic], [])["price_entity"], "")
+        self.assertEqual(discover_prices([price, average, enegic], [], "nordpool")["price_entity"], price["entity_id"])
+        self.assertEqual(discover_prices([average, enegic], [], "nordpool")["price_entity"], "")
 
     def test_multiple_areas_or_mixed_tibber_and_nordpool_are_not_guessed(self):
         states = [entity(PRICE, 1, unit_of_measurement="SEK/kWh"),
                   entity("sensor.nord_pool_se4_aktuellt_pris", "unavailable", unit_of_measurement="SEK/kWh")]
-        self.assertEqual(discover_prices(states, [])["price_entity"], "")
+        self.assertEqual(discover_prices(states, [], "nordpool")["price_entity"], "")
         states[1] = entity("sensor.electricity_price_home", 1, unit_of_measurement="SEK/kWh")
         registry = [{"entity_id": states[1]["entity_id"], "platform": "tibber"}]
-        self.assertEqual(discover_prices(states, registry)["price_entity"], "")
+        self.assertEqual(discover_prices(states, registry, "nordpool")["price_entity"], PRICE)
+        self.assertEqual(discover_prices(states, registry)["price_entity"], states[1]["entity_id"])
+        self.assertEqual(discover_prices([states[0]], [])["price_entity"], "", "Default Tibber never auto-selects Nord Pool")
 
     def test_integration_registry_requests_nordpool_and_config_entry_mapping(self):
         ha = HomeAssistant("test")
@@ -59,7 +61,7 @@ class PriceFixture:
         self.ha = Mock()
         self.ha._temperature_unit = "°C"
         self.ha.integration_registry.return_value = []
-        self.cfg = config(price_entity=PRICE, preheat_enabled=True)
+        self.cfg = config(price_entity=PRICE, price_provider="nordpool", preheat_enabled=True)
         self.ha.states.return_value = fixtures(NOW) + [entity(
             PRICE, 1, NOW, unit_of_measurement="SEK/kWh",
             raw_today=intervals(), raw_tomorrow=intervals(MIDNIGHT + timedelta(days=1)),
@@ -138,6 +140,65 @@ class NordPoolPricesTests(PriceFixture, unittest.TestCase):
         self.assertTrue(first["windows"])
         self.assertEqual(second["windows"], [])
         self.assertEqual(self.insights.house_model.call_count, 2)
+
+    def test_provider_choice_is_enforced_and_included_in_caches(self):
+        self.assertTrue(self.insights.preheat(self.cfg)["windows"])
+        cfg = {**self.cfg, "price_provider": "tibber"}
+        with self.assertRaisesRegex(ControlError, "Tibber är vald"):
+            self.insights.preheat(cfg)
+        tibber = entity("sensor.tibber_price", 1, NOW, unit_of_measurement="SEK/kWh")
+        self.ha.states.return_value.append(tibber)
+        self.ha.integration_registry.return_value = [{"entity_id": tibber["entity_id"], "platform": "tibber"}]
+        self.insights.cache.pop("registry")
+        with self.assertRaisesRegex(ControlError, "givaren tillhör Tibber"):
+            self.insights.prices({**self.cfg, "price_entity": tibber["entity_id"]})
+        self.ha.request.assert_not_called()
+
+    def test_tibber_choice_keeps_tibber_prices_when_nordpool_is_present(self):
+        tibber_id = "sensor.electricity_price_home"
+        self.ha.states.return_value.append(entity(tibber_id, 1.2, NOW, unit_of_measurement="SEK/kWh"))
+        self.ha.integration_registry.return_value = [
+            {"entity_id": tibber_id, "platform": "tibber"},
+            {"entity_id": PRICE, "platform": "nordpool"},
+        ]
+        self.ha.request.return_value = {"service_response": {"prices": {"home": [
+            {"start_time": MIDNIGHT.isoformat(), "price": 1.2}]}}}
+        cfg = config(price_entity=tibber_id, price_provider="tibber")
+        prices = self.insights.prices(cfg)
+        self.assertEqual(prices, [[MIDNIGHT.timestamp(), 1.2]])
+        self.assertEqual(self.ha.request.call_count, 1)
+        self.assertEqual(self.ha.request.call_args.args[0], "/services/tibber/get_prices?return_response")
+        self.assertEqual(cfg["price_provider"], "tibber")
+
+    def test_discovery_returns_separate_sources_with_tibber_as_default(self):
+        tibber = entity("sensor.electricity_price_home", 1.2, NOW, unit_of_measurement="SEK/kWh")
+        ha = HomeAssistant("test")
+        ha.request = Mock(side_effect=[
+            [{"entity_id": tibber["entity_id"], "platform": "tibber", "device_id": "home"}],
+            [tibber, self.ha.states.return_value[-1]],
+        ])
+        result = ha.discover()
+        self.assertEqual(result["price_entity"], tibber["entity_id"])
+        self.assertEqual(result["price_sources"]["tibber"]["price_entity"], tibber["entity_id"])
+        self.assertEqual(result["price_sources"]["nordpool"]["price_entity"], PRICE)
+
+    def test_old_settings_keep_tibber_and_saved_sensor_without_inference(self):
+        import json
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            saved = config(price_entity="sensor.electricity_price_home", preheat_enabled=True)
+            saved.pop("price_provider")
+            Path(folder, "settings.json").write_text(json.dumps(saved))
+            controller = Controller(self.ha, folder)
+            settings = controller.settings()
+            self.assertEqual(settings["price_provider"], "tibber")
+            self.assertEqual(settings["price_entity"], saved["price_entity"])
+            self.assertTrue(settings["preheat_enabled"])
+
+    def test_invalid_provider_is_rejected(self):
+        for provider in ("automatic", "", None, [], True):
+            with self.subTest(provider=provider), self.assertRaisesRegex(ControlError, "elpriskälla"):
+                config(price_provider=provider)
 
     def test_malformed_hacs_attributes_and_unit_raise_explicit_errors(self):
         for updates in ({"raw_today": {}}, {"raw_tomorrow": None}, {"unit_of_measurement": "W"}):

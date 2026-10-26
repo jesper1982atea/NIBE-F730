@@ -28,6 +28,7 @@ DEFAULTS = {
     "offset_entity": "",
     "outdoor_entity": "",
     "price_entity": "",
+    "price_provider": "tibber",
     "forecast_entity": "",
     "base_offset": 0.0,
     "min_offset": -3.0,
@@ -90,6 +91,8 @@ def validate(config):
     if not isinstance(config, dict) or set(config) != set(DEFAULTS):
         raise ControlError("Konfigurationen innehåller saknade eller okända fält.")
     result = copy.deepcopy(config)
+    if result["price_provider"] not in ("tibber", "nordpool"):
+        raise ControlError("Välj Tibber eller Nord Pool som elpriskälla.")
     for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled"):
         if type(result[key]) is not bool:
             raise ControlError(f"{key} måste vara boolesk.")
@@ -269,7 +272,9 @@ class HomeAssistant:
         registry = self.integration_registry()
         states = self.states()
         result = discover_nibe(states, registry)
-        result.update(discover_prices(states, registry))
+        sources = {provider: discover_prices(states, registry, provider) for provider in ("tibber", "nordpool")}
+        result.update(sources["tibber"])
+        result["price_sources"] = sources
         return result
 
 
@@ -654,6 +659,7 @@ class Controller:
                 saved.setdefault("thermostat_control_enabled", False)
                 saved.setdefault("fireplace_enabled", False)
                 saved.setdefault("fireplace_rooms", [])
+                saved.setdefault("price_provider", "tibber")
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
         self.pending = None

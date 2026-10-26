@@ -56,10 +56,18 @@ async function run(config, response = result, state = "3", fail = false) {
   assert.equal(actual.settings.enabled, false);
   actual = await run({ ...defaults, price_entity: "sensor.manual_price" }, { ...result, price_entity: "sensor.tibber" });
   assert.equal(actual.settings.price_entity, "sensor.manual_price");
-  actual = await run({ ...defaults, price_entity: "" }, { ...result, price_entity: "sensor.nord_pool_se3_aktuellt_pris" });
+  const sources = {
+    tibber: { price_entity: "sensor.tibber" },
+    nordpool: { price_entity: "sensor.nord_pool_se3_aktuellt_pris" },
+  };
+  actual = await run({ ...defaults, price_provider: "nordpool", price_entity: "" }, { ...result, price_sources: sources });
   assert.equal(actual.settings.price_entity, "sensor.nord_pool_se3_aktuellt_pris");
   assert.equal(actual.settings.enabled, false);
-  actual = await run({ ...defaults, price_entity: "sensor.manual_price" }, { ...result, price_entity: "sensor.nord_pool_se3_aktuellt_pris" });
+  actual = await run({ ...defaults, price_provider: "tibber", price_entity: "" }, { ...result, price_sources: sources });
+  assert.equal(actual.settings.price_entity, "sensor.tibber", "Tibber installations keep selecting Tibber with Nord Pool present");
+  actual = await run({ ...defaults, price_provider: "tibber", price_entity: "" }, { ...result, price_sources: { nordpool: sources.nordpool } });
+  assert.equal(actual.settings.price_entity, "", "Never implicitly switch from Tibber to Nord Pool");
+  actual = await run({ ...defaults, price_provider: "nordpool", price_entity: "sensor.manual_price" }, { ...result, price_sources: sources });
   assert.equal(actual.settings.price_entity, "sensor.manual_price");
   console.log("UI discovery: automatic pairing, manual choices, room selection, bounds and errors passed.");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

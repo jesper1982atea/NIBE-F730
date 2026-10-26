@@ -590,15 +590,26 @@ om du vill lägga till extra påverkan. Prognoser visas separat och påverkar in
 
 ## Elpris
 
+Välj först **Vilken elpriskälla vill du använda?**: **Tibber** eller
+**Nord Pool**. Tibber är standard, även när en äldre installation uppdateras.
+Din sparade prisgivare och dina styrinställningar behålls; att upptäcka
+Nord Pool byter inte källa.
+
+Ett källbyte är ett osparat val tills du trycker **Spara inställningar**.
+Gränssnittet föreslår en entydig givare för den nya källan eller ber dig
+välja manuellt; föregående källas givare förs inte över. Kontrollera
+prisgränserna eftersom givarens enhet och innehåll kan skilja sig.
+Kommande priser hämtas bara från vald källa, utan automatiskt reservbyte.
+
 Välj en numerisk givare för **aktuellt** elpris, exempelvis från en
 Nord Pool-integration. Kontrollera enheten i gränssnittet: gränserna använder
 exakt samma enhet. Tillägget räknar inte om öre till kronor och lägger inte
 automatiskt till skatt, moms eller nätavgifter.
 
-Tillägget försöker fylla i prisgivaren automatiskt från Tibber eller Nord Pool,
+Tillägget försöker fylla i prisgivaren automatiskt från den valda källan,
 om exakt en aktuell prisgivare med enheten valuta/kWh eller valuta/MWh finns.
 Månadspris, energiförbrukning och kostnad väljs inte som aktuellt pris.
-Flera hem, elområden eller prisleverantörer kräver manuellt val.
+Flera hem eller elområden inom vald källa kräver manuellt val.
 Redan sparat val ersätts aldrig.
 Tryck **Spara inställningar** för att behålla ett nytt förslag; att hitta
 en givare aktiverar inte prisstyrning eller ändrar prisgränserna.
@@ -611,7 +622,7 @@ En givare med priset just nu bekräftar inte att kommande priser finns.
 ### Enegic och Nord Pool utan Tibber
 
 Du kan använda Enegic för att mäta husets förbrukning och Nord Pool för
-elpriset utan att ha Tibber. Välj exempelvis
+elpriset utan att ha Tibber. Välj **Nord Pool** som elpriskälla och exempelvis
 `sensor.nord_pool_se3_aktuellt_pris` under **Ändra elprisgivare manuellt**,
 kontrollera enheten och spara. En förbrukningsgivare i W eller kWh ska inte
 väljas som prisgivare. Den befintliga förbrukningsöversikten är fortfarande

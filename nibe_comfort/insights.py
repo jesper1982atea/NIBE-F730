@@ -40,22 +40,20 @@ def nordpool_sensor(entity):
     return entity["entity_id"].startswith(("sensor.nord_pool_", "sensor.nordpool_"))
 
 
-def discover_prices(states, registry):
-    tibber = discover_tibber(states, registry)
+def discover_prices(states, registry, provider="tibber"):
+    if provider == "tibber":
+        return discover_tibber(states, registry)
     candidates = {s["entity_id"] for s in states if nordpool_sensor(s)
                   and (s["entity_id"].endswith(("_aktuellt_pris", "_current_price"))
                        or "raw_today" in s["attributes"])
                   and re.fullmatch(r"[^\s/]+/(?:kWh|MWh)", s["attributes"].get("unit_of_measurement", ""), re.I)}
-    tibber_ids = {r["entity_id"] for r in registry if r.get("platform") == "tibber"}
-    candidates.update(s["entity_id"] for s in states if s["entity_id"] in tibber_ids
-                      and re.fullmatch(r"[^\s/]+/(?:kWh|MWh)", s["attributes"].get("unit_of_measurement", ""), re.I))
     if len(candidates) == 1:
         selected = next(iter(candidates))
-        return tibber if selected in tibber_ids else {
+        return {
             "price_entity": selected, "price_message": "Nord Pools aktuella elpris hittades automatiskt."}
     return {"price_entity": "", "price_message": (
-        "Flera elprisgivare finns. Välj rätt hem och elområde manuellt." if candidates else
-        "Ingen Tibber- eller Nord Pool-prisgivare hittades. Välj prisgivare manuellt.")}
+        "Flera Nord Pool-prisgivare finns. Välj rätt elområde manuellt." if candidates else
+        "Ingen Nord Pool-prisgivare hittades. Välj prisgivare manuellt.")}
 
 
 LABELS = {
@@ -153,7 +151,7 @@ def overview(states, registry, config, now):
         else:
             house.append({"label": label, "value": None, "error": "Saknad eller flertydig Tibber-mätare."})
     price = None
-    price_id = config["price_entity"] or discover_prices(states, registry)["price_entity"]
+    price_id = config["price_entity"] or discover_prices(states, registry, config["price_provider"])["price_entity"]
     if price_id in by_id:
         price = reading(by_id[price_id], "Aktuellt elpris", config["max_age_minutes"], now)
     return {
@@ -737,7 +735,7 @@ class Insights:
         return self.cached("registry", 300, self.ha.integration_registry)
 
     def overview(self, config):
-        key = ("overview", config["offset_entity"], config["price_entity"], config["max_age_minutes"])
+        key = ("overview", config["offset_entity"], config["price_entity"], config["price_provider"], config["max_age_minutes"])
         return self.cached(key, 60, lambda: overview(self.ha.states(), self.registry(), config, time.time()))
 
     def hot_water(self, config):
@@ -841,7 +839,11 @@ class Insights:
             entity = fresh_entity(states, price_id, config["max_age_minutes"], time.time())
             number(entity["state"], "Aktuellt elpris")
             platform = next((r.get("platform") for r in registry if r["entity_id"] == price_id), None)
-            if "raw_today" in entity["attributes"]:
+            if config["price_provider"] == "tibber" and platform != "tibber":
+                raise ControlError("Tibber är vald elpriskälla. Välj en Tibber-prisgivare eller byt källa till Nord Pool och spara.")
+            if config["price_provider"] == "nordpool" and platform == "tibber":
+                raise ControlError("Nord Pool är vald elpriskälla men givaren tillhör Tibber. Välj rätt prisgivare och spara.")
+            if config["price_provider"] == "nordpool" and "raw_today" in entity["attributes"]:
                 attrs = entity["attributes"]
                 if not re.fullmatch(r"[^\s/]+/(?:kWh|MWh)", attrs.get("unit_of_measurement", ""), re.I):
                     raise ControlError("Nord Pool-givarens prisenhet måste vara valuta/kWh eller valuta/MWh.")
@@ -849,9 +851,9 @@ class Insights:
                 if not isinstance(attrs["raw_today"], list) or not isinstance(tomorrow, list):
                     raise ControlError("Nord Pool-givaren har ogiltiga prisattribut.")
                 return nordpool_prices(attrs["raw_today"] + tomorrow)
-            if platform == "nordpool":
+            if config["price_provider"] == "nordpool" and platform == "nordpool":
                 return self.nordpool_service_prices(entity, states, registry)
-            if platform != "tibber":
+            if config["price_provider"] == "nordpool":
                 raise ControlError("Vald elprisgivare saknar kommande priser. Tibber, Nord Pool med raw_today/raw_tomorrow eller Nord Pools prisåtgärd behövs.")
             now = time.time()
             local = datetime.fromtimestamp(now).astimezone()
@@ -861,7 +863,7 @@ class Insights:
                 "end": (midnight + timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"),
             }
             return tibber_prices(self.ha.request("/services/tibber/get_prices?return_response", body))
-        return self.cached(("prices", price_id, config["max_age_minutes"]), 900, load)
+        return self.cached(("prices", config["price_provider"], price_id, config["max_age_minutes"]), 900, load)
 
     def nordpool_service_prices(self, entity, states, registry):
         selected = next(r for r in registry if r["entity_id"] == entity["entity_id"])
@@ -1065,7 +1067,7 @@ class Insights:
                                   config["max_age_minutes"], time.time())
             number(entity["state"], "Aktuellt elpris")
         key = ("preheat", tuple(control_rooms(config)), config["offset_entity"], config["preheat_degrees"],
-               config["price_entity"], config["max_age_minutes"],
+               config["price_provider"], config["price_entity"], config["max_age_minutes"],
                tuple((e["start"], e["end"]) for e in self.fireplace_intervals()))
 
         def load():
