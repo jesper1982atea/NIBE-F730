@@ -28,6 +28,7 @@ DEFAULTS = {
     "offset_entity": "",
     "outdoor_entity": "",
     "price_entity": "",
+    "price_provider": "tibber",
     "forecast_entity": "",
     "base_offset": 0.0,
     "min_offset": -3.0,
@@ -90,6 +91,8 @@ def validate(config):
     if not isinstance(config, dict) or set(config) != set(DEFAULTS):
         raise ControlError("Konfigurationen innehåller saknade eller okända fält.")
     result = copy.deepcopy(config)
+    if result["price_provider"] not in ("tibber", "nordpool"):
+        raise ControlError("Välj Tibber eller Nord Pool som elpriskälla.")
     for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled"):
         if type(result[key]) is not bool:
             raise ControlError(f"{key} måste vara boolesk.")
@@ -146,7 +149,7 @@ def validate(config):
     if (result["cheap_boost"] or result["expensive_reduction"]) and not result["price_entity"]:
         raise ControlError("Välj elprisgivare för elprisstyrning.")
     if result["preheat_enabled"] and not result["price_entity"]:
-        raise ControlError("Välj elprisgivare (Tibber) för förvärmning.")
+        raise ControlError("Välj elprisgivare för förvärmning.")
     if result["enabled"] and (not rooms or not result["offset_entity"]):
         raise ControlError("Välj rumsgivare och kurvförskjutning innan aktivering.")
     return result
@@ -220,10 +223,11 @@ class HomeAssistant:
     def integration_registry(self):
         template = (
             "{% set ns = namespace(items=[]) %}"
-            "{% for platform in ['myuplink', 'tibber', 'smhi', 'met'] %}"
+            "{% for platform in ['myuplink', 'tibber', 'nordpool', 'smhi', 'met'] %}"
             "{% for eid in integration_entities(platform) %}"
             "{% set ns.items = ns.items + "
-            "[{'entity_id': eid, 'device_id': device_id(eid), 'platform': platform}] %}"
+            "[{'entity_id': eid, 'device_id': device_id(eid), 'platform': platform, "
+            "'config_entry_id': config_entry_id(eid)}] %}"
             "{% endfor %}{% endfor %}"
             "{% for climate in states.climate %}"
             "{% set did = device_id(climate.entity_id) %}"
@@ -264,11 +268,13 @@ class HomeAssistant:
         return {row["entity_id"]: {"area_id": row["area_id"], "area_name": row["area_name"]} for row in rows}
 
     def discover(self):
-        from insights import discover_tibber
+        from insights import discover_prices
         registry = self.integration_registry()
         states = self.states()
         result = discover_nibe(states, registry)
-        result.update(discover_tibber(states, registry))
+        sources = {provider: discover_prices(states, registry, provider) for provider in ("tibber", "nordpool")}
+        result.update(sources["tibber"])
+        result["price_sources"] = sources
         return result
 
 
@@ -653,6 +659,7 @@ class Controller:
                 saved.setdefault("thermostat_control_enabled", False)
                 saved.setdefault("fireplace_enabled", False)
                 saved.setdefault("fireplace_rooms", [])
+                saved.setdefault("price_provider", "tibber")
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
         self.pending = None

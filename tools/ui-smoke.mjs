@@ -516,6 +516,61 @@ try {
   await page.waitForFunction(() => document.getElementById("history-status").textContent.includes("Recorder saknas"));
   assert.equal(await page.locator("#temperature-chart svg").count(), 0);
   assert.equal(await page.locator("#enabled").isChecked(), true, "History failure must not change automation");
+  const nordpoolPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  nordpoolPage.on("pageerror", (error) => errors.push(error.message));
+  const nordpoolId = "sensor.nord_pool_se3_aktuellt_pris";
+  const nordpoolSettings = { ...settings, price_provider: "tibber", price_entity: price, preheat_enabled: false };
+  let providerWrites = 0;
+  nordpoolPage.on("dialog", (dialog) => dialog.accept());
+  await nordpoolPage.route("**/api/settings", (route) => {
+    if (route.request().method() === "PUT") {
+      Object.assign(nordpoolSettings, route.request().postDataJSON());
+      providerWrites++;
+    }
+    return route.fulfill({ json: nordpoolSettings });
+  });
+  await nordpoolPage.route("**/api/entities", (route) => route.fulfill({ json: [
+    ...entities, { entity_id: nordpoolId, name: "Nord Pool SE3 Aktuellt pris", state: "0.5", unit: "SEK/kWh" },
+  ] }));
+  await nordpoolPage.route("**/api/discovery", (route) => route.fulfill({ json: {
+    offset_entity: offset, outdoor_entity: outdoor, price_entity: price,
+    message: "NIBE hittad", price_message: "Tibbers aktuella elpris hittades automatiskt.",
+    price_sources: {
+      tibber: { price_entity: price, price_message: "Tibbers aktuella elpris hittades automatiskt." },
+      nordpool: { price_entity: nordpoolId, price_message: "Nord Pools aktuella elpris hittades automatiskt." },
+    },
+  } }));
+  await nordpoolPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await nordpoolPage.waitForFunction((id) => document.getElementById("price_entity").value === id, price);
+  assert.equal(await nordpoolPage.locator("#price_provider").inputValue(), "tibber");
+  assert.match(await nordpoolPage.locator("#price-provider-status").textContent(), /Sparad elpriskälla: Tibber/);
+  await nordpoolPage.locator("#settings-panel > summary").click();
+  await nordpoolPage.locator("#price_provider").selectOption("nordpool");
+  await nordpoolPage.waitForFunction((id) => document.getElementById("price_entity").value === id, nordpoolId);
+  assert.match(await nordpoolPage.locator("#price-provider-status").textContent(), /Osparat val: Nord Pool/);
+  assert.equal(providerWrites, 0, "Source change is only a draft until explicitly saved");
+  nordpoolSettings.min_interval_minutes = 45;
+  await nordpoolPage.evaluate(() => refreshSavedSettings());
+  assert.equal(await nordpoolPage.locator("#price_provider").inputValue(), "nordpool", "External settings polling preserves the source draft");
+  assert.equal(await nordpoolPage.locator("#price_entity").inputValue(), nordpoolId, "Source and sensor drafts remain paired");
+  assert.match(await nordpoolPage.locator("#price-discovery").textContent(), /Nord Pool/);
+  assert.match(await nordpoolPage.locator("#price-unit").textContent(), /SEK\/kWh/);
+  assert.equal(await nordpoolPage.locator("#preheat_enabled").isChecked(), false, "Discovering Nord Pool never activates preheating");
+  assert.match(await nordpoolPage.locator("#manual-price").locator("..").textContent(), /Enegic mäter förbrukning/);
+  await nordpoolPage.locator("#save-near").click();
+  await nordpoolPage.waitForFunction(() => document.getElementById("price-provider-status").textContent.includes("Sparad elpriskälla: Nord Pool"));
+  assert.equal(providerWrites, 1);
+  assert.equal(nordpoolSettings.price_provider, "nordpool");
+  assert.equal(nordpoolSettings.price_entity, nordpoolId);
+  await nordpoolPage.reload();
+  await nordpoolPage.waitForFunction(() => document.getElementById("price_provider").value === "nordpool");
+  assert.equal(await nordpoolPage.locator("#price_entity").inputValue(), nordpoolId, "Saved Nord Pool selection survives reload with Tibber present");
+  await nordpoolPage.locator("#settings-panel > summary").click();
+  await nordpoolPage.locator("#price_provider").selectOption("tibber");
+  await nordpoolPage.waitForFunction((id) => document.getElementById("price_entity").value === id, price);
+  assert.match(await nordpoolPage.locator("#price-provider-status").textContent(), /Osparat val: Tibber/);
+  assert.equal(providerWrites, 1, "Switching back to Tibber also requires saving");
+  await nordpoolPage.close();
   const priorityPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
   priorityPage.on("pageerror", (error) => errors.push(error.message));
   const thirdRoom = entities.find((entity) => entity.name.startsWith("LK Badrum")).entity_id;

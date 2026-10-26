@@ -64,6 +64,18 @@ class ApiTests(unittest.TestCase):
         self.ha.set_offset.assert_not_called()
         self.ha.set_thermostat.assert_not_called()
 
+    def test_price_provider_choice_is_saved_and_default_is_tibber(self):
+        code, settings = self.request("/api/settings")
+        self.assertEqual(settings["price_provider"], "tibber")
+        cfg = config(price_provider="nordpool", price_entity="sensor.nord_pool_se3_aktuellt_pris")
+        code, settings = self.request("/api/settings", "PUT", cfg)
+        self.assertEqual(code, 200)
+        self.assertEqual(settings["price_provider"], "nordpool")
+        restored = Controller(self.ha, self.temp.name)
+        self.assertEqual(restored.settings()["price_provider"], "nordpool")
+        self.assertEqual(restored.settings()["price_entity"], cfg["price_entity"])
+        self.ha.set_offset.assert_not_called()
+
     def test_ingress_and_local_api_share_insights_with_controller(self):
         insights = Insights(self.ha, self.temp.name)
         self.controller.preheat_provider = None
@@ -121,7 +133,7 @@ class ApiTests(unittest.TestCase):
         self.ha.request.return_value = []
         status, plan = self.request("/api/plan")
         self.assertEqual(status, 200)
-        self.assertIn("Ingen Tibber", plan["prices"]["error"])
+        self.assertIn("Välj en elprisgivare", plan["prices"]["error"])
         self.assertEqual(plan["offset"]["planned"], [])
         self.ha.set_offset.assert_not_called()
 

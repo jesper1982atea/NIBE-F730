@@ -97,6 +97,34 @@ function entityHints() {
   $("price-unit").textContent = price
     ? `Senast hämtade givarvärde: ${price.state} ${price.unit}. Givaren avser priset just nu; den bekräftar inte att kommande priser finns. Enheten används för de fasta prisgränserna under Avancerat.`
     : "Välj givare för att se prisets enhet. Exempel: 1 kr/kWh = 100 öre/kWh.";
+  renderPriceProvider();
+}
+
+function priceDiscovery(provider) {
+  return discovery?.price_sources?.[provider]
+    || (provider === "tibber" ? discovery : null);
+}
+
+function renderPriceProvider() {
+  const provider = $("price_provider").value;
+  const saved = provider === settings.price_provider && $("price_entity").value === settings.price_entity;
+  const label = provider === "nordpool" ? "Nord Pool" : "Tibber";
+  $("price-provider-status").textContent = `${saved ? "Sparad elpriskälla" : "Osparat val"}: ${label}. ${
+    provider === "tibber"
+      ? "Kommande priser hämtas från Tibber, inte Nord Pool. Förbrukningsöversikten kan visa Tibbers husmätare."
+      : "Kommande priser hämtas från vald Nord Pool-givare/integration. Enegics förbrukningsmätning är separat."
+  }${saved ? "" : " Börjar gälla först när du sparar."}`;
+  $("price-discovery").textContent = priceDiscovery(provider)?.price_message || `Välj en prisgivare för ${label} manuellt.`;
+}
+
+function changePriceProvider() {
+  const provider = $("price_provider").value;
+  // Never carry a different provider's sensor across a source change.
+  const selected = provider === settings.price_provider ? settings.price_entity : "";
+  selectOptions("price_entity", (entity) => entity.entity_id.startsWith("sensor."),
+    selected || priceDiscovery(provider)?.price_entity || "");
+  $("manual-price").open = true;
+  entityHints();
 }
 
 function renderPreheatExample() {
@@ -128,6 +156,7 @@ function renderSettings(formSettings = settings, preserveView = false) {
   selectOptions("outdoor_entity", (entity) => isTemperature(entity) || entity.entity_id.startsWith("weather."), formSettings.outdoor_entity);
   selectOptions("price_entity", (entity) => entity.entity_id.startsWith("sensor."), formSettings.price_entity);
   selectOptions("forecast_entity", (entity) => entity.entity_id.startsWith("weather."), formSettings.forecast_entity);
+  $("price_provider").value = formSettings.price_provider;
   const rooms = entities.filter((entity) => isTemperature(entity) || entity.entity_id.startsWith("climate."));
   for (const id of formSettings.room_sensors) {
     if (!rooms.some((entity) => entity.entity_id === id)) rooms.push({ entity_id: id, name: id, state: "saknas", unit: "" });
@@ -179,7 +208,6 @@ function renderSettings(formSettings = settings, preserveView = false) {
   targetChanged();
   renderIndoorDiff();
   renderSavedSettingsStatus();
-  $("price-discovery").textContent = discovery?.price_message || "Välj prisgivare manuellt om den inte hittas.";
   entityHints();
 }
 
@@ -199,7 +227,8 @@ async function findPump() {
     if (!settings.outdoor_entity && settings.offset_entity === discovery.offset_entity) {
       settings.outdoor_entity = discovery.outdoor_entity;
     }
-    if (!settings.price_entity && discovery.price_entity) settings.price_entity = discovery.price_entity;
+    const price = priceDiscovery(settings.price_provider || "tibber");
+    if (!settings.price_entity && price?.price_entity) settings.price_entity = price.price_entity;
   } catch (error) {
     discoveryError = `Kunde inte upptäcka NIBE automatiskt: ${error.message}. Du kan välja anslutningen manuellt.`;
   }
@@ -544,8 +573,11 @@ async function refreshSavedSettings() {
       const merged = { ...latest };
       const roomFields = ["room_sensors", "priority_sensors", "nearest_thermostat", "fireplace_rooms", "fireplace_enabled"];
       const roomDraft = roomFields.some((key) => JSON.stringify(draft[key]) !== JSON.stringify(settings[key]));
+      const priceFields = ["price_provider", "price_entity"];
+      const priceDraft = priceFields.some((key) => draft[key] !== settings[key]);
       for (const key of Object.keys(settings)) {
-        if ((roomDraft && roomFields.includes(key)) || JSON.stringify(draft[key]) !== JSON.stringify(settings[key])) merged[key] = draft[key];
+        if ((roomDraft && roomFields.includes(key)) || (priceDraft && priceFields.includes(key))
+          || JSON.stringify(draft[key]) !== JSON.stringify(settings[key])) merged[key] = draft[key];
       }
       settings = latest;
       renderSettings(merged, true);
@@ -1116,7 +1148,7 @@ async function refreshPlan() {
     legend($("plan-outdoor-legend"), outdoor);
     $("plan-outdoor-status").textContent = data.outdoor.error || "";
 
-    const prices = [{ name: `Elpris${data.prices.unit ? ` · ${data.prices.unit}` : ""}`, points: data.prices.points, until: data.end, color: 1 }];
+    const prices = [{ name: `Elpris${data.prices.unit ? ` · ${data.prices.unit}` : ""}`, points: data.prices.points, until: data.prices.end ?? data.end, color: 1 }];
     drawChart($("plan-price"), prices, {
       ...range, height: 200, unit: "", integer: false, pad: 0.1, empty: data.prices.error || undefined,
       guides: [{ value: data.prices.low, label: "billigt under" }, { value: data.prices.high, label: "dyrt över" }],
@@ -1440,7 +1472,7 @@ const fieldLabels = {
   target_temperature: "Måltemperatur", room_sensors: "Rumsgivare", priority_sensors: "Prioriterade rum", enabled: "Automatik",
   nearest_thermostat: "Närmast värmepumpen", thermostat_control_enabled: "Termostatbegränsning",
   fireplace_enabled: "Kaminanpassning", fireplace_rooms: "Kaminrum",
-  offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare",
+  offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare", price_provider: "Elpriskälla",
   forecast_entity: "Prognoskälla", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
   max_offset: "Högsta förskjutning", weather_gain: "Väderpåverkan", room_gain: "Rumspåverkan",
   price_low: "Lågprisgräns", price_high: "Högprisgräns", cheap_boost: "Höjning vid lågt pris",
@@ -1717,6 +1749,7 @@ async function init() {
   $("offset_entity").addEventListener("change", entityHints);
   $("outdoor_entity").addEventListener("change", entityHints);
   $("price_entity").addEventListener("change", entityHints);
+  $("price_provider").addEventListener("change", changePriceProvider);
   $("refresh-history").addEventListener("click", () => void refreshHistory());
   $("history-entity").addEventListener("change", () => { if (historyData) renderHistory(); });
   $("refresh-plan").addEventListener("click", () => void refreshPlan());
