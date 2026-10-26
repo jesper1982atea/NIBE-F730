@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## 0.2.31
+
+- Lägsta och högsta kurvförskjutning får en tydlig egen del i
+  inställningarna. En nådd gräns länkar direkt dit. Befintliga gränser
+  behålls; nya värden används först när du sparar. Pumpens egna gränser,
+  maximal ändring per gång och väntetid gäller fortfarande.
+- Översikt, hjälptexter, planeringsmeddelanden och prisfel följer vald
+  elpriskälla. Nord Pool visar inte Tibbers husmätare. Enegics
+  förbrukningsmätning är separat och hämtas inte automatiskt.
+- Ett fördröjt översiktssvar från den tidigare elpriskällan visas inte
+  efter byte. En pågående dashboardhämtning följs av en ny hämtning
+  när inställningarna ändras, utan överlappande anrop.
+
 ## 0.2.30
 
 - Förvärmningens valfria pris- och historikanalys körs i en enda
