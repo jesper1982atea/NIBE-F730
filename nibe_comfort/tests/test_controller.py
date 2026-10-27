@@ -227,6 +227,16 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(result["control_limit"]["direction"], "lower")
         self.assertEqual(result["next_offset"], -3)
 
+    def test_offset_holds_when_wanted_value_is_only_just_past_half_a_step(self):
+        cfg = config(priority_sensors=["sensor.living"], target_temperature=21, room_gain=1, deadband=0)
+        states = fixtures()
+        states[0] = entity("sensor.living", 20.4, unit_of_measurement="°C")
+        result = evaluate(cfg, states, time.time())
+        self.assertEqual(result["desired_offset"], 0.6)
+        self.assertEqual(result["next_offset"], 0)
+        states[0] = entity("sensor.living", 20.2, unit_of_measurement="°C")
+        self.assertEqual(evaluate(cfg, states, time.time())["next_offset"], 1)
+
     def test_priority_average_controls_instead_of_house_average(self):
         cfg = config(priority_sensors=["sensor.living"], target_temperature=22)
         result = evaluate(cfg, fixtures(), time.time())
@@ -818,6 +828,16 @@ class ControllerTests(unittest.TestCase):
         with patch("controller.urlopen", side_effect=HTTPError("url", 403, "forbidden", {}, None)):
             with self.assertRaisesRegex(ControlError, "HTTP 403"):
                 HomeAssistant("secret").states()
+
+    def test_pump_write_waits_longer_than_reads_for_cloud_integrations(self):
+        with patch("controller.urlopen", side_effect=TimeoutError()) as opened:
+            with self.assertRaisesRegex(ControlError, "inom 60 s"):
+                HomeAssistant("secret").set_offset("number.offset", 1)
+        self.assertEqual(opened.call_args.kwargs["timeout"], 60)
+        with patch("controller.urlopen", side_effect=TimeoutError()) as opened:
+            with self.assertRaisesRegex(ControlError, "inom 15 s"):
+                HomeAssistant("secret").request("/states")
+        self.assertEqual(opened.call_args.kwargs["timeout"], 15)
 
     def test_climate_unit_comes_from_ha_config_and_is_cached(self):
         ha = HomeAssistant("token")

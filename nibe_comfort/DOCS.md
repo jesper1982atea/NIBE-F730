@@ -598,7 +598,9 @@ väder = (referenstemperatur − utetemperatur) × väderpåverkan
 Inom toleransbandet sätts rumspåverkan till 0. Förslaget begränsas till dina
 säkerhetsgränser. Nästa skrivning begränsas dessutom av maximal ändring per
 gång och kvantiseras till entitetens giltiga steg, räknat från dess minimum.
-Små skillnader kan därför ge oförändrad förskjutning.
+En hysteres gör att befintligt steg behålls när önskat värde ligger nära
+gränsen mellan två steg; först när nästa steg är tydligt närmare ändras
+förskjutningen. Säkerhetsgränserna gäller även då.
 
 Om exempelvis grundvärdet är 3 och rumspåverkan +1,35 begär regleringen
 4,35. Med en maxgräns på 3 tillåts ingen höjning från 3. Startsidan visar
@@ -726,7 +728,9 @@ faktisk besparingsberäkning ingår inte.
   Väntetiden för pumpen räknas från senaste sparade styrförsök, inte omstarten.
   Har intervallet passerat, eller finns inget tidigare försök, kan en giltig
   första avläsning leda till ändring. Huvudstopp, pumptest och alla vanliga
-  kontroller gäller fortfarande. Tidpunkten sparas **innan** HA-anropet:
+  kontroller gäller fortfarande. Pump- och termostatskrivningar får upp till
+  60 sekunder på svar från Home Assistant; vanliga läsningar har en kortare
+  tidsgräns. Tidpunkten sparas **innan** HA-anropet:
   även timeout ger väntetid eftersom pumpen kan ha tagit emot ändringen.
   Misslyckade eller obekräftade pumpförsök följs upp genom återläsning.
   När intervallet gått ut räknas behovet om från aktuella värden och

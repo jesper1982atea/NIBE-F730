@@ -330,7 +330,7 @@ class ThermostatTests(unittest.TestCase):
         ha.request = Mock()
         ha.set_thermostat("climate.living", 22)
         ha.request.assert_called_once_with("/services/climate/set_temperature",
-                                           {"entity_id": "climate.living", "temperature": 22})
+                                           {"entity_id": "climate.living", "temperature": 22}, timeout=60)
 
 
 if __name__ == "__main__":

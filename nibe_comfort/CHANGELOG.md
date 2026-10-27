@@ -1,5 +1,16 @@
 # Ändringslogg
 
+## 0.2.32
+
+- Pumpens kurvförskjutning och rumstermostater får upp till 60 sekunder
+  för Home Assistant-serviceanrop, så långsamma molnuppdateringar inte
+  felaktigt behandlas som omedelbart misslyckade. Tidsgränsfel anger
+  väntetiden tydligt. Läsningar behåller sin tidigare tidsgräns.
+- Hysteres minskar pendling när önskad kurvförskjutning ligger nära
+  gränsen mellan två pumpsteg. Befintligt steg behålls tills det önskade
+  värdet ligger tydligt närmare nästa steg. Säkerhetsgränser gäller som
+  vanligt.
+
 ## 0.2.31
 
 - Lägsta och högsta kurvförskjutning får en tydlig egen del i
