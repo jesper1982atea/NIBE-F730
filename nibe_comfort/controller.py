@@ -69,6 +69,11 @@ LIMITS = {
 
 TEST_SECONDS = 600
 RESTORE_CONFIRM_SECONDS = 900
+# Service calls wait for the integration's cloud write (myUplink often needs more than 15 s).
+SERVICE_TIMEOUT_SECONDS = 60
+# Keep the current pump value unless the wanted offset is clearly closer to another step:
+# room sensors with 1 °C resolution otherwise make the offset hop every interval.
+HYSTERESIS_STEPS = 0.25
 
 
 class ControlError(Exception):
@@ -172,14 +177,14 @@ class HomeAssistant:
         self.url = url
         self._temperature_unit = None
 
-    def request(self, path, data=None):
+    def request(self, path, data=None, timeout=15):
         request = Request(
             self.url + path,
             data=None if data is None else json.dumps(data).encode(),
             headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
         )
         try:
-            with urlopen(request, timeout=15) as response:
+            with urlopen(request, timeout=timeout) as response:
                 if path.startswith("/history/period/"):
                     limit = 8 * 1024 * 1024
                     payload = response.read(limit + 1)
@@ -190,7 +195,9 @@ class HomeAssistant:
         except HTTPError as exc:
             exc.close()
             raise ControlError(f"Home Assistant svarade med HTTP {exc.code}. Kontrollera integration och behörighet.") from exc
-        except (URLError, TimeoutError, OSError, ValueError) as exc:
+        except TimeoutError as exc:
+            raise ControlError(f"Home Assistant svarade inte inom {timeout} s.") from exc
+        except (URLError, OSError, ValueError) as exc:
             raise ControlError("Kunde inte kommunicera med Home Assistant.") from exc
 
     def states(self):
@@ -215,10 +222,10 @@ class HomeAssistant:
         return states
 
     def set_offset(self, entity_id, value):
-        self.request("/services/number/set_value", {"entity_id": entity_id, "value": value})
+        self.request("/services/number/set_value", {"entity_id": entity_id, "value": value}, timeout=SERVICE_TIMEOUT_SECONDS)
 
     def set_thermostat(self, entity_id, value):
-        self.request("/services/climate/set_temperature", {"entity_id": entity_id, "temperature": value})
+        self.request("/services/climate/set_temperature", {"entity_id": entity_id, "temperature": value}, timeout=SERVICE_TIMEOUT_SECONDS)
 
     def integration_registry(self):
         template = (
@@ -584,6 +591,8 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
     if not config["min_offset"] <= current <= config["max_offset"]:
         raise ControlError("Aktuell förskjutning ligger utanför säkerhetsgränserna. Kontrollera pumpen manuellt.")
     next_value = next_step(config, current, desired, minimum, step)
+    if abs(desired - current) < step * (0.5 + HYSTERESIS_STEPS) and not result["control_limit"]:
+        next_value = current
     result.update(current_offset=current, next_offset=next_value, writable=True,
                   offset_limits={"min": minimum, "max": maximum, "step": step})
     return result
