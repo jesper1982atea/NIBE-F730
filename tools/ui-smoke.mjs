@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { chromium } from "playwright";
+import { chromium, webkit } from "playwright";
 
 const root = process.cwd();
 const artifacts = process.env.ARTIFACTS || (await import("node:os")).tmpdir();
@@ -29,6 +29,10 @@ const entities = [
   { entity_id: "weather.smhi_home", name: "SMHI hemma", state: "cloudy" },
   { entity_id: "sensor.pump_energy_consumed", name: "Pumpens använda el", state: "1234", unit: "kWh",
     device_class: "energy", state_class: "total_increasing", energy_meter_error: null },
+  { entity_id: "sensor.pump_el_current_power_consumption", name: "Pumpens totala eleffekt", state: "2", unit: "kW",
+    device_class: "power", state_class: "measurement", energy_meter_error: null },
+  { entity_id: "sensor.pump_10_years_consumption", name: "10 years consumption", state: "15000", unit: "kWh",
+    device_class: "energy", state_class: "total_increasing", energy_meter_error: "Periodräknare stöds inte här." },
   { entity_id: "sensor.pump_energy_produced_for_heating_current_hour", name: "Producerad värme denna timme",
     state: "2", unit: "kWh", device_class: "energy", energy_meter_error: "Producerad energi är inte använd el." },
 ];
@@ -167,10 +171,10 @@ const server = createServer(async (request, response) => {
   response.end(JSON.stringify(data));
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-const browser = await chromium.launch();
-try {
+const browser = await (process.env.BROWSER === "webkit" ? webkit : chromium).launch();
+const errors = [];
+async function dashboardChecks() {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
-  const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("**/api/entities", (route) => route.fulfill({
     status: 502, json: { error: "Tillfälligt anslutningsfel" },
@@ -487,7 +491,7 @@ try {
   await page.unroute("**/api/status");
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await page.waitForFunction(() => document.getElementById("hero-offset").textContent === "3");
-  assert.equal(await page.locator("#indoor").textContent(), "22");
+  await page.waitForFunction(() => document.getElementById("indoor").textContent === "22");
   assert.match(await page.locator("#room-impact-list").textContent(), /Vardagsrum/);
   assert.ok(await page.locator("#room-impact-list .room-area-group").count() >= 1);
   assert.equal(await page.locator("#room_sensors .room-choice-area").filter({ hasText: "Home Assistant-rum: Vardagsrum" }).count(), 1);
@@ -1066,6 +1070,9 @@ try {
   await firePage.setViewportSize({ width: 390, height: 844 });
   assert.equal(await firePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await firePage.close();
+}
+try {
+  if (!process.env.ENERGY_ONLY) await dashboardChecks();
   const energyPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   energyPage.on("pageerror", (error) => errors.push(error.message));
   let energySettings = { ...defaults, room_sensors: ["sensor.living"], offset_entity: offset, price_entity: price };
@@ -1075,7 +1082,7 @@ try {
     start: energyEnd - (24 - i) * 3600, end: energyEnd - (23 - i) * 3600,
     kwh: 1, cost: 2, coverage_seconds: 3600, priced_seconds: 3600,
   }));
-  let energyFail = false, energyPartial = false, holdEnergy = false, releaseEnergy;
+  let energyFail = false, energyPartial = false, holdEnergy = false, releaseEnergy, energyResponse;
   await energyPage.route("**/api/settings", (route) => {
     if (route.request().method() === "PUT") { energySettings = route.request().postDataJSON(); energyWrites++; }
     return route.fulfill({ json: energySettings });
@@ -1085,9 +1092,14 @@ try {
     const provider = energySettings.price_provider;
     if (holdEnergy) { holdEnergy = false; await new Promise((resolve) => { releaseEnergy = resolve; }); }
     energyActive--;
+    if (energyResponse) return route.fulfill(energyResponse);
+    const power = !energySettings.energy_entity || energySettings.energy_entity === "sensor.pump_el_current_power_consumption";
     return route.fulfill(energyFail ? { status: 502, json: { error: "Recorder otillgänglig" } } : { json: {
       start: energyEnd - 86400, end: energyEnd, currency: "SEK", price_provider: provider,
-      price_entity: energySettings.price_entity, meter: { entity_id: "sensor.pump_energy_consumed", name: "Pumpens använda el",
+      method: power ? "power" : "counter",
+      price_entity: energySettings.price_entity, meter: {
+        entity_id: power ? "sensor.pump_el_current_power_consumption" : "sensor.pump_energy_consumed",
+        name: power ? "Pumpens totala eleffekt" : "Pumpens använda el",
         automatic: !energySettings.energy_entity },
       hours: energyHours.map((hour, i) => energyPartial && i === 0 ? { ...hour, kwh: null, cost: null, coverage_seconds: 0, priced_seconds: 0 } : hour),
       totals: { kwh: energyPartial ? null : 24, cost: energyPartial ? null : 48,
@@ -1102,10 +1114,14 @@ try {
   });
   await energyPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await energyPage.waitForFunction(() => document.getElementById("energy-status").textContent.includes("Automatiskt från myUplink"));
+  assert.match(await energyPage.locator("#energy-metrics").textContent(), /Uppskattad el/);
+  assert.match(await energyPage.locator("#energy-price-status").textContent(), /eleffekt.*15 minuter/);
   assert.ok(energyReads >= 1, "Blank meter selection automatically loads the myUplink energy report");
   assert.equal(energyWrites, 0, "Automatic discovery must not save settings or enable control");
   await energyPage.locator("#settings-panel > summary").click();
   assert.equal(await energyPage.locator('#energy_entity option[value="sensor.pump_energy_produced_for_heating_current_hour"]').count(), 0);
+  assert.equal(await energyPage.locator('#energy_entity option[value="sensor.pump_10_years_consumption"]').count(), 0);
+  assert.equal(await energyPage.locator('#energy_entity option[value="sensor.pump_el_current_power_consumption"]').count(), 1);
   await energyPage.locator("#energy_entity").selectOption("sensor.pump_energy_consumed");
   assert.match(await energyPage.locator('#energy_entity option[value=""]').textContent(), /Automatiskt.*myUplink/);
   assert.equal(energyWrites, 0, "Meter selection remains a draft until saved");
@@ -1134,10 +1150,32 @@ try {
   await energyPage.waitForFunction(() => document.getElementById("energy-status").textContent.includes("Recorder otillgänglig"));
   assert.equal(await energyPage.locator("#energy-metrics").textContent(), "", "Failed reads clear old numbers");
   energyFail = false;
+  energyResponse = { status: 502, contentType: "text/html", body: "<html><body>Bad Gateway</body></html>" };
+  await energyPage.locator("#refresh-energy").click();
+  await energyPage.waitForFunction(() => document.getElementById("energy-status").textContent.includes("HTTP 502"));
+  assert.match(await energyPage.locator("#energy-status").textContent(), /ingress.*api\/energy, HTTP 502/);
+  assert.equal(await energyPage.locator("#energy-data").isVisible(), false, "HTML gateway failures never leave old totals visible");
+  for (const response of [
+    { status: 200, contentType: "text/html", body: "<html><body>Login</body></html>" },
+    { status: 200, contentType: "application/json", body: '{"hours":' },
+    { status: 503, contentType: "application/json", body: "" },
+    { status: 502, json: null },
+  ]) {
+    energyResponse = response;
+    await energyPage.locator("#refresh-energy").click();
+    await energyPage.waitForFunction((status) => document.getElementById("energy-status").textContent.includes(`HTTP ${status}`), response.status);
+    const message = await energyPage.locator("#energy-status").textContent();
+    assert.match(message, /api\/energy/);
+    assert.doesNotMatch(message, /expected pattern|Unexpected token|Cannot read|\.\./);
+    assert.equal(await energyPage.locator("#energy-data").isVisible(), false);
+  }
+  energyResponse = undefined;
+  await energyPage.evaluate(() => void refreshEnergy());
+  await energyPage.waitForFunction(() => !document.getElementById("energy-data").hidden);
   holdEnergy = true;
   const readsBefore = energyReads;
   await energyPage.evaluate(() => void refreshEnergy());
-  for (let attempt = 0; attempt < 50 && !releaseEnergy; attempt++) await page.waitForTimeout(20);
+  for (let attempt = 0; attempt < 50 && !releaseEnergy; attempt++) await energyPage.waitForTimeout(20);
   assert.equal(typeof releaseEnergy, "function");
   await energyPage.evaluate(() => { settings.price_provider = "nordpool"; void refreshEnergy(); void refreshEnergy(); });
   energySettings.price_provider = "nordpool";
@@ -1148,7 +1186,8 @@ try {
   assert.equal(energyWrites, 1, "Viewing and refreshing energy does not save settings or control the pump");
   await energyPage.close();
   assert.deepEqual(errors, []);
-  console.log("Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
+  console.log(process.env.ENERGY_ONLY ? "Energy UI passed: meter selection, charts, HTTP/JSON errors, recovery and mobile layout."
+    : "Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

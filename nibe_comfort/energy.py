@@ -1,4 +1,4 @@
-"""Read-only consumption accounting from a cumulative electricity meter."""
+"""Read-only consumption accounting from electricity or power measurements."""
 
 import math
 import re
@@ -9,7 +9,9 @@ from controller import ControlError, number
 
 
 ENERGY_UNITS = {"Wh": 0.001, "kWh": 1, "MWh": 1000}
+POWER_UNITS = {"W": 0.001, "kW": 1}
 MAX_GAP_SECONDS = 7200
+MAX_POWER_GAP_SECONDS = 900
 
 
 def produced_energy(entity):
@@ -23,13 +25,17 @@ def meter_error(entity):
     text = (entity["entity_id"] + " " + attrs.get("friendly_name", "")).lower()
     if produced_energy(entity):
         return "Producerad energi är inte använd el."
-    if (re.search(r"(?:current|previous|last|this)_(?:hour|day|week|month|year)", text)
+    if (re.search(r"(?:current|previous|last|this|past)_(?:hour|day|week|month|year)|(?:^|_)\d+_years?_consumption(?:$|[_\s])", text)
+            or re.search(r"\b\d+ years?[’']? consumption\b", text)
             or any(word in text for word in ("current hour", "denna timme", "daily", "weekly", "monthly", "today", "yesterday", "i dag", "idag"))):
-        return "Periodräknare stöds inte här. Välj en ackumulerad elmätare."
+        return "Periodräknare stöds inte här. Välj en ackumulerad elmätare eller pumpens totala eleffekt."
+    if (entity["entity_id"].startswith("sensor.") and attrs.get("device_class") == "power"
+            and attrs.get("unit_of_measurement") in POWER_UNITS):
+        return None
     if (not entity["entity_id"].startswith("sensor.") or attrs.get("device_class") != "energy"
             or attrs.get("unit_of_measurement") not in ENERGY_UNITS
             or attrs.get("state_class") not in ("total", "total_increasing")):
-        return "Välj en ackumulerad energimätare med Wh, kWh eller MWh och state_class total/total_increasing."
+        return "Välj en ackumulerad energimätare med Wh/kWh/MWh och state_class total/total_increasing, eller en eleffektgivare med W/kW."
     return None
 
 
@@ -40,17 +46,24 @@ def discover_meter(states, registry, offset_entity):
         raise ControlError("Välj pumpanslutning först. Ingen entydig myUplink-pump hittades för automatisk elmätning.")
     ids = {r["entity_id"] for r in registry if r.get("platform") == "myuplink"
            and r.get("device_id") == pump["device_id"]}
-    candidates = []
+    candidates, power_candidates = [], []
     for entity in states:
         text = (entity["entity_id"] + " " + entity["attributes"].get("friendly_name", "")).lower()
-        if entity["entity_id"] in ids and meter_error(entity) is None and any(
+        if entity["entity_id"] not in ids or meter_error(entity) is not None:
+            continue
+        if entity["attributes"].get("device_class") == "power":
+            # Only the known total input, never a component or auxiliary heater.
+            if entity["entity_id"].endswith("_el_current_power_consumption"):
+                power_candidates.append(entity)
+        elif any(
             word in text for word in ("energy_spent", "consumed", "consumption", "electrical", "electricity",
                                       "elförbrukning", "elanvändning", "använd el", "förbrukad el")
         ):
             candidates.append(entity)
+    candidates = candidates or power_candidates
     candidates = {e["entity_id"]: e for e in candidates}
     if not candidates:
-        raise ControlError("Ingen entydig ackumulerad elmätare för använd el hittades på vald myUplink-pump. "
+        raise ControlError("Ingen entydig ackumulerad elmätare eller total eleffektgivare hittades på vald myUplink-pump. "
                            "Producerad värme och periodräknare används inte. Välj en separat elmätare manuellt vid behov.")
     if len(candidates) != 1:
         raise ControlError("Flera möjliga elmätare finns på myUplink-pumpen: " + ", ".join(sorted(candidates))
@@ -80,7 +93,7 @@ def price_unit(unit):
     return ("SEK" if currency.lower() == "kr" else currency.upper()), factor
 
 
-def samples(rows, entity_id, prices=False):
+def samples(rows, entity_id, prices=False, power=False):
     attrs = {}
     result = {}
     currency = None
@@ -102,7 +115,10 @@ def samples(rows, entity_id, prices=False):
             error = meter_error({"entity_id": entity_id, "attributes": attrs})
             if error:
                 raise ControlError(error)
-            scale = ENERGY_UNITS[attrs["unit_of_measurement"]]
+            units = POWER_UNITS if power else ENERGY_UNITS
+            if attrs["unit_of_measurement"] not in units:
+                raise ControlError("Givarens mätmetod har ändrats under perioden. Historiken kan inte kombineras.")
+            scale = units[attrs["unit_of_measurement"]]
         value = None
         if row.get("state") not in ("unknown", "unavailable", None):
             try:
@@ -120,8 +136,8 @@ def samples(rows, entity_id, prices=False):
     return sorted(result.items()), currency
 
 
-def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, price_max_age):
-    meter, _ = samples(meter_rows, meter_id)
+def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, price_max_age, power=False):
+    meter, _ = samples(meter_rows, meter_id, power=power)
     price_error = None
     try:
         prices, currency = samples(price_rows, price_id, prices=True)
@@ -143,8 +159,11 @@ def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, p
     for (left, previous), (right, current) in zip(meter, meter[1:]):
         if right <= start or left >= end:
             continue
-        delta = current - previous if current is not None and previous is not None else None
-        if delta is None or not math.isfinite(delta) or delta < 0 or right - left > MAX_GAP_SECONDS:
+        delta = None
+        if current is not None and previous is not None:
+            delta = previous * ((right - left) / 3600) if power else current - previous
+        if delta is None or not math.isfinite(delta) or delta < 0 or right - left > (
+                MAX_POWER_GAP_SECONDS if power else MAX_GAP_SECONDS):
             skipped += 1
             continue
         rate = delta / (right - left)
@@ -180,6 +199,7 @@ def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, p
     return {
         "start": start, "end": end, "hours": hours, "totals": totals, "currency": currency,
         "price_error": price_error, "skipped_intervals": skipped,
+        "method": "power" if power else "counter",
     }
 
 

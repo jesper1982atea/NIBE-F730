@@ -540,7 +540,7 @@ med rapporteringstid och synliga fel. Översikten uppdateras varje minut.
 
 ### Pumpens el och kostnad över tid
 
-**Pumpens ackumulerade elanvändning** under **Inställningar → Din
+**Pumpens elmätare eller totala eleffekt** under **Inställningar → Din
 värmepump** använder automatiskt en entydig räknare för **använd el**
 på samma myUplink-enhet som din sparade kurvförskjutningsentitet.
 Givaren måste både uppfylla mätarkraven nedan och ha ett namn/ID som
@@ -550,14 +550,26 @@ Flera möjliga räknare kan överlappa eller avse olika delar: då visas
 ett tydligt meddelande och du får välja manuellt. Ingen automatisk
 summering eller växling till en annan räknare vid otillgänglighet görs.
 
+Om ingen ackumulerad räknare hittas används i stället en entydig
+`*_el_current_power_consumption` på samma myUplink-pump. Det är NIBEs
+totala eleffekt, inte komponenternas eller elpatronens separata effekt.
+Årsstatistik som `1_years_consumption` och `10_years_consumption` används
+inte för timförbrukning. En redan identifierad men otillgänglig mätare
+ersätts inte automatiskt med effektgivaren.
+
 Du kan välja och spara en specifik elmätare manuellt, även från en separat
 integration; sådana val går alltid före automatisk upptäckt. Återgå till
 **Automatiskt · elmätare på vald myUplink-pump** och spara för att åter
 använda upptäckten. Statuskortet visar vilket läge och vilken entitet som
 används. Upptäckten sparar inga inställningar och ändrar aldrig styrningen.
 Om mätaren bara avser värme ingår inte varmvatten eller annan el som den
-inte mäter. Om myUplink bara har periodräknare eller producerad värme
-behövs fortfarande en separat ackumulerad elmätare.
+inte mäter. Om myUplink varken har en lämplig ackumulerad räknare eller
+total eleffekt behövs en separat givare för pumpens el.
+
+Om Home Assistants ingress i stället returnerar en felsida eller ett
+ogiltigt API-svar visas API-adress och HTTP-status, inte webbläsarens
+generella JSON-fel. Kortet döljer tidigare siffror och försöker igen
+automatiskt; mätarval och värmestyrning ändras inte vid ett läsfel.
 
 Kortet **Pumpens el och kostnad** visar de senaste 24 avslutade timmarna,
 inte ett kalenderdygn. Datatäckning, timvärden, kostnad och styrmarkeringar
@@ -566,10 +578,16 @@ total` eller `total_increasing` och enheten Wh, kWh eller MWh. Använd en
 ackumulerad räknare, inte `energy_produced_for_heating_current_hour`:
 den mäter producerad värme under en period, inte använd el. Givare för
 producerad energi och identifierade tim-/dygnsräknare erbjuds inte som
-elmätare. Funktionen integrerar inte effekt (W) och summerar inte flera
-överlappande räknare.
+elmätare. Funktionen summerar inte flera överlappande räknare.
 
-Ökningen mellan två giltiga mätarrapporter fördelas jämnt över intervallet,
+Eleffektgivare ska ha `device_class: power` och W eller kW. Vid
+effektmätning uppskattas kWh genom att föregående effekt hålls konstant
+till nästa rapport. Högst 15 minuter mellan rapporterna accepteras;
+längre luckor och otillgängliga värden utelämnas. Efter sista rapporten
+extrapoleras ingenting. Kortet märker elen som **uppskattad** och visar
+metod och täckning. Ingen COP-beräkning används för producerad värme.
+
+För ackumulerade räknare fördelas ökningen mellan två giltiga mätarrapporter jämnt över intervallet,
 som får vara högst två timmar. Därför är timfördelning och kostnad
 **uppskattade utifrån mätarintervall**, inte exakt uppmätt momentan
 elanvändning. Negativa räknarhopp, otillgängliga värden och längre luckor

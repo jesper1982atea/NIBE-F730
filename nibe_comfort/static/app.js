@@ -54,8 +54,18 @@ async function api(path, options = {}) {
   const timeout = window.setTimeout(() => controller.abort(new Error("Hämtningen tog för lång tid. Försöker igen automatiskt.")), 20000);
   try {
     const response = await fetch(`./api/${path}`, { cache: "no-store", ...options, signal: controller.signal });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    let body;
+    try {
+      body = await response.json();
+    } catch (error) {
+      // WebKit uses a DOMException named SyntaxError for invalid JSON.
+      if (error.name !== "SyntaxError") throw error;
+      const source = (response.headers.get("Content-Type") || "").includes("text/html")
+        ? "Home Assistants ingress gav en webbsida i stället för API-data"
+        : "API-svaret innehöll inte giltig JSON";
+      throw new Error(`${source} (api/${path}, HTTP ${response.status})`, { cause: error });
+    }
+    if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : `api/${path}: HTTP ${response.status}`);
     return body;
   } finally {
     window.clearTimeout(timeout);
@@ -185,7 +195,7 @@ function renderSettings(formSettings = settings, preserveView = false) {
   selectOptions("outdoor_entity", (entity) => isTemperature(entity) || entity.entity_id.startsWith("weather."), formSettings.outdoor_entity);
   selectOptions("price_entity", (entity) => entity.entity_id.startsWith("sensor."), formSettings.price_entity);
   selectOptions("forecast_entity", (entity) => entity.entity_id.startsWith("weather."), formSettings.forecast_entity);
-  selectOptions("energy_entity", (entity) => entity.device_class === "energy" && entity.energy_meter_error === null, formSettings.energy_entity);
+  selectOptions("energy_entity", (entity) => entity.energy_meter_error === null, formSettings.energy_entity);
   $("price_provider").value = formSettings.price_provider;
   const rooms = entities.filter((entity) => isTemperature(entity) || entity.entity_id.startsWith("climate."));
   for (const id of formSettings.room_sensors) {
@@ -1017,12 +1027,12 @@ async function refreshEnergy() {
     const priced = totals.priced_seconds / 3600;
     $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name} · ${data.meter.entity_id}. ${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
     $("energy-metrics").replaceChildren(
-      metric({ label: totals.kwh === null ? "Använd el · endast täckt del" : "Använd el · hela perioden",
+      metric({ label: `${data.method === "power" ? "Uppskattad el" : "Använd el"} · ${totals.kwh === null ? "endast täckt del" : "hela perioden"}`,
         value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
       metric({ label: totals.cost === null ? "Beräknad kostnad · endast prissatt del" : "Beräknad kostnad · hela perioden",
         value: priced > 0 ? displayNumber(totals.partial_cost) : null, unit: data.currency || "" }),
     );
-    $("energy-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(priced)} av 24 timmar. ${data.price_error || "Kostnaden är uppskattad utifrån mätarintervall och historiska priser."}`;
+    $("energy-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(priced)} av 24 timmar. ${data.method === "power" ? "El och kostnad uppskattas från eleffekt: senaste värdet gäller till nästa rapport, högst 15 minuter mellan rapporter. Ingen extrapolering efter sista rapporten. " : ""}${data.price_error || "Kostnaden är uppskattad utifrån mätarintervall och historiska priser."}`;
     const markers = [...historyMarkers(data.changes), ...data.settings_changes.map((change) => ({
       time: change.timestamp, label: "Inställningar sparade", short: "I", className: "done-other", title: change.label,
     }))];
@@ -1065,7 +1075,7 @@ async function refreshEnergy() {
   } catch (error) {
     if (signature() !== requested) { pendingRefreshes.add("energy"); return; }
     $("energy-data").hidden = true;
-    $("energy-status").textContent = `Kunde inte läsa elförbrukningen: ${error.message}. Försöker igen automatiskt.`;
+    $("energy-status").textContent = `Kunde inte läsa elförbrukningen: ${error.message.replace(/[.!?]+\s*$/, "")}. Försöker igen automatiskt.`;
   } finally {
     energyBusy = false;
     if (pendingRefreshes.delete("energy")) void refreshEnergy();
