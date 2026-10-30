@@ -739,7 +739,13 @@ En höjning påverkar även redan varma rum och ger ingen garanti för en
 viss inomhustemperatur.
 
 Medeltemperaturen avser prioriterade givare om sådana valts, annars alla
-valda rumsgivare. Varje styrande givare väger lika.
+valda rumsgivare. Varje styrande givare väger lika. Regleringen använder
+medelvärdet av den senaste timmens minutavläsningar av detta snitt, så att
+givare som rapporterar hela grader och hoppar 1–2 °C mellan rapporterna inte
+flyttar förskjutningen varje intervall. Startsidan visar aktuellt snitt;
+ändringsloggen visar även timmedlet som användes. Timmedlet börjar om när du
+ändrar vilka givare som styr och efter omstart av tillägget. Förvärmning
+ändrar målet direkt och påverkas inte av utjämningen.
 
 Grundinställningen tillåter högst 1 förskjutningssteg per 30 minuter.
 Värmesystem är tröga; detta är en enkel begränsad proportionell reglering,

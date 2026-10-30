@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## Ej släppt
+
+- Rumsregeln använder medelvärdet av den senaste timmens avläsningar av
+  det styrande snittet i stället för enbart senaste värdet. Givare med
+  heltalsupplösning som hoppar 1–2 °C mellan rapporterna flyttar inte
+  längre förskjutningen varje intervall. Varaktiga ändringar slår igenom
+  inom ungefär en halvtimme. Ändringsloggen visar timmedlet.
+
 ## 0.2.36
 
 - Ny vy **När går elpatronen?** visar elpatronens egen effekt, observerade
