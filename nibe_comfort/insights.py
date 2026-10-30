@@ -821,7 +821,8 @@ class Insights:
             report = consumption_report(groups.get(meter_id, []),
                                         [] if price_problem else groups.get(price_id, []),
                                         meter_id, price_id, start, end,
-                                        min(config["max_age_minutes"] * 60, 7200))
+                                        min(config["max_age_minutes"] * 60, 7200),
+                                        power=meter["attributes"].get("device_class") == "power")
             if price_problem:
                 report["price_error"] = price_problem
             report["meter"] = {"entity_id": meter_id, "name": meter["attributes"].get("friendly_name", meter_id),

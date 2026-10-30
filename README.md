@@ -125,6 +125,13 @@ npm run ui           # testar gränssnittet, även mobilbredder 320–412 px
 npm run screenshots  # uppdaterar docs/screenshots
 ```
 
+Safari/WebKit-regression för elkortet från repots rot:
+
+```sh
+npm --prefix tools exec -- playwright install webkit
+BROWSER=webkit ENERGY_ONLY=1 npm --prefix tools run ui
+```
+
 ## Ny release
 
 1. Höj `version` i `nibe_comfort/config.yaml` och skriv i

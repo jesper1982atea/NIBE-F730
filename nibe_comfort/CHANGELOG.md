@@ -1,5 +1,19 @@
 # Ändringslogg
 
+## 0.2.35
+
+- Automatisk elmätning kan nu använda NIBEs totala eleffekt
+  (`EL Current power consumption`) när en ackumulerad elmätare saknas.
+  Pumpens årsstatistik väljs inte längre som timmätare. Komponenteffekt,
+  producerad värme och periodräknare används inte för automatisk summering.
+- El och kostnad från W/kW-historik märks som uppskattade. Senaste effekt
+  gäller till nästa rapport, med högst 15 minuter mellan rapporter.
+  Dataluckor utelämnas och ingen förbrukning extrapoleras efter sista
+  rapporten. Sparade manuella val och pumpstyrningen lämnas oförändrade.
+- Rättat Safaris kryptiska ”The string did not match the expected pattern”
+  när ingress returnerar en felsida eller ogiltig JSON. Nu visas en svensk
+  förklaring med API-adress och HTTP-status; automatiska återförsök behålls.
+
 ## 0.2.34
 
 - Elkortet använder automatiskt en entydig ackumulerad räknare för använd

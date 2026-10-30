@@ -239,7 +239,7 @@
 
     <section class="card dashboard" id="energy-section">
       <div class="section-heading"><div><span class="section-number">SENASTE 24 AVSLUTADE TIMMARNA</span><h2>Pumpens el och kostnad</h2></div><button type="button" id="refresh-energy" class="secondary">Uppdatera</button></div>
-      <p class="section-intro">Följ använd el och jämför med våra loggade ändringar. En entydig ackumulerad elmätare för använd el hämtas automatiskt från vald myUplink-pump. Du kan välja en annan pumpelmätare i inställningarna.</p>
+      <p class="section-intro">Följ använd el och jämför med våra loggade ändringar. En entydig ackumulerad elmätare används automatiskt från vald myUplink-pump, annars pumpens totala eleffekt. Vid effektmätning uppskattas el och kostnad från historiken. Du kan välja en annan givare i inställningarna.</p>
       <p id="energy-status" role="status">Letar efter pumpens elmätare…</p>
       <div id="energy-data" hidden>
       <div id="energy-metrics" class="live-grid"></div>
@@ -313,9 +313,9 @@
             <p class="hint warning">Välj bara värmekurvans förskjutning, inte grundkurva eller annan pumpinställning. Vid automatisk upptäckt används NIBEs klimatsystem 1.</p>
           </details>
           <p id="offset-details" class="hint"></p>
-          <label for="energy_entity">Pumpens ackumulerade elanvändning · valfritt</label>
+          <label for="energy_entity">Pumpens elmätare eller totala eleffekt · valfritt</label>
           <select id="energy_entity" name="energy_entity"></select>
-          <p class="hint">Automatiskt använder en entydig räknare för använd el på samma myUplink-enhet som din pumpanslutning. Flera möjliga räknare summeras inte: välj då manuellt. Sparade manuella val behålls. Välj just pumpens använda el, inte husets elmätare eller producerad värme. Använd en totalräknare i Wh/kWh/MWh (state_class total eller total_increasing), inte en tim-/dygnsräknare. Värme och varmvatten ingår tillsammans bara om mätaren omfattar båda. Valet påverkar inte styrningen.</p>
+          <p class="hint">Automatiskt använder en entydig räknare för använd el på samma myUplink-enhet som din pumpanslutning, annars NIBEs totala eleffekt (EL Current power consumption). El och kostnad uppskattas då från W/kW-historiken. Årsstatistik och timräknare används inte. Flera möjliga räknare summeras inte: välj då manuellt. Sparade manuella val behålls. Välj just pumpens använda el eller totala eleffekt, inte husets elmätare, en delkomponent eller producerad värme. Ackumulerade räknare ska ha Wh/kWh/MWh och state_class total eller total_increasing. Värme och varmvatten ingår tillsammans bara om givaren omfattar båda. Valet påverkar inte styrningen.</p>
           <div class="metrics">
             <div><span>Nuvarande förskjutning</span><strong id="current-offset">—</strong></div>
             <div><span>Beräknat mål</span><strong id="desired-offset">—</strong></div>

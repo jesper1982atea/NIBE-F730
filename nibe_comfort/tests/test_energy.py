@@ -34,12 +34,62 @@ def price_rows(unit="SEK/kWh", value=2):
     return [row(PRICE, value, START + i * 3600, unit_of_measurement=unit) for i in range(24)]
 
 
+POWER = "sensor.pump_el_current_power_consumption"
+
+
+def power_rows(unit="kW", scale=1):
+    return [row(POWER, 2 * scale, START + i * 300,
+                device_class="power", state_class="measurement", unit_of_measurement=unit)
+            for i in range(289)]
+
+
 def report(meter=None, prices=None):
     return consumption_report(meter_rows() if meter is None else meter,
                               price_rows() if prices is None else prices, METER, PRICE, START, END, 7200)
 
 
 class EnergyTests(unittest.TestCase):
+    def test_power_integration_units_and_cost(self):
+        for unit, scale in (("W", 1000), ("kW", 1)):
+            data = consumption_report(power_rows(unit, scale), price_rows(), POWER, PRICE, START, END, 7200, power=True)
+            self.assertEqual(data["method"], "power")
+            self.assertAlmostEqual(data["totals"]["kwh"], 48)
+            self.assertAlmostEqual(data["totals"]["cost"], 96)
+            self.assertTrue(all(abs(h["kwh"] - 2) < 1e-8 for h in data["hours"]))
+
+    def test_power_holds_previous_sample_including_decreases_and_zero(self):
+        rows = power_rows()[:4]
+        for r, value in zip(rows, (6, 3, 0, 100)):
+            r["state"] = str(value)
+        data = consumption_report(rows, price_rows(), POWER, PRICE, START, END, 7200, power=True)
+        self.assertAlmostEqual(data["totals"]["measured_kwh"], 0.75)
+        self.assertAlmostEqual(data["totals"]["partial_cost"], 1.5)
+        self.assertEqual(data["totals"]["coverage_seconds"], 900)
+        self.assertIsNone(data["totals"]["kwh"], "No extrapolation after the last sample")
+
+    def test_power_invalid_values_and_large_gaps_are_not_covered(self):
+        for state in ("unknown", "unavailable", "-1", "invalid"):
+            rows = power_rows()[:4]
+            rows[1]["state"] = state
+            data = consumption_report(rows, price_rows(), POWER, PRICE, START, END, 7200, power=True)
+            self.assertEqual(data["totals"]["coverage_seconds"], 300)
+            self.assertEqual(data["skipped_intervals"], 2)
+        rows = power_rows()
+        data = consumption_report([rows[0], rows[3]], price_rows(), POWER, PRICE, START, END, 7200, power=True)
+        self.assertEqual(data["totals"]["coverage_seconds"], 900)
+        data = consumption_report([rows[0], rows[4]], price_rows(), POWER, PRICE, START, END, 7200, power=True)
+        self.assertEqual(data["totals"]["coverage_seconds"], 0)
+        rows[1]["attributes"]["unit_of_measurement"] = "kWh"
+        rows[1]["attributes"]["device_class"] = "energy"
+        rows[1]["attributes"]["state_class"] = "total_increasing"
+        with self.assertRaisesRegex(ControlError, "mätmetod"):
+            consumption_report(rows, price_rows(), POWER, PRICE, START, END, 7200, power=True)
+
+    def test_year_summaries_and_past_hour_counters_are_not_live_meters(self):
+        for eid in ("sensor.pump_1_years_consumption", "sensor.pump_10_years_consumption",
+                    "sensor.pump_el_energy_used_for_heating_past_hour"):
+            self.assertIsNotNone(meter_error({**meter_rows()[0], "entity_id": eid}))
+
     def test_consumption_cost_and_hourly_coverage(self):
         data = report()
         self.assertEqual(len(data["hours"]), 24)
@@ -254,6 +304,43 @@ class EnergyIntegrationTests(unittest.TestCase):
             manual = self.insights.energy(self.cfg)
         self.assertFalse(manual["meter"]["automatic"])
         self.assertEqual(manual["meter"]["entity_id"], METER)
+
+    def test_power_fallback_excludes_year_summaries_and_components(self):
+        registry = self.pump_registry()
+        states = [power_rows()[0]]
+        for eid in (POWER, "sensor.pump_1_years_consumption", "sensor.pump_10_years_consumption",
+                    "sensor.pump_el_current_consumption_components_eb100", "sensor.pump_power_internal_add_heat"):
+            registry.append({"entity_id": eid, "device_id": "pump", "platform": "myuplink"})
+            if eid != POWER:
+                template = meter_rows()[0] if "years" in eid else power_rows()[0]
+                states.append({**template, "entity_id": eid})
+        self.assertEqual(discover_meter(states, registry, self.cfg["offset_entity"])["entity_id"], POWER)
+        states[0]["state"] = "unavailable"
+        self.assertEqual(discover_meter(states, registry, self.cfg["offset_entity"])["entity_id"], POWER)
+        self.assertEqual(discover_meter([*states, meter_rows()[0]], registry, self.cfg["offset_entity"])["entity_id"], METER)
+        with self.assertRaisesRegex(ControlError, "Ingen entydig"):
+            discover_meter(states[1:], registry, self.cfg["offset_entity"])
+        registry[3]["device_id"] = "other"
+        with self.assertRaisesRegex(ControlError, "Ingen entydig"):
+            discover_meter(states, registry, self.cfg["offset_entity"])
+
+    def test_power_auto_report_loads_only_total_and_price_history_without_writes(self):
+        self.ha.integration_registry.return_value = [
+            {"entity_id": self.cfg["offset_entity"], "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": POWER, "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": PRICE, "device_id": "home", "platform": "tibber"},
+        ]
+        self.ha.states.return_value = [power_rows()[0]]
+        self.ha.request.return_value = [power_rows(), price_rows()]
+        with patch("insights.time.time", return_value=END + 60):
+            data = self.insights.energy({**self.cfg, "energy_entity": ""})
+        self.assertEqual(data["method"], "power")
+        self.assertEqual(data["meter"]["entity_id"], POWER)
+        self.assertTrue(data["meter"]["automatic"])
+        self.assertAlmostEqual(data["totals"]["kwh"], 48)
+        self.assertIn(POWER, self.ha.request.call_args.args[0])
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
 
     def test_automatic_cache_tracks_pump_connection_and_never_falls_back_from_manual_selection(self):
         self.ha.integration_registry.return_value = self.pump_registry()
