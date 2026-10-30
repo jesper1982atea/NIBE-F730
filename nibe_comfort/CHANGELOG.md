@@ -1,5 +1,17 @@
 # Ändringslogg
 
+## 0.2.34
+
+- Elkortet använder automatiskt en entydig ackumulerad räknare för använd
+  el från samma myUplink-enhet som din valda pumpanslutning. Status visar
+  vilken entitet som används och om valet är automatiskt eller manuellt.
+- Producerad värme, identifierade periodräknare och andra pumpar undantas.
+  Flera möjliga räknare ger ett tydligt meddelande och kräver manuellt val,
+  utan automatisk summering eller byte vid otillgänglighet.
+- Sparade manuella elmätarval går före upptäckten. Välj **Automatiskt**
+  och spara för att återgå till myUplink-upptäckt. Funktionen sparar inga
+  inställningar själv och påverkar inte pumpstyrningen.
+
 ## 0.2.33
 
 - Nytt kort **Pumpens el och kostnad** visar elanvändning och beräknad

@@ -33,6 +33,31 @@ def meter_error(entity):
     return None
 
 
+def discover_meter(states, registry, offset_entity):
+    pump = next((r for r in registry if r["entity_id"] == offset_entity
+                 and r.get("platform") == "myuplink" and r.get("device_id")), None)
+    if not pump:
+        raise ControlError("Välj pumpanslutning först. Ingen entydig myUplink-pump hittades för automatisk elmätning.")
+    ids = {r["entity_id"] for r in registry if r.get("platform") == "myuplink"
+           and r.get("device_id") == pump["device_id"]}
+    candidates = []
+    for entity in states:
+        text = (entity["entity_id"] + " " + entity["attributes"].get("friendly_name", "")).lower()
+        if entity["entity_id"] in ids and meter_error(entity) is None and any(
+            word in text for word in ("energy_spent", "consumed", "consumption", "electrical", "electricity",
+                                      "elförbrukning", "elanvändning", "använd el", "förbrukad el")
+        ):
+            candidates.append(entity)
+    candidates = {e["entity_id"]: e for e in candidates}
+    if not candidates:
+        raise ControlError("Ingen entydig ackumulerad elmätare för använd el hittades på vald myUplink-pump. "
+                           "Producerad värme och periodräknare används inte. Välj en separat elmätare manuellt vid behov.")
+    if len(candidates) != 1:
+        raise ControlError("Flera möjliga elmätare finns på myUplink-pumpen: " + ", ".join(sorted(candidates))
+                           + ". De kan överlappa eller avse olika delar. Välj elmätare manuellt; ingen summeras automatiskt.")
+    return next(iter(candidates.values()))
+
+
 def timestamp(row):
     value = row.get("last_updated") or row.get("last_changed")
     try:
