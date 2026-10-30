@@ -98,7 +98,8 @@ function makeAdvanced() {
 
 function selectOptions(id, predicate, configured = settings[id]) {
   const select = $(id);
-  select.replaceChildren(new Option(id === "forecast_entity" ? "Automatiskt · SMHI i första hand" : "Inte vald", ""));
+  select.replaceChildren(new Option(id === "forecast_entity" ? "Automatiskt · SMHI i första hand"
+    : id === "energy_entity" ? "Automatiskt · elmätare på vald myUplink-pump" : "Inte vald", ""));
   for (const entity of entities.filter(predicate)) {
     select.add(new Option(`${entity.name} · ${entity.entity_id}`, entity.entity_id));
   }
@@ -611,7 +612,7 @@ async function refreshSavedSettings() {
         if ((roomDraft && roomFields.includes(key)) || (priceDraft && priceFields.includes(key))
           || JSON.stringify(draft[key]) !== JSON.stringify(settings[key])) merged[key] = draft[key];
       }
-      const energyChanged = ["energy_entity", "price_entity", "price_provider", "max_age_minutes"]
+      const energyChanged = ["offset_entity", "energy_entity", "price_entity", "price_provider", "max_age_minutes"]
         .some((key) => latest[key] !== settings[key]);
       settings = latest;
       renderSettings(merged, true);
@@ -998,7 +999,7 @@ function historyMarkers(changes) {
 async function refreshEnergy() {
   if (energyBusy) { pendingRefreshes.add("energy"); return; }
   energyBusy = true;
-  const signature = () => JSON.stringify([settings.energy_entity, settings.price_entity, settings.price_provider, settings.max_age_minutes]);
+  const signature = () => JSON.stringify([settings.offset_entity, settings.energy_entity, settings.price_entity, settings.price_provider, settings.max_age_minutes]);
   const requested = signature();
   $("energy-data").hidden = true;
   for (const id of ["energy-metrics", "energy-chart", "energy-cost-chart", "energy-table", "energy-comparisons"]) {
@@ -1007,10 +1008,6 @@ async function refreshEnergy() {
   }
   $("energy-price-status").textContent = "";
   try {
-    if (!settings.energy_entity) {
-      $("energy-status").textContent = "Välj pumpens ackumulerade elmätare i inställningarna. Producerad värme och timräknare används inte som elförbrukning.";
-      return;
-    }
     $("energy-status").textContent = "Hämtar pumpens elhistorik…";
     const data = await api("energy");
     if (signature() !== requested) { pendingRefreshes.add("energy"); return; }
@@ -1018,7 +1015,7 @@ async function refreshEnergy() {
     $("energy-data").hidden = false;
     const covered = totals.coverage_seconds / 3600;
     const priced = totals.priced_seconds / 3600;
-    $("energy-status").textContent = `${data.meter.name} · ${data.meter.entity_id}. ${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
+    $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name} · ${data.meter.entity_id}. ${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
     $("energy-metrics").replaceChildren(
       metric({ label: totals.kwh === null ? "Använd el · endast täckt del" : "Använd el · hela perioden",
         value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),

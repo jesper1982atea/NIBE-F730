@@ -13,7 +13,7 @@ from urllib.parse import quote, urlencode
 
 from controller import ControlError, control_rooms, fresh_entity, next_step, number, price_contribution, temperature
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
-from energy import consumption_report, meter_error, produced_energy
+from energy import consumption_report, discover_meter, meter_error, produced_energy
 
 
 def discover_tibber(states, registry):
@@ -787,22 +787,23 @@ class Insights:
         return self.cached(key, 60, lambda: overview(self.ha.states(), self.registry(), config, time.time()))
 
     def energy(self, config):
-        key = ("energy", config["energy_entity"], config["price_entity"], config["price_provider"],
+        key = ("energy", config["offset_entity"], config["energy_entity"], config["price_entity"], config["price_provider"],
                config["max_age_minutes"])
 
         def load():
             now = time.time()
             end = int(now // 3600) * 3600
             start = end - 86400
-            if not config["energy_entity"]:
-                raise ControlError("Välj pumpens ackumulerade elmätare i inställningarna för att följa förbrukning och kostnad.")
             states = {s["entity_id"]: s for s in self.ha.states()}
-            meter = states.get(config["energy_entity"])
+            automatic = not config["energy_entity"]
+            meter = (discover_meter(states.values(), self.registry(), config["offset_entity"])
+                     if automatic else states.get(config["energy_entity"]))
             if not meter:
                 raise ControlError("Den valda elmätaren saknas i Home Assistant.")
             error = meter_error(meter)
             if error:
                 raise ControlError(error)
+            meter_id = meter["entity_id"]
             price_id = config["price_entity"]
             price_problem = None
             if price_id:
@@ -811,19 +812,20 @@ class Insights:
                         or config["price_provider"] == "nordpool" and platform == "tibber"):
                     price_problem = "Prisgivaren hör inte till din sparade elpriskälla. Välj rätt källa och givare i inställningarna."
             query = urlencode({
-                "filter_entity_id": ",".join(filter(None, (config["energy_entity"], price_id))),
+                "filter_entity_id": ",".join(filter(None, (meter_id, price_id))),
                 "end_time": datetime.fromtimestamp(now, timezone.utc).isoformat(),
                 "significant_changes_only": "0",
             })
             stamp = datetime.fromtimestamp(start - 3600, timezone.utc).isoformat()
             groups = history_groups(self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query))
-            report = consumption_report(groups.get(config["energy_entity"], []),
+            report = consumption_report(groups.get(meter_id, []),
                                         [] if price_problem else groups.get(price_id, []),
-                                        config["energy_entity"], price_id, start, end,
+                                        meter_id, price_id, start, end,
                                         min(config["max_age_minutes"] * 60, 7200))
             if price_problem:
                 report["price_error"] = price_problem
-            report["meter"] = {"entity_id": meter["entity_id"], "name": meter["attributes"].get("friendly_name", meter["entity_id"])}
+            report["meter"] = {"entity_id": meter_id, "name": meter["attributes"].get("friendly_name", meter_id),
+                               "automatic": automatic}
             report["price_entity"] = price_id
             report["price_provider"] = config["price_provider"]
             report["checked_at"] = time.time()

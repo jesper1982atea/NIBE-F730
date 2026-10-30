@@ -540,12 +540,24 @@ med rapporteringstid och synliga fel. Översikten uppdateras varje minut.
 
 ### Pumpens el och kostnad över tid
 
-Välj **Pumpens ackumulerade elanvändning** under **Inställningar → Din
-värmepump**, och spara. Välj en mätare för pumpens **använda el**, antingen
-från myUplink eller en separat elmätare. Ingen givare väljs automatiskt:
-en husmätare är inte pumpens förbrukning. Om mätaren bara avser värme
-ingår inte varmvatten eller annan el som den inte mäter. Befintliga
-installationer får inget mätarval och ändrar inte styrning vid uppdatering.
+**Pumpens ackumulerade elanvändning** under **Inställningar → Din
+värmepump** använder automatiskt en entydig räknare för **använd el**
+på samma myUplink-enhet som din sparade kurvförskjutningsentitet.
+Givaren måste både uppfylla mätarkraven nedan och ha ett namn/ID som
+tydligt anger förbrukad el, exempelvis `energy_spent` eller `energy_consumed`.
+Producerad värme, andra pumpar och husmätare väljs inte automatiskt.
+Flera möjliga räknare kan överlappa eller avse olika delar: då visas
+ett tydligt meddelande och du får välja manuellt. Ingen automatisk
+summering eller växling till en annan räknare vid otillgänglighet görs.
+
+Du kan välja och spara en specifik elmätare manuellt, även från en separat
+integration; sådana val går alltid före automatisk upptäckt. Återgå till
+**Automatiskt · elmätare på vald myUplink-pump** och spara för att åter
+använda upptäckten. Statuskortet visar vilket läge och vilken entitet som
+används. Upptäckten sparar inga inställningar och ändrar aldrig styrningen.
+Om mätaren bara avser värme ingår inte varmvatten eller annan el som den
+inte mäter. Om myUplink bara har periodräknare eller producerad värme
+behövs fortfarande en separat ackumulerad elmätare.
 
 Kortet **Pumpens el och kostnad** visar de senaste 24 avslutade timmarna,
 inte ett kalenderdygn. Datatäckning, timvärden, kostnad och styrmarkeringar

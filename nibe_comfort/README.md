@@ -19,8 +19,10 @@ väder, Tibber-priser och planerad förskjutning, en uppskattad värmekurva,
 väderprognos, automatisk Tibber-prisupptäckt och pumpstatus samlas i samma gränssnitt. Alla tilläggets framtida inställningsändringar
 och automatiska styrförsök loggas beständigt, med separat återläsningsbekräftelse.
 
-Med en vald ackumulerad elmätare för just pumpen kan du följa elanvändning
+Med en ackumulerad elmätare för just pumpen kan du följa elanvändning
 och beräknad kostnad per timme tillsammans med loggade styrändringar.
+En entydig förbrukningsräknare på vald myUplink-pump används automatiskt;
+du kan välja manuellt om flera räknare finns eller en separat mätare används.
 Producerad värme räknas inte som använd el. Kostnaden använder historiska
 priser från vald elpriskälla; skillnader före/efter är observationer, inte
 bevisad besparing. Saknat underlag visas som luckor, inte som noll.

@@ -239,8 +239,8 @@
 
     <section class="card dashboard" id="energy-section">
       <div class="section-heading"><div><span class="section-number">SENASTE 24 AVSLUTADE TIMMARNA</span><h2>Pumpens el och kostnad</h2></div><button type="button" id="refresh-energy" class="secondary">Uppdatera</button></div>
-      <p class="section-intro">Följ använd el och jämför med våra loggade ändringar. Välj en ackumulerad elmätare som bara mäter pumpen i inställningarna.</p>
-      <p id="energy-status" role="status">Välj pumpens elmätare för att börja.</p>
+      <p class="section-intro">Följ använd el och jämför med våra loggade ändringar. En entydig ackumulerad elmätare för använd el hämtas automatiskt från vald myUplink-pump. Du kan välja en annan pumpelmätare i inställningarna.</p>
+      <p id="energy-status" role="status">Letar efter pumpens elmätare…</p>
       <div id="energy-data" hidden>
       <div id="energy-metrics" class="live-grid"></div>
       <div id="energy-chart" class="chart" role="img" aria-label="Pumpens elanvändning per timme med styrmarkeringar"></div>
@@ -315,7 +315,7 @@
           <p id="offset-details" class="hint"></p>
           <label for="energy_entity">Pumpens ackumulerade elanvändning · valfritt</label>
           <select id="energy_entity" name="energy_entity"></select>
-          <p class="hint">Välj en mätare för just pumpens använda el, inte husets elmätare eller producerad värme. Använd en totalräknare i Wh/kWh/MWh (state_class total eller total_increasing), inte en givare som nollställs varje timme eller dygn. Värme och varmvatten visas tillsammans bara om den valda mätaren omfattar båda. Inget väljs automatiskt. Valet påverkar inte styrningen.</p>
+          <p class="hint">Automatiskt använder en entydig räknare för använd el på samma myUplink-enhet som din pumpanslutning. Flera möjliga räknare summeras inte: välj då manuellt. Sparade manuella val behålls. Välj just pumpens använda el, inte husets elmätare eller producerad värme. Använd en totalräknare i Wh/kWh/MWh (state_class total eller total_increasing), inte en tim-/dygnsräknare. Värme och varmvatten ingår tillsammans bara om mätaren omfattar båda. Valet påverkar inte styrningen.</p>
           <div class="metrics">
             <div><span>Nuvarande förskjutning</span><strong id="current-offset">—</strong></div>
             <div><span>Beräknat mål</span><strong id="desired-offset">—</strong></div>

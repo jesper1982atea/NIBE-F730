@@ -1087,7 +1087,8 @@ try {
     energyActive--;
     return route.fulfill(energyFail ? { status: 502, json: { error: "Recorder otillgänglig" } } : { json: {
       start: energyEnd - 86400, end: energyEnd, currency: "SEK", price_provider: provider,
-      price_entity: energySettings.price_entity, meter: { entity_id: "sensor.pump_energy_consumed", name: "Pumpens använda el" },
+      price_entity: energySettings.price_entity, meter: { entity_id: "sensor.pump_energy_consumed", name: "Pumpens använda el",
+        automatic: !energySettings.energy_entity },
       hours: energyHours.map((hour, i) => energyPartial && i === 0 ? { ...hour, kwh: null, cost: null, coverage_seconds: 0, priced_seconds: 0 } : hour),
       totals: { kwh: energyPartial ? null : 24, cost: energyPartial ? null : 48,
         measured_kwh: energyPartial ? 23 : 24, partial_cost: energyPartial ? 46 : 48,
@@ -1100,14 +1101,17 @@ try {
     } });
   });
   await energyPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
-  await energyPage.waitForFunction(() => document.getElementById("energy-status").textContent.includes("Välj pumpens ackumulerade"));
-  assert.equal(energyReads, 0, "No extra history load until the user selects a meter");
+  await energyPage.waitForFunction(() => document.getElementById("energy-status").textContent.includes("Automatiskt från myUplink"));
+  assert.ok(energyReads >= 1, "Blank meter selection automatically loads the myUplink energy report");
+  assert.equal(energyWrites, 0, "Automatic discovery must not save settings or enable control");
   await energyPage.locator("#settings-panel > summary").click();
   assert.equal(await energyPage.locator('#energy_entity option[value="sensor.pump_energy_produced_for_heating_current_hour"]').count(), 0);
   await energyPage.locator("#energy_entity").selectOption("sensor.pump_energy_consumed");
+  assert.match(await energyPage.locator('#energy_entity option[value=""]').textContent(), /Automatiskt.*myUplink/);
   assert.equal(energyWrites, 0, "Meter selection remains a draft until saved");
   await energyPage.locator("#save-near").click();
   await energyPage.waitForFunction(() => document.querySelector("#energy-chart svg"));
+  await energyPage.waitForFunction(() => document.getElementById("energy-status").textContent.includes("Manuellt vald elmätare"));
   assert.match(await energyPage.locator("#energy-metrics").textContent(), /hela perioden.*24 kWh.*48 SEK/);
   assert.equal(await energyPage.locator("#energy-chart .chart-event").count(), 2);
   assert.match(await energyPage.locator("#energy-price-status").textContent(), /Tibber.*24 av 24/);

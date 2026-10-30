@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from controller import ControlError, Controller, validate
-from energy import change_comparisons, consumption_report, meter_error
+from energy import change_comparisons, consumption_report, discover_meter, meter_error
 from insights import Insights
 from test_controller import config, entity
 
@@ -199,6 +199,71 @@ class EnergyIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ControlError, "Producerad"):
             self.insights.energy(self.cfg)
         self.ha.request.assert_not_called()
+
+    def pump_registry(self):
+        return [
+            {"entity_id": self.cfg["offset_entity"], "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": METER, "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": PRICE, "device_id": "home", "platform": "tibber"},
+        ]
+
+    def test_automatic_meter_is_same_pump_and_never_saved_or_used_for_control(self):
+        self.ha.integration_registry.return_value = self.pump_registry()
+        cfg = {**self.cfg, "energy_entity": ""}
+        with patch("insights.time.time", return_value=END + 60):
+            data = self.insights.energy(cfg)
+        self.assertTrue(data["meter"]["automatic"])
+        self.assertEqual(data["meter"]["entity_id"], METER)
+        self.assertEqual(data["totals"]["kwh"], 24)
+        self.assertEqual(cfg["energy_entity"], "")
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
+
+    def test_discovery_excludes_other_pumps_production_period_counters_and_ambiguous_names(self):
+        registry = self.pump_registry()
+        states = [meter_rows()[0]]
+        for eid, device, platform in (
+            ("sensor.other_energy_consumed", "other", "myuplink"),
+            ("sensor.house_energy_consumed", "pump", "tibber"),
+            ("sensor.energy_produced_electrical", "pump", "myuplink"),
+            ("sensor.energy_consumed_current_hour", "pump", "myuplink"),
+            ("sensor.heat_energy", "pump", "myuplink"),
+        ):
+            states.append({**meter_rows()[0], "entity_id": eid})
+            registry.append({"entity_id": eid, "device_id": device, "platform": platform})
+        self.assertEqual(discover_meter(states, registry, self.cfg["offset_entity"])["entity_id"], METER)
+        states[0]["state"] = "unavailable"
+        self.assertEqual(discover_meter(states, registry, self.cfg["offset_entity"])["entity_id"], METER,
+                         "Availability must not silently change which meter is used")
+        for invalid in ("", "number.other"):
+            with self.assertRaisesRegex(ControlError, "pumpanslutning"):
+                discover_meter(states, registry, invalid)
+        with self.assertRaisesRegex(ControlError, "Ingen entydig"):
+            discover_meter(states[1:], registry, self.cfg["offset_entity"])
+
+    def test_multiple_candidates_are_not_summed_even_if_one_is_unavailable(self):
+        registry = self.pump_registry()
+        extra = "sensor.energy_consumed_for_hot_water"
+        registry.append({"entity_id": extra, "device_id": "pump", "platform": "myuplink"})
+        self.ha.integration_registry.return_value = registry
+        self.ha.states.return_value.append({**meter_rows()[0], "entity_id": extra, "state": "unavailable"})
+        with self.assertRaisesRegex(ControlError, "Flera möjliga"):
+            self.insights.energy({**self.cfg, "energy_entity": ""})
+        self.ha.request.assert_not_called()
+        with patch("insights.time.time", return_value=END + 60):
+            manual = self.insights.energy(self.cfg)
+        self.assertFalse(manual["meter"]["automatic"])
+        self.assertEqual(manual["meter"]["entity_id"], METER)
+
+    def test_automatic_cache_tracks_pump_connection_and_never_falls_back_from_manual_selection(self):
+        self.ha.integration_registry.return_value = self.pump_registry()
+        with patch("insights.time.time", return_value=END + 60):
+            automatic = {**self.cfg, "energy_entity": ""}
+            self.insights.energy(automatic)
+            with self.assertRaisesRegex(ControlError, "pumpanslutning"):
+                self.insights.energy({**automatic, "offset_entity": "number.other"})
+            with self.assertRaisesRegex(ControlError, "saknas"):
+                self.insights.energy({**self.cfg, "energy_entity": "sensor.missing"})
 
     def test_provider_switch_does_not_reuse_tibber_cost(self):
         with patch("insights.time.time", return_value=END + 60):
