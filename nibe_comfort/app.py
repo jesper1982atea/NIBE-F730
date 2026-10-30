@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from controller import ControlError, Controller, HomeAssistant, temperature
 from insights import Insights, control_history
+from energy import change_comparisons, meter_error
 
 LOG = logging.getLogger("nibe_comfort")
 STATIC = Path(__file__).parent / "static"
@@ -78,6 +79,29 @@ def handler_for(controller, api_token=None, insights=None):
                     self.respond(200, insights.overview(controller.settings()))
                 elif path == "/api/hotwater":
                     self.respond(200, insights.hot_water(controller.settings()))
+                elif path == "/api/energy":
+                    config = controller.settings()
+                    report = insights.energy(config)
+                    try:
+                        events = controller.events.history(report["start"], report["end"])
+                        report["changes"] = [
+                            {**change, "timestamp": change["outcome_at"] if change["status"] == "confirmed" else change["timestamp"]}
+                            for change in control_history(events, config, report["start"], report["end"])
+                            if report["start"] <= (change.get("outcome_at") if change["status"] == "confirmed" else change["timestamp"]) <= report["end"]
+                        ]
+                        report["settings_changes"] = [
+                            {"timestamp": e["timestamp"], "kind": "settings", "status": "saved",
+                             "label": e["message"]}
+                            for e in events if e["kind"] == "settings_saved"
+                            and report["start"] <= e["timestamp"] <= report["end"]
+                        ]
+                        report["comparisons"] = change_comparisons(report["hours"], report["changes"] + report["settings_changes"])
+                        report["changes_error"] = None
+                    except (sqlite3.Error, OSError):
+                        LOG.exception("Kunde inte läsa ändringsloggen för elförbrukningen")
+                        report.update(changes=[], settings_changes=[], comparisons=[],
+                                      changes_error="Ändringsloggen kunde inte läsas. Förbrukningen visas utan styrmarkeringar.")
+                    self.respond(200, report)
                 elif path == "/api/history":
                     config = controller.settings()
                     history = insights.history(config)
@@ -122,6 +146,8 @@ def handler_for(controller, api_token=None, insights=None):
                                 "state": entity.get("state"),
                                 "unit": attrs.get("unit_of_measurement", ""),
                                 "device_class": attrs.get("device_class", ""),
+                                "state_class": attrs.get("state_class", ""),
+                                "energy_meter_error": meter_error(entity),
                                 "min": attrs.get("min"), "max": attrs.get("max"), "step": attrs.get("step"),
                                 "current_temperature": current, "temperature_error": temperature_error,
                                 "setpoint": attrs.get("temperature") if entity["entity_id"].startswith("climate.") else None,

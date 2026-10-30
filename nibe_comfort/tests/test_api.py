@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -15,6 +16,7 @@ from app import handler_for
 from controller import ControlError, Controller
 from insights import Insights
 from test_controller import config, fixtures
+from test_energy import END, METER, PRICE, START, meter_rows, price_rows
 
 
 class ApiTests(unittest.TestCase):
@@ -136,6 +138,57 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Välj en elprisgivare", plan["prices"]["error"])
         self.assertEqual(plan["offset"]["planned"], [])
         self.ha.set_offset.assert_not_called()
+
+    def test_energy_report_contains_readback_markers_and_settings_without_control(self):
+        self.controller.save(config(energy_entity=METER, price_entity=PRICE))
+        self.ha.states.side_effect = lambda: [*fixtures(), meter_rows()[-1], price_rows()[-1]]
+        self.ha.integration_registry.return_value = [{"entity_id": PRICE, "platform": "tibber"}]
+        self.ha.request.return_value = [meter_rows(), price_rows()]
+        self.controller.events.history = Mock(return_value=[
+            {"id": 1, "timestamp": START + 300, "kind": "write_attempt", "message": "Försök",
+             "details": {"entity_id": "number.offset", "previous": 0, "value": 1}},
+            {"id": 2, "timestamp": START + 3700, "kind": "write_observed", "message": "Återläst",
+             "details": {"entity_id": "number.offset", "request_id": 1}},
+            {"id": 3, "timestamp": START + 3800, "kind": "settings_saved", "message": "Inställningar sparade.",
+             "details": {}},
+        ])
+        with patch("insights.time.time", return_value=END + 60):
+            status, data = self.request("/api/energy")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["totals"]["kwh"], 24)
+        self.assertEqual(data["totals"]["cost"], 48)
+        self.assertEqual(data["changes"][0]["timestamp"], START + 3700, "Use readback time rather than request time")
+        self.assertEqual(data["changes"][0]["status"], "confirmed")
+        self.assertEqual(len(data["comparisons"]), 2)
+        self.assertEqual(data["comparisons"][0]["before"]["start"], START)
+        self.assertEqual(data["comparisons"][0]["after"]["start"], START + 7200)
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
+        self.assertEqual(self.request("/api/energy", token=False)[0], 401)
+
+    def test_energy_missing_meter_and_log_failure_are_explicit(self):
+        self.assertEqual(self.request("/api/energy")[0], 502)
+        self.controller.save(config(energy_entity=METER, price_entity=PRICE))
+        self.ha.states.side_effect = lambda: [*fixtures(), meter_rows()[-1], price_rows()[-1]]
+        self.ha.integration_registry.return_value = [{"entity_id": PRICE, "platform": "tibber"}]
+        self.ha.request.return_value = [meter_rows(), price_rows()]
+        self.controller.events.history = Mock(side_effect=sqlite3.OperationalError("locked"))
+        with self.assertLogs("nibe_comfort", level="ERROR"):
+            status, data = self.request("/api/energy")
+        self.assertEqual(status, 200)
+        self.assertIn("Ändringsloggen kunde inte läsas", data["changes_error"])
+        self.assertEqual(data["comparisons"], [])
+        self.ha.set_offset.assert_not_called()
+
+    def test_entities_identify_energy_meters_without_accepting_produced_heat(self):
+        meter = meter_rows()[0]
+        produced = {**meter, "entity_id": "sensor.energy_produced_for_heating"}
+        self.ha.states.side_effect = lambda: [meter, produced]
+        status, entities = self.request("/api/entities")
+        self.assertEqual(status, 200)
+        self.assertIsNone(entities[0]["energy_meter_error"])
+        self.assertEqual(entities[0]["state_class"], "total_increasing")
+        self.assertIn("Producerad", entities[1]["energy_meter_error"])
 
     def test_version_comes_from_build(self):
         with patch.dict(os.environ, {"NIBE_COMFORT_VERSION": "9.9.9"}):

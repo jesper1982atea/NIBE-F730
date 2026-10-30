@@ -22,6 +22,7 @@
       <a href="#status-title">Översikt</a>
       <a href="#hot-water-card">Varmvatten</a>
       <a href="#temperature-section">Rum och historik</a>
+      <a href="#energy-section">El och kostnad</a>
       <a href="#fireplace-card">Braskamin</a>
       <a href="#settings-panel">Inställningar</a>
       <a href="#log-panel">Ändringslogg</a>
@@ -236,6 +237,29 @@
       </details>
     </section>
 
+    <section class="card dashboard" id="energy-section">
+      <div class="section-heading"><div><span class="section-number">SENASTE 24 AVSLUTADE TIMMARNA</span><h2>Pumpens el och kostnad</h2></div><button type="button" id="refresh-energy" class="secondary">Uppdatera</button></div>
+      <p class="section-intro">Följ använd el och jämför med våra loggade ändringar. Välj en ackumulerad elmätare som bara mäter pumpen i inställningarna.</p>
+      <p id="energy-status" role="status">Välj pumpens elmätare för att börja.</p>
+      <div id="energy-data" hidden>
+      <div id="energy-metrics" class="live-grid"></div>
+      <div id="energy-chart" class="chart" role="img" aria-label="Pumpens elanvändning per timme med styrmarkeringar"></div>
+      <p id="energy-price-status" role="status"></p>
+      <div id="energy-cost-chart" class="chart" role="img" aria-label="Beräknad kostnad per timme med styrmarkeringar"></div>
+      <p class="hint">K = kurvförskjutning, T = termostat, I = sparade inställningar. En begäran utan återläsning är inte en bekräftad ändring. Graferna visar bara fullständiga timmar; tabellen visar datatäckningen.</p>
+      <p class="hint">Timfördelningen är uppskattad: ökningen i elmätaren fördelas jämnt mellan dess rapporter (högst två timmar). Kostnaden beräknas med historiken från din sparade prisgivare, aldrig dagens pris för äldre timmar. Bara avgifter och moms som redan finns i givaren ingår; fast avgift ingår inte. Luckor, otillgängliga värden och räknaråterställningar räknas inte som noll. Producerad värme är inte använd el.</p>
+      <details class="disclosure">
+        <summary>Före och efter våra ändringar</summary>
+        <p class="hint">Visar närmaste hela timmen före och efter ändringens timme. Mellantimmen hoppas över. Bekräftade ändringar avser HA:s återläsning, inte en oberoende fysisk mätning. Väder, varmvatten, kamin och värmesystemets tröghet påverkar också förbrukningen: skillnaden är en observation, inte bevisad effekt eller besparing.</p>
+        <ul id="energy-comparisons" class="plan-changes"></ul>
+      </details>
+      <details class="disclosure">
+        <summary>Timvärden och datatäckning</summary>
+        <div id="energy-table" class="table-scroll"></div>
+      </details>
+      </div>
+    </section>
+
     <details id="settings-panel" class="fold">
       <summary><span class="section-number">INSTÄLLNINGAR</span><strong>Rum, pump, väder och elpris</strong><small>Välj givare, gränser och om automatiken ska styra.</small></summary>
     <form id="settings">
@@ -289,6 +313,9 @@
             <p class="hint warning">Välj bara värmekurvans förskjutning, inte grundkurva eller annan pumpinställning. Vid automatisk upptäckt används NIBEs klimatsystem 1.</p>
           </details>
           <p id="offset-details" class="hint"></p>
+          <label for="energy_entity">Pumpens ackumulerade elanvändning · valfritt</label>
+          <select id="energy_entity" name="energy_entity"></select>
+          <p class="hint">Välj en mätare för just pumpens använda el, inte husets elmätare eller producerad värme. Använd en totalräknare i Wh/kWh/MWh (state_class total eller total_increasing), inte en givare som nollställs varje timme eller dygn. Värme och varmvatten visas tillsammans bara om den valda mätaren omfattar båda. Inget väljs automatiskt. Valet påverkar inte styrningen.</p>
           <div class="metrics">
             <div><span>Nuvarande förskjutning</span><strong id="current-offset">—</strong></div>
             <div><span>Beräknat mål</span><strong id="desired-offset">—</strong></div>

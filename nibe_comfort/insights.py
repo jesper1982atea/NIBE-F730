@@ -13,6 +13,7 @@ from urllib.parse import quote, urlencode
 
 from controller import ControlError, control_rooms, fresh_entity, next_step, number, price_contribution, temperature
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
+from energy import consumption_report, meter_error, produced_energy
 
 
 def discover_tibber(states, registry):
@@ -130,7 +131,7 @@ def overview(states, registry, config, now):
             continue
         attrs = entity["attributes"]
         text = (eid + " " + attrs.get("friendly_name", "")).lower()
-        if attrs.get("device_class") in ("power", "energy") and any(
+        if not produced_energy(entity) and attrs.get("device_class") in ("power", "energy") and any(
             word in text for word in ("consumption", "consumed", "electrical", "electricity", "electric power", "energy_spent")
         ):
             pump_electricity.append(reading(entity, attrs.get("friendly_name", eid), config["max_age_minutes"], now, pump_states))
@@ -784,6 +785,50 @@ class Insights:
     def overview(self, config):
         key = ("overview", config["offset_entity"], config["price_entity"], config["price_provider"], config["max_age_minutes"])
         return self.cached(key, 60, lambda: overview(self.ha.states(), self.registry(), config, time.time()))
+
+    def energy(self, config):
+        key = ("energy", config["energy_entity"], config["price_entity"], config["price_provider"],
+               config["max_age_minutes"])
+
+        def load():
+            now = time.time()
+            end = int(now // 3600) * 3600
+            start = end - 86400
+            if not config["energy_entity"]:
+                raise ControlError("Välj pumpens ackumulerade elmätare i inställningarna för att följa förbrukning och kostnad.")
+            states = {s["entity_id"]: s for s in self.ha.states()}
+            meter = states.get(config["energy_entity"])
+            if not meter:
+                raise ControlError("Den valda elmätaren saknas i Home Assistant.")
+            error = meter_error(meter)
+            if error:
+                raise ControlError(error)
+            price_id = config["price_entity"]
+            price_problem = None
+            if price_id:
+                platform = next((r.get("platform") for r in self.registry() if r["entity_id"] == price_id), None)
+                if (config["price_provider"] == "tibber" and platform != "tibber"
+                        or config["price_provider"] == "nordpool" and platform == "tibber"):
+                    price_problem = "Prisgivaren hör inte till din sparade elpriskälla. Välj rätt källa och givare i inställningarna."
+            query = urlencode({
+                "filter_entity_id": ",".join(filter(None, (config["energy_entity"], price_id))),
+                "end_time": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+                "significant_changes_only": "0",
+            })
+            stamp = datetime.fromtimestamp(start - 3600, timezone.utc).isoformat()
+            groups = history_groups(self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query))
+            report = consumption_report(groups.get(config["energy_entity"], []),
+                                        [] if price_problem else groups.get(price_id, []),
+                                        config["energy_entity"], price_id, start, end,
+                                        min(config["max_age_minutes"] * 60, 7200))
+            if price_problem:
+                report["price_error"] = price_problem
+            report["meter"] = {"entity_id": meter["entity_id"], "name": meter["attributes"].get("friendly_name", meter["entity_id"])}
+            report["price_entity"] = price_id
+            report["price_provider"] = config["price_provider"]
+            report["checked_at"] = time.time()
+            return report
+        return self.cached(key, 300, load)
 
     def hot_water(self, config):
         key = ("hot_water", config["offset_entity"], config["max_age_minutes"])

@@ -528,7 +528,7 @@ visas som integrationen rapporterar dem. Inget antas vara ”av” eller
 ”inget larm” om källan saknas eller är otillgänglig, eller om hela pumpen
 har slutat rapportera.
 
-Pumpens elförbrukning visas bara om samma enhet har en tydlig elektrisk
+Pumpens elförbrukning i driftöversikten visas bara om samma enhet har en tydlig elektrisk
 effekt-/förbrukningsgivare. Ström i ampere eller producerad värme omvandlas
 inte till en påhittad elförbrukning. Saknas sådan givare behöver du en
 separat mätare/integration för att mäta pumpen specifikt.
@@ -537,6 +537,59 @@ Entydiga Tibber-givare för **hela husets** aktuella effekt och dagens
 ackumulerade förbrukning visas separat. De är inte pumpens förbrukning.
 Vid flera hem/mätare väljs ingen godtyckligt. Värdena visas i källans enhet,
 med rapporteringstid och synliga fel. Översikten uppdateras varje minut.
+
+### Pumpens el och kostnad över tid
+
+Välj **Pumpens ackumulerade elanvändning** under **Inställningar → Din
+värmepump**, och spara. Välj en mätare för pumpens **använda el**, antingen
+från myUplink eller en separat elmätare. Ingen givare väljs automatiskt:
+en husmätare är inte pumpens förbrukning. Om mätaren bara avser värme
+ingår inte varmvatten eller annan el som den inte mäter. Befintliga
+installationer får inget mätarval och ändrar inte styrning vid uppdatering.
+
+Kortet **Pumpens el och kostnad** visar de senaste 24 avslutade timmarna,
+inte ett kalenderdygn. Datatäckning, timvärden, kostnad och styrmarkeringar
+visas tillsammans. Mätaren ska ha `device_class: energy`, `state_class:
+total` eller `total_increasing` och enheten Wh, kWh eller MWh. Använd en
+ackumulerad räknare, inte `energy_produced_for_heating_current_hour`:
+den mäter producerad värme under en period, inte använd el. Givare för
+producerad energi och identifierade tim-/dygnsräknare erbjuds inte som
+elmätare. Funktionen integrerar inte effekt (W) och summerar inte flera
+överlappande räknare.
+
+Ökningen mellan två giltiga mätarrapporter fördelas jämnt över intervallet,
+som får vara högst två timmar. Därför är timfördelning och kostnad
+**uppskattade utifrån mätarintervall**, inte exakt uppmätt momentan
+elanvändning. Negativa räknarhopp, otillgängliga värden och längre luckor
+utelämnas. Efter sista rapporten extrapoleras ingen förbrukning. En timme
+utan full täckning visas som okänd; totalsiffror märks uttryckligen som
+enbart täckt/prissatt del när underlaget inte räcker till hela perioden.
+Noll förbrukning från en giltig oförändrad räknare är däremot ett giltigt
+nollvärde.
+
+Kostnaden använder **historik från den sparade prisgivaren och elpriskällan**,
+inte dagens pris eller framtidsprognoser. Pris i valuta/MWh omvandlas till
+valuta/kWh; öre och kr tolkas som SEK. Negativa priser stöds. Pris får gälla
+högst din inställda mätvärdesålder, dock aldrig längre än två timmar utan
+ny rapport. Saknade priser, okänd enhet eller ändrad valuta ger okänd
+kostnad, inte gratis el. Endast moms och avgifter som redan ingår i
+prisgivaren räknas med; fast avgift ingår inte. Pumpens elmätare och
+prisgivare behöver ingå i Home Assistants Recorder.
+
+Före/efter-listan jämför hela timmen före och efter ändringens timme;
+själva ändringstimmen hoppas över. Bekräftade pump-/termostatändringar
+placeras vid återläsningen från HA, inte vid en tidigare skrivbegäran.
+Även sparade inställningar markeras. Väder, varmvatten, kamin och
+värmesystemets tröghet kontrolleras inte bort: detta visar samtidig
+förbrukning/kostnad, **inte orsak eller bevisad besparing**. Ingen
+besparingsmodell eller automatisk optimering läggs till.
+
+Detta är enbart läsning och påverkar inte pumpstyrningen. Underlaget
+uppdateras var femte minut, med en enda pågående energihämtning per
+konfiguration. Endast de två valda entiteternas historik hämtas, för
+högst ett dygn plus en timmes startunderlag och pågående timme.
+Anropen använder samma serialisering och 8 MiB-svarsgräns som övrig
+historik; ingen separat full historikkopia sparas i tillägget.
 
 ### Testa styrningen
 
@@ -773,6 +826,7 @@ Token ger behörighet att både läsa och ändra alla styrinställningar.
 | GET | `/api/entities` | Valbara HA-entiteter med namn, värde och enhet |
 | GET | `/api/discovery` | Entydigt identifierad myUplink-pump och utegivare, utan att ändra inställningar |
 | GET | `/api/overview` | Pumpdrift, larm och åtskilda pump-/huselmätvärden |
+| GET | `/api/energy` | Senaste 24 avslutade timmarnas pumpel, beräknad kostnad, datatäckning och styrmarkeringar (endast läsning) |
 | GET | `/api/history` | Senaste dygnets temperaturhistorik för sparade givare |
 | GET | `/api/forecast` | Prognos från vald eller entydigt upptäckt HA-väderkälla |
 | GET | `/api/hotwater` | Varmvattnets nivå, temperaturer, tappningar och laddningar senaste 7 dygnen (endast läsning) |

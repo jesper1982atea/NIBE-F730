@@ -27,6 +27,10 @@ const entities = [
   { entity_id: "climate.lk_badrum_overvaningen_thermostat_with_a_very_long_identifier", name: "LK Badrum övervåningen Thermostat med extra långt namn", state: "heat", current_temperature: 25.7, temperature_error: null },
   { entity_id: "sensor.nibe_f730_heating_offset_smart_price_adaption_extra_long", name: "NIBE F730 Heating offset smart price adaption", state: "0", unit: "°C", device_class: "temperature" },
   { entity_id: "weather.smhi_home", name: "SMHI hemma", state: "cloudy" },
+  { entity_id: "sensor.pump_energy_consumed", name: "Pumpens använda el", state: "1234", unit: "kWh",
+    device_class: "energy", state_class: "total_increasing", energy_meter_error: null },
+  { entity_id: "sensor.pump_energy_produced_for_heating_current_hour", name: "Producerad värme denna timme",
+    state: "2", unit: "kWh", device_class: "energy", energy_meter_error: "Producerad energi är inte använd el." },
 ];
 const areaMap = {
   "sensor.living": { area_id: "living", area_name: "Vardagsrum" },
@@ -1062,6 +1066,83 @@ try {
   await firePage.setViewportSize({ width: 390, height: 844 });
   assert.equal(await firePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await firePage.close();
+  const energyPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  energyPage.on("pageerror", (error) => errors.push(error.message));
+  let energySettings = { ...defaults, room_sensors: ["sensor.living"], offset_entity: offset, price_entity: price };
+  let energyWrites = 0, energyReads = 0, energyActive = 0, energyMaxActive = 0;
+  const energyEnd = Math.floor(now / 3600) * 3600;
+  const energyHours = Array.from({ length: 24 }, (_, i) => ({
+    start: energyEnd - (24 - i) * 3600, end: energyEnd - (23 - i) * 3600,
+    kwh: 1, cost: 2, coverage_seconds: 3600, priced_seconds: 3600,
+  }));
+  let energyFail = false, energyPartial = false, holdEnergy = false, releaseEnergy;
+  await energyPage.route("**/api/settings", (route) => {
+    if (route.request().method() === "PUT") { energySettings = route.request().postDataJSON(); energyWrites++; }
+    return route.fulfill({ json: energySettings });
+  });
+  await energyPage.route("**/api/energy", async (route) => {
+    energyReads++; energyActive++; energyMaxActive = Math.max(energyMaxActive, energyActive);
+    const provider = energySettings.price_provider;
+    if (holdEnergy) { holdEnergy = false; await new Promise((resolve) => { releaseEnergy = resolve; }); }
+    energyActive--;
+    return route.fulfill(energyFail ? { status: 502, json: { error: "Recorder otillgänglig" } } : { json: {
+      start: energyEnd - 86400, end: energyEnd, currency: "SEK", price_provider: provider,
+      price_entity: energySettings.price_entity, meter: { entity_id: "sensor.pump_energy_consumed", name: "Pumpens använda el" },
+      hours: energyHours.map((hour, i) => energyPartial && i === 0 ? { ...hour, kwh: null, cost: null, coverage_seconds: 0, priced_seconds: 0 } : hour),
+      totals: { kwh: energyPartial ? null : 24, cost: energyPartial ? null : 48,
+        measured_kwh: energyPartial ? 23 : 24, partial_cost: energyPartial ? 46 : 48,
+        coverage_seconds: (energyPartial ? 23 : 24) * 3600, priced_seconds: (energyPartial ? 23 : 24) * 3600 },
+      skipped_intervals: energyPartial ? 1 : 0, price_error: null, changes_error: null,
+      changes: [{ id: 1, timestamp: energyEnd - 7200, kind: "offset", status: "confirmed", value: 2, previous: 1 }],
+      settings_changes: [{ timestamp: energyEnd - 3600, label: "Inställningar sparade." }],
+      comparisons: [{ timestamp: energyEnd - 7200, kind: "offset", value: 2, before: energyHours[20], after: energyHours[23],
+        difference_kwh: 0, difference_cost: 0 }],
+    } });
+  });
+  await energyPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await energyPage.waitForFunction(() => document.getElementById("energy-status").textContent.includes("Välj pumpens ackumulerade"));
+  assert.equal(energyReads, 0, "No extra history load until the user selects a meter");
+  await energyPage.locator("#settings-panel > summary").click();
+  assert.equal(await energyPage.locator('#energy_entity option[value="sensor.pump_energy_produced_for_heating_current_hour"]').count(), 0);
+  await energyPage.locator("#energy_entity").selectOption("sensor.pump_energy_consumed");
+  assert.equal(energyWrites, 0, "Meter selection remains a draft until saved");
+  await energyPage.locator("#save-near").click();
+  await energyPage.waitForFunction(() => document.querySelector("#energy-chart svg"));
+  assert.match(await energyPage.locator("#energy-metrics").textContent(), /hela perioden.*24 kWh.*48 SEK/);
+  assert.equal(await energyPage.locator("#energy-chart .chart-event").count(), 2);
+  assert.match(await energyPage.locator("#energy-price-status").textContent(), /Tibber.*24 av 24/);
+  await energyPage.locator("#energy-section details").first().evaluate((node) => { node.open = true; });
+  assert.match(await energyPage.locator("#energy-comparisons").textContent(), /Kurvförskjutning.*Före.*Efter/);
+  await energyPage.locator("#energy-section details").last().evaluate((node) => { node.open = true; });
+  assert.equal(await energyPage.locator("#energy-table tbody tr").count(), 24);
+  energyPartial = true;
+  await energyPage.locator("#refresh-energy").click();
+  await energyPage.waitForFunction(() => document.getElementById("energy-status").textContent.includes("23 av 24"));
+  assert.match(await energyPage.locator("#energy-metrics").textContent(), /endast täckt del.*23 kWh.*endast prissatt del.*46 SEK/);
+  assert.equal(await energyPage.locator("#energy-table tbody tr").first().locator("td").nth(1).textContent(), "—");
+  await energyPage.setViewportSize({ width: 390, height: 844 });
+  await energyPage.waitForFunction(() => Number(document.querySelector("#energy-chart svg").getAttribute("viewBox").split(" ")[2])
+    === Math.round(document.getElementById("energy-chart").clientWidth));
+  await energyPage.locator("#energy-section").screenshot({ path: `${artifacts}/energy-mobile.png` });
+  assert.equal(await energyPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  energyFail = true;
+  await energyPage.locator("#refresh-energy").click();
+  await energyPage.waitForFunction(() => document.getElementById("energy-status").textContent.includes("Recorder otillgänglig"));
+  assert.equal(await energyPage.locator("#energy-metrics").textContent(), "", "Failed reads clear old numbers");
+  energyFail = false;
+  holdEnergy = true;
+  const readsBefore = energyReads;
+  await energyPage.evaluate(() => void refreshEnergy());
+  for (let attempt = 0; attempt < 50 && !releaseEnergy; attempt++) await page.waitForTimeout(20);
+  assert.equal(typeof releaseEnergy, "function");
+  await energyPage.evaluate(() => { settings.price_provider = "nordpool"; void refreshEnergy(); void refreshEnergy(); });
+  energySettings.price_provider = "nordpool";
+  releaseEnergy();
+  await energyPage.waitForFunction(() => document.getElementById("energy-price-status").textContent.startsWith("Nord Pool"));
+  assert.equal(energyReads, readsBefore + 2, "Many refreshes coalesce to one follow-up after the source change");
+  assert.equal(energyMaxActive, 1, "Energy reads never overlap");
+  assert.equal(energyWrites, 1, "Viewing and refreshing energy does not save settings or control the pump");
+  await energyPage.close();
   assert.deepEqual(errors, []);
   console.log("Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
 } finally {
