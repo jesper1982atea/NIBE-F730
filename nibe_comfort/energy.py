@@ -136,8 +136,7 @@ def samples(rows, entity_id, prices=False, power=False):
     return sorted(result.items()), currency
 
 
-def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, price_max_age, power=False):
-    meter, _ = samples(meter_rows, meter_id, power=power)
+def price_intervals(price_rows, price_id, end, price_max_age):
     price_error = None
     try:
         prices, currency = samples(price_rows, price_id, prices=True)
@@ -145,17 +144,17 @@ def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, p
         prices, currency, price_error = [], None, str(exc)
     if not prices and not price_error:
         price_error = "Prishistorik saknas. Ingen kostnad beräknas utan historiska priser."
-    hours = [{
-        "start": stamp, "end": min(end, stamp + 3600), "measured_kwh": 0.0,
-        "priced_kwh": 0.0, "partial_cost": 0.0, "coverage_seconds": 0.0, "priced_seconds": 0.0,
-    } for stamp in range(int(start), int(end), 3600)]
     price_segments = []
     for index, (stamp, value) in enumerate(prices):
         until = min(end, stamp + price_max_age, prices[index + 1][0] if index + 1 < len(prices) else end)
         if value is not None and until > stamp:
             price_segments.append((stamp, until, value))
+    return price_segments, currency, price_error
+
+
+def usage_intervals(meter, start, end, power=False):
+    intervals = []
     skipped = 0
-    price_starts = [segment[0] for segment in price_segments]
     for (left, previous), (right, current) in zip(meter, meter[1:]):
         if right <= start or left >= end:
             continue
@@ -166,7 +165,20 @@ def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, p
                 MAX_POWER_GAP_SECONDS if power else MAX_GAP_SECONDS):
             skipped += 1
             continue
-        rate = delta / (right - left)
+        intervals.append((max(start, left), min(end, right), delta / (right - left)))
+    return intervals, skipped
+
+
+def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, price_max_age, power=False):
+    meter, _ = samples(meter_rows, meter_id, power=power)
+    price_segments, currency, price_error = price_intervals(price_rows, price_id, end, price_max_age)
+    hours = [{
+        "start": stamp, "end": min(end, stamp + 3600), "measured_kwh": 0.0,
+        "priced_kwh": 0.0, "partial_cost": 0.0, "coverage_seconds": 0.0, "priced_seconds": 0.0,
+    } for stamp in range(int(start), int(end), 3600)]
+    intervals, skipped = usage_intervals(meter, start, end, power)
+    price_starts = [segment[0] for segment in price_segments]
+    for left, right, rate in intervals:
         for hour in hours:
             low, high = max(left, hour["start"]), min(right, hour["end"])
             if high <= low:

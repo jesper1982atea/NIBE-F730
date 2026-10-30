@@ -1,5 +1,22 @@
 # Ändringslogg
 
+## 0.2.36
+
+- Ny vy **När går elpatronen?** visar elpatronens egen effekt, observerade
+  körperioder, drifttid samt uppskattad el och kostnad per period och för
+  de senaste 24 avslutade timmarna. Givaren upptäcks på vald myUplink-pump.
+- Körperioder skiljs från observerade starter och stopp. Dataluckor ger
+  okänd början eller slut, inte påhittade starter eller nollförbrukning.
+  Effektsteg inom samma körperiod räknas inte som nya starter.
+- Samtidigt driftläge, gradminuter, ute- och varmvattentemperatur visas
+  när färsk historik finns. Det är sammanhang, inte en säker startorsak
+  eller bevisad effekt av tilläggets styrning.
+- Kostnaden använder sparad elpriskälla och historiska priser, med
+  synlig datatäckning. Elpatronens el är en del av pumpens total, inte en
+  extra kostnad att lägga ovanpå. Visningen ändrar inga pumpinställningar.
+- Automatisk uppdatering, tydliga fel och en sidledes rullbar periodtabell
+  för mobil. Ny läsbehörig endpoint `/api/auxiliary`.
+
 ## 0.2.35
 
 - Automatisk elmätning kan nu använda NIBEs totala eleffekt

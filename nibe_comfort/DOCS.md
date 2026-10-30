@@ -621,6 +621,52 @@ högst ett dygn plus en timmes startunderlag och pågående timme.
 Anropen använder samma serialisering och 8 MiB-svarsgräns som övrig
 historik; ingen separat full historikkopia sparas i tillägget.
 
+### Elpatronens körningar och kostnad
+
+Kortet **När går elpatronen?** visar elpatronens egen effekt just nu och
+de senaste 24 avslutade timmarnas observerade körperioder, drifttid,
+uppskattade kWh och kostnad. Det är en **del av pumpens el**, inte en
+kostnad som ska läggas ovanpå pumpens totalsiffra.
+
+Givaren upptäcks på samma myUplink-enhet som din valda pumpanslutning:
+`*_power_internal_add_heat`, annars en entydig `*_int_elec_add_heat`
+med W/kW. Total pumpeffekt, drifttidsräknare, procentvärden och producerad
+värme används inte som elpatroneffekt. Saknad eller tvetydig givare ger
+ett synligt fel, inte en nolla. Aktuellt värde använder samma
+färskhetskontroll med pumpens övriga givare som driftöversikten; saknat,
+otillgängligt eller inaktuellt värde visas som **okänt**, inte ”av”.
+
+En körperiod består av sammanhängande historik med effekt över noll.
+Effektsteg inom perioden räknas inte som nya starter. En **observerad
+start** kräver en föregående, sammanhängande rapport med noll effekt;
+ett observerat stopp kräver motsvarande nollvärde efter perioden.
+Periodgränser och dataluckor kan ge okänd början/slut. Antalet perioder
+är därför inte ett säkert totalantal fysiska starter. Drifttid och el
+avser enbart den täckta delen.
+
+Samma W/kW-integrering och historiska prisberäkning används som för
+pumpens el: föregående effekt gäller fram till nästa rapport, med högst
+15 minuter mellan rapporterna. Ingen extrapolering efter sista rapporten
+eller över dataluckor. Kostnad visas per period med full eller partiell
+pristäckning; saknade priser betyder inte gratis el. Varken dagens pris
+eller en annan elpriskälla används som reserv.
+
+I periodtabellen visas **samtidiga observationer vid periodens början**:
+driftläge, gradminuter, ute- och varmvattentemperatur när en entydig
+givare finns och historiken är högst 15 minuter gammal. Framtida värden
+används aldrig för att förklara en tidigare start. Saknade eller gamla
+uppgifter visas som okända. Observationerna kan hjälpa dig se samband
+med exempelvis varmvatten eller värmebehov, men är **inte en säker
+startorsak**: pumpens interna tillsatsvillkor och reglerbeslut kan inte
+fastställas ur dessa givare. Kortet ändrar inte pumpens tillsatsgränser,
+styrning eller inställningar.
+
+Underlaget uppdateras varannan minut och när sidan åter blir aktiv.
+Elpatronvyn har en egen läsning och fungerar även om pumpens vanliga
+elmätarval inte kan användas. Bara elpatroneffekt, vald prisgivare och
+upp till fyra kontextgivare för samma pump hämtas, med samma
+serialisering, cache och 8 MiB-svarsgräns som övrig historik.
+
 ### Testa styrningen
 
 Under **Testa styrningen** längst ned kan du kontrollera att pumpen verkligen
@@ -857,6 +903,7 @@ Token ger behörighet att både läsa och ändra alla styrinställningar.
 | GET | `/api/discovery` | Entydigt identifierad myUplink-pump och utegivare, utan att ändra inställningar |
 | GET | `/api/overview` | Pumpdrift, larm och åtskilda pump-/huselmätvärden |
 | GET | `/api/energy` | Senaste 24 avslutade timmarnas pumpel, beräknad kostnad, datatäckning och styrmarkeringar (endast läsning) |
+| GET | `/api/auxiliary` | Elpatronens aktuella effekt, observerade körperioder, drifttid, uppskattad el/kostnad och samtidiga driftobservationer (endast läsning) |
 | GET | `/api/history` | Senaste dygnets temperaturhistorik för sparade givare |
 | GET | `/api/forecast` | Prognos från vald eller entydigt upptäckt HA-väderkälla |
 | GET | `/api/hotwater` | Varmvattnets nivå, temperaturer, tappningar och laddningar senaste 7 dygnen (endast läsning) |
