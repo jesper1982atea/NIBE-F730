@@ -17,6 +17,7 @@ from controller import ControlError, Controller
 from insights import Insights
 from test_controller import config, fixtures
 from test_energy import END, METER, PRICE, START, meter_rows, price_rows
+from test_auxiliary import POWER, OFFSET, heater_rows, registry
 
 
 class ApiTests(unittest.TestCase):
@@ -138,6 +139,30 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Välj en elprisgivare", plan["prices"]["error"])
         self.assertEqual(plan["offset"]["planned"], [])
         self.ha.set_offset.assert_not_called()
+
+    def test_auxiliary_endpoint_is_authenticated_read_only_and_independent_of_energy_meter(self):
+        self.controller.save(config(offset_entity=OFFSET, energy_entity="sensor.missing", price_entity=PRICE))
+        self.ha.states.side_effect = None
+        self.ha.states.return_value = heater_rows()[-1:]
+        self.ha.integration_registry.return_value = registry()
+        self.ha.request.return_value = [heater_rows(), price_rows()]
+        with patch("insights.time.time", return_value=END + 60):
+            status, data = self.request("/api/auxiliary")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["meter"]["entity_id"], POWER)
+        self.assertEqual(data["observed_starts"], 2)
+        self.assertEqual(data["runtime_seconds"], 900)
+        self.assertEqual(data["runs"][0]["cost"], 1.5)
+        self.assertIsNone(data["current"]["active"])
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
+        self.assertEqual(self.request("/api/auxiliary", token=False)[0], 401)
+
+    def test_auxiliary_missing_power_is_explicit_not_a_zero_cost_report(self):
+        status, data = self.request("/api/auxiliary")
+        self.assertEqual(status, 502)
+        self.assertIn("myUplink", data["error"])
+        self.ha.request.assert_not_called()
 
     def test_energy_report_contains_readback_markers_and_settings_without_control(self):
         self.controller.save(config(energy_entity=METER, price_entity=PRICE))

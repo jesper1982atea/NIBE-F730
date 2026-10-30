@@ -11,9 +11,10 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from controller import ControlError, control_rooms, fresh_entity, next_step, number, price_contribution, temperature
+from controller import ControlError, control_rooms, device_peers, fresh_entity, next_step, number, price_contribution, temperature
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
-from energy import consumption_report, discover_meter, meter_error, produced_energy
+from energy import POWER_UNITS, consumption_report, discover_meter, meter_error, produced_energy
+from auxiliary import heater_entities, heater_report
 
 
 def discover_tibber(states, registry):
@@ -832,6 +833,62 @@ class Insights:
             report["checked_at"] = time.time()
             return report
         return self.cached(key, 300, load)
+
+    def auxiliary(self, config):
+        key = ("auxiliary", config["offset_entity"], config["price_entity"], config["price_provider"],
+               config["max_age_minutes"])
+
+        def load():
+            now = time.time()
+            end = int(now // 3600) * 3600
+            start = end - 86400
+            states = self.ha.states()
+            registry = self.registry()
+            power, contexts = heater_entities(states, pump_device_entities(registry, config["offset_entity"]))
+            power_id = power["entity_id"]
+            price_id = config["price_entity"]
+            price_problem = None
+            if price_id:
+                platform = next((r.get("platform") for r in registry if r["entity_id"] == price_id), None)
+                if (config["price_provider"] == "tibber" and platform != "tibber"
+                        or config["price_provider"] == "nordpool" and platform == "tibber"):
+                    price_problem = "Prisgivaren hör inte till din sparade elpriskälla. Välj rätt källa och givare."
+            ids = [power_id, *[s["entity_id"] for s in contexts.values()]]
+            if price_id and not price_problem:
+                ids.append(price_id)
+            query = urlencode({
+                "filter_entity_id": ",".join(ids),
+                "end_time": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+                "significant_changes_only": "0",
+            })
+            stamp = datetime.fromtimestamp(start - 900, timezone.utc).isoformat()
+            groups = history_groups(self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query))
+            report = heater_report(groups.get(power_id, []),
+                                   [] if price_problem else groups.get(price_id, []),
+                                   power_id, price_id,
+                                   {key: groups.get(s["entity_id"], []) for key, s in contexts.items()},
+                                   start, end, min(config["max_age_minutes"] * 60, 7200))
+            if price_problem:
+                report["price_error"] = price_problem
+            current = {"kw": None, "active": None, "error": None, "reported_at": power.get("last_updated")}
+            try:
+                fresh_entity({s["entity_id"]: s for s in states}, power_id, config["max_age_minutes"], now,
+                             device_peers(registry).get(power_id, ()))
+                value = number(power["state"], power_id)
+                if value < 0:
+                    raise ControlError("Elpatronens rapporterade effekt är negativ.")
+                current["kw"] = value * POWER_UNITS[power["attributes"]["unit_of_measurement"]]
+                if not math.isfinite(current["kw"]):
+                    raise ControlError("Elpatronens rapporterade effekt är för stor.")
+                current["active"] = current["kw"] > 0
+            except ControlError as exc:
+                current.update(kw=None, error=str(exc))
+            report.update(current=current, checked_at=now, price_entity=price_id,
+                          price_provider=config["price_provider"],
+                          meter={"entity_id": power_id, "name": power["attributes"].get("friendly_name", power_id)},
+                          context_entities={key: s["entity_id"] for key, s in contexts.items()})
+            return report
+        return self.cached(key, 120, load)
 
     def hot_water(self, config):
         key = ("hot_water", config["offset_entity"], config["max_age_minutes"])

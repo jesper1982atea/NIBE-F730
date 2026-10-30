@@ -23,6 +23,7 @@
       <a href="#hot-water-card">Varmvatten</a>
       <a href="#temperature-section">Rum och historik</a>
       <a href="#energy-section">El och kostnad</a>
+      <a href="#auxiliary-section">Elpatron</a>
       <a href="#fireplace-card">Braskamin</a>
       <a href="#settings-panel">Inställningar</a>
       <a href="#log-panel">Ändringslogg</a>
@@ -257,6 +258,27 @@
         <summary>Timvärden och datatäckning</summary>
         <div id="energy-table" class="table-scroll"></div>
       </details>
+      </div>
+    </section>
+
+    <section class="card dashboard" id="auxiliary-section">
+      <div class="section-heading"><div><span class="section-number">ELTILLSATS · SENASTE 24 AVSLUTADE TIMMARNA</span><h2>När går elpatronen?</h2></div><button type="button" id="refresh-auxiliary" class="secondary">Uppdatera</button></div>
+      <p class="section-intro">Se elpatronens egen effekt, observerade körperioder och uppskattad kostnad. Detta är en del av pumpens el, inte en extra kostnad att lägga ovanpå pumpens totalsiffra.</p>
+      <p id="auxiliary-status" role="status">Hämtar elpatronens historik…</p>
+      <div id="auxiliary-data" hidden>
+        <p id="auxiliary-current" role="status"></p>
+        <div id="auxiliary-metrics" class="live-grid"></div>
+        <p id="auxiliary-coverage" class="hint"></p>
+        <div id="auxiliary-chart" class="chart" role="img" aria-label="Elpatronens uppskattade elanvändning per timme"></div>
+        <p id="auxiliary-price-status" role="status"></p>
+        <details class="disclosure">
+          <summary>Körningar, kostnad och vad som hände samtidigt</summary>
+          <p>En körperiod betyder att elpatronens rapporterade effekt var över noll. Effektsteg inom samma period räknas inte som nya starter. Dataluckor delar upp perioderna; okänd början eller slut är inte en bekräftad start eller ett stopp.</p>
+          <p>Driftläge, gradminuter, ute- och varmvattentemperatur visas vid periodens början om färsk historik finns (högst 15 minuter gammal). Det är samtidiga observationer, inte en säker startorsak. Pumpens interna reglering kan exempelvis begära tillsats vid värmeunderskott eller varmvattenbehov; givarna här visar inte säkert vilket villkor som utlöste det.</p>
+          <p class="hint">På liten skärm kan du rulla tabellen i sidled för att se alla uppgifter.</p>
+          <div id="auxiliary-runs" class="table-scroll" tabindex="0" role="region" aria-label="Elpatronens körperioder och samtidiga observationer"></div>
+        </details>
+        <p class="hint">kWh och kostnad uppskattas från elpatronens W/kW-historik med historiska priser från din valda elpriskälla. Senaste effekt hålls till nästa rapport, högst 15 minuter. Ingen extrapolering efter sista rapporten. Luckor visas som okända, aldrig som ”av” eller noll. Visningen ändrar inga inställningar i pumpen.</p>
       </div>
     </section>
 

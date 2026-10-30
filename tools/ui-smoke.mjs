@@ -1185,8 +1185,89 @@ try {
   assert.equal(energyMaxActive, 1, "Energy reads never overlap");
   assert.equal(energyWrites, 1, "Viewing and refreshing energy does not save settings or control the pump");
   await energyPage.close();
+  const auxiliaryPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  auxiliaryPage.on("pageerror", (error) => errors.push(error.message));
+  let auxiliaryFail = false, auxiliaryMissing = false, auxiliaryStale = false, auxiliaryEmpty = false, auxiliaryNoCoverage = false;
+  let auxiliaryHold = false, releaseAuxiliary, auxiliaryReads = 0, auxiliaryActive = 0, auxiliaryMaxActive = 0;
+  let auxiliarySettings = { ...defaults, offset_entity: offset, price_entity: price };
+  await auxiliaryPage.route("**/api/settings", (route) => route.fulfill({ json: auxiliarySettings }));
+  await auxiliaryPage.route("**/api/auxiliary", async (route) => {
+    auxiliaryReads++; auxiliaryActive++; auxiliaryMaxActive = Math.max(auxiliaryMaxActive, auxiliaryActive);
+    const provider = auxiliarySettings.price_provider;
+    if (auxiliaryHold) { auxiliaryHold = false; await new Promise((resolve) => { releaseAuxiliary = resolve; }); }
+    auxiliaryActive--;
+    if (auxiliaryFail) return route.fulfill({ status: 502, json: { error: "Elpatronhistoriken saknas." } });
+    const priced = !auxiliaryMissing;
+    return route.fulfill({ json: {
+      start: energyEnd - 86400, end: energyEnd, checked_at: now,
+      method: "power", meter: { entity_id: "sensor.pump_power_internal_add_heat", name: "Elpatronens egen effekt" },
+      current: { active: auxiliaryStale ? null : true, kw: auxiliaryStale ? null : 3,
+        error: auxiliaryStale ? "Mätvärdet är för gammalt." : null },
+      hours: energyHours, currency: priced ? "SEK" : null, price_provider: provider,
+      price_entity: price, price_error: priced ? null : "Prishistorik saknas.",
+      skipped_intervals: 2, runtime_seconds: auxiliaryEmpty ? 0 : 600, observed_starts: auxiliaryEmpty ? 0 : 1,
+      totals: { measured_kwh: auxiliaryEmpty ? 0 : 0.5, partial_cost: priced && !auxiliaryEmpty ? 1 : 0,
+        coverage_seconds: auxiliaryNoCoverage ? 0 : 3600, priced_seconds: priced && !auxiliaryNoCoverage ? 3600 : 0 },
+      runs: auxiliaryEmpty ? [] : [{
+        start: energyEnd - 3600, end: energyEnd - 3000, seconds: 600, kwh: 0.5, max_kw: 3,
+        start_observed: true, end_observed: false, cost: priced ? 1 : null, partial_cost: priced ? 1 : 0,
+        priced_seconds: priced ? 600 : 0,
+        context: { operation: { value: "Hot water", unit: "" }, outdoor: { value: "-4", unit: "°C" },
+          degree_minutes: { value: "-350", unit: "DM" }, hot_water: null },
+      }],
+    } });
+  });
+  await auxiliaryPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await auxiliaryPage.waitForFunction(() => !document.getElementById("auxiliary-data").hidden);
+  assert.match(await auxiliaryPage.locator("#auxiliary-current").textContent(), /i drift.*3 kW/);
+  assert.match(await auxiliaryPage.locator("#auxiliary-metrics").textContent(), /körperioder.*1 st.*10 min.*0,5 kWh.*1 SEK/);
+  assert.match(await auxiliaryPage.locator("#auxiliary-coverage").textContent(), /1 av 24 timmar.*1 start/);
+  await auxiliaryPage.locator("#auxiliary-section details").evaluate((node) => { node.open = true; });
+  assert.match(await auxiliaryPage.locator("#auxiliary-runs").textContent(), /Start observerad.*Slut okänt.*Varmvatten.*−?4.*350.*okänt/);
+  assert.match(await auxiliaryPage.locator("#auxiliary-section").textContent(), /inte en säker startorsak/);
+  auxiliaryStale = true; auxiliaryMissing = true;
+  await auxiliaryPage.locator("#refresh-auxiliary").click();
+  await auxiliaryPage.waitForFunction(() => document.getElementById("auxiliary-current").textContent.includes("okänt"));
+  assert.match(await auxiliaryPage.locator("#auxiliary-price-status").textContent(), /Prishistorik saknas/);
+  assert.match(await auxiliaryPage.locator("#auxiliary-runs").textContent(), /—.*prissatt del —/);
+  auxiliaryFail = true;
+  await auxiliaryPage.locator("#refresh-auxiliary").click();
+  await auxiliaryPage.waitForFunction(() => document.getElementById("auxiliary-status").textContent.includes("Elpatronhistoriken saknas"));
+  assert.equal(await auxiliaryPage.locator("#auxiliary-data").isVisible(), false);
+  assert.equal(await auxiliaryPage.locator("#auxiliary-metrics").textContent(), "");
+  auxiliaryFail = false; auxiliaryEmpty = true;
+  await auxiliaryPage.locator("#refresh-auxiliary").click();
+  await auxiliaryPage.waitForFunction(() => !document.getElementById("auxiliary-data").hidden);
+  assert.match(await auxiliaryPage.locator("#auxiliary-runs").textContent(), /Inga körperioder.*säger inget om dataluckorna/);
+  auxiliaryNoCoverage = true;
+  await auxiliaryPage.locator("#refresh-auxiliary").click();
+  await auxiliaryPage.waitForFunction(() => document.getElementById("auxiliary-runs").textContent.includes("Underlag saknas"));
+  assert.doesNotMatch(await auxiliaryPage.locator("#auxiliary-metrics").textContent(), /0 st|0 min|0 kWh|0 SEK/);
+  auxiliaryNoCoverage = false;
+  auxiliaryHold = true;
+  const auxiliaryBefore = auxiliaryReads;
+  await auxiliaryPage.evaluate(() => void refreshAuxiliary());
+  for (let attempt = 0; attempt < 50 && !releaseAuxiliary; attempt++) await auxiliaryPage.waitForTimeout(20);
+  assert.equal(typeof releaseAuxiliary, "function");
+  await auxiliaryPage.evaluate(() => { settings.price_provider = "nordpool"; void refreshAuxiliary(); void refreshAuxiliary(); });
+  auxiliarySettings.price_provider = "nordpool";
+  releaseAuxiliary();
+  await auxiliaryPage.waitForFunction(() => document.getElementById("auxiliary-price-status").textContent.startsWith("Nord Pool"));
+  assert.equal(auxiliaryReads, auxiliaryBefore + 2);
+  assert.equal(auxiliaryMaxActive, 1);
+  auxiliaryEmpty = false;
+  await auxiliaryPage.locator("#refresh-auxiliary").click();
+  await auxiliaryPage.waitForFunction(() => document.querySelector("#auxiliary-runs table"));
+  await auxiliaryPage.setViewportSize({ width: 390, height: 844 });
+  await auxiliaryPage.waitForFunction(() => Number(document.querySelector("#auxiliary-chart svg").getAttribute("viewBox").split(" ")[2])
+    === Math.round(document.getElementById("auxiliary-chart").clientWidth));
+  assert.equal(await auxiliaryPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  assert.equal(await auxiliaryPage.locator("#auxiliary-runs").evaluate((node) => node.scrollWidth > node.clientWidth), true,
+    "The run table scrolls horizontally instead of squeezing headings into individual letters");
+  await auxiliaryPage.locator("#auxiliary-section").screenshot({ path: `${artifacts}/auxiliary-mobile.png` });
+  await auxiliaryPage.close();
   assert.deepEqual(errors, []);
-  console.log(process.env.ENERGY_ONLY ? "Energy UI passed: meter selection, charts, HTTP/JSON errors, recovery and mobile layout."
+  console.log(process.env.ENERGY_ONLY ? "Energy and auxiliary UI passed: selection, runs, context, costs, errors, recovery and mobile layout."
     : "Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
 } finally {
   await browser.close();

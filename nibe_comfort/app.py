@@ -79,6 +79,8 @@ def handler_for(controller, api_token=None, insights=None):
                     self.respond(200, insights.overview(controller.settings()))
                 elif path == "/api/hotwater":
                     self.respond(200, insights.hot_water(controller.settings()))
+                elif path == "/api/auxiliary":
+                    self.respond(200, insights.auxiliary(controller.settings()))
                 elif path == "/api/energy":
                     config = controller.settings()
                     report = insights.energy(config)

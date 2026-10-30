@@ -17,6 +17,11 @@ Varje vald termostat har en dygnsgraf för uppmätt temperatur och börvärde,
 med kurv-/termostatbegäranden på tidsaxeln och loggade beslutsbidrag från
 rumstemperatur, väder och elpris. Begäran skiljs från bekräftad återläsning.
 
+En separat elpatronvy visar observerade körperioder, drifttid och
+uppskattad el/kostnad från elpatronens egen effektgivare. Samtidigt
+driftläge, gradminuter och temperaturer ger sammanhang utan att påstå
+en säker startorsak; dataluckor och ofullständiga perioder märks tydligt.
+
 Tillägget lär sig också hur huset svarar på värmekurvan och kan, om du slår på
 det, förvärma före dyra elpristimmar och låta huset svalna lite under dem.
 

@@ -24,6 +24,7 @@ let planBusy = false;
 let learningBusy = false;
 let hotWaterBusy = false;
 let energyBusy = false;
+let auxiliaryBusy = false;
 const pendingRefreshes = new Set();
 const readRequests = new Map();
 let entitiesBusy = false;
@@ -626,7 +627,7 @@ async function refreshSavedSettings() {
         .some((key) => latest[key] !== settings[key]);
       settings = latest;
       renderSettings(merged, true);
-      if (energyChanged) void refreshEnergy();
+      if (energyChanged) { void refreshEnergy(); void refreshAuxiliary(); }
     }
     renderSavedSettingsStatus();
   } catch (error) {
@@ -765,6 +766,7 @@ async function save(config) {
     void refreshPlan();
     void refreshLearning();
     void refreshEnergy();
+    void refreshAuxiliary();
   } catch (error) {
     notice(`Kunde inte spara: ${error.message}`, true);
   } finally {
@@ -1080,6 +1082,79 @@ async function refreshEnergy() {
     energyBusy = false;
     if (pendingRefreshes.delete("energy")) void refreshEnergy();
   }
+}
+
+async function refreshAuxiliary() {
+  if (auxiliaryBusy) { pendingRefreshes.add("auxiliary"); return; }
+  auxiliaryBusy = true;
+  const signature = () => JSON.stringify([settings.offset_entity, settings.price_entity, settings.price_provider, settings.max_age_minutes]);
+  const requested = signature();
+  $("auxiliary-data").hidden = true;
+  for (const id of ["auxiliary-metrics", "auxiliary-chart", "auxiliary-runs"]) {
+    chartRedraws.delete($(id));
+    $(id).replaceChildren();
+  }
+  try {
+    $("auxiliary-status").textContent = "Hämtar elpatronens historik…";
+    const data = await api("auxiliary");
+    if (signature() !== requested) { pendingRefreshes.add("auxiliary"); return; }
+    const totals = data.totals;
+    const covered = totals.coverage_seconds / 3600;
+    $("auxiliary-status").textContent = `${data.meter.name} · ${data.meter.entity_id}. ${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}.`;
+    $("auxiliary-current").textContent = data.current.error
+      ? `Just nu: okänt. ${data.current.error}`
+      : `Senast avläst ${new Date(data.checked_at * 1000).toLocaleString("sv-SE")}: elpatronen är ${data.current.active ? "i drift" : "av"} · ${displayNumber(data.current.kw)} kW.`;
+    $("auxiliary-metrics").replaceChildren(
+      metric({ label: "Observerade körperioder · täckt del", value: covered > 0 ? data.runs.length : null, unit: "st" }),
+      metric({ label: "Observerad drifttid · täckt del", value: covered > 0 ? displayNumber(data.runtime_seconds / 60) : null, unit: "min" }),
+      metric({ label: "Uppskattad el · täckt del", value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
+      metric({ label: "Uppskattad kostnad · prissatt del", value: totals.priced_seconds > 0 ? displayNumber(totals.partial_cost) : null, unit: data.currency || "" }),
+    );
+    $("auxiliary-coverage").textContent = `Datatäckning ${displayNumber(covered)} av 24 timmar. ${data.observed_starts} ${data.observed_starts === 1 ? "start" : "starter"} med observerad övergång från av till på. ${data.skipped_intervals} intervall med lucka eller ogiltiga värden utelämnade. Perioder kan ha börjat före eller fortsatt efter den täckta delen.`;
+    $("auxiliary-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(totals.priced_seconds / 3600)} av 24 timmar. ${data.price_error || "Endast avgifter och moms som finns i prisgivaren ingår."}`;
+    drawChart($("auxiliary-chart"), [{
+      name: "Elpatronens uppskattade el", points: data.hours.map((hour) => [hour.start, hour.kwh]), until: data.end,
+    }], { start: data.start, end: data.end, unit: " kWh", integer: false, left: 96, pad: 0.1,
+      label: "Elpatronens uppskattade el per timme", empty: "Inga fullständiga timvärden. Se datatäckningen." });
+    const table = document.createElement("table");
+    const head = table.createTHead().insertRow();
+    for (const label of ["Period", "Drifttid", "Högsta effekt", "Uppskattad el", "Uppskattad kostnad", "Samtidigt vid början · inte säker orsak"]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      head.append(th);
+    }
+    const body = table.createTBody();
+    for (const run of [...data.runs].reverse()) {
+      const context = ["operation", "outdoor", "degree_minutes", "hot_water"].map((key) => {
+        const point = run.context[key];
+        const label = { operation: "Driftläge", outdoor: "Ute", degree_minutes: "Gradminuter", hot_water: "Varmvatten" }[key];
+        return `${label}: ${point ? `${operationText(point.value)} ${point.unit}`.trim() : "okänt"}`;
+      }).join(" · ");
+      const row = body.insertRow();
+      for (const value of [
+        `${new Date(run.start * 1000).toLocaleString("sv-SE")}–${clock(run.end)}. ${run.start_observed ? "Start observerad" : "Början okänd"}. ${run.end_observed ? "Stopp observerat" : "Slut okänt"}.`,
+        `${displayNumber(run.seconds / 60)} min`, `${displayNumber(run.max_kw)} kW`, `${displayNumber(run.kwh)} kWh`,
+        `${displayNumber(run.cost)} ${data.currency || ""}${run.cost === null ? ` (prissatt del ${run.priced_seconds > 0 ? displayNumber(run.partial_cost) : "—"})` : ""}`,
+        context,
+      ]) row.insertCell().textContent = value;
+    }
+    if (data.runs.length) $("auxiliary-runs").append(table);
+    else $("auxiliary-runs").textContent = covered > 0
+      ? "Inga körperioder observerades i den täckta delen. Det säger inget om dataluckorna."
+      : "Underlag saknas. Inga slutsatser om drifttid eller kostnad kan dras.";
+    $("auxiliary-data").hidden = false;
+  } catch (error) {
+    if (signature() !== requested) { pendingRefreshes.add("auxiliary"); return; }
+    $("auxiliary-data").hidden = true;
+    $("auxiliary-status").textContent = `Kunde inte läsa elpatronen: ${error.message.replace(/[.!?]+\s*$/, "")}. Försöker igen automatiskt.`;
+  } finally {
+    auxiliaryBusy = false;
+    if (pendingRefreshes.delete("auxiliary")) void refreshAuxiliary();
+  }
+}
+
+function operationText(value) {
+  return ({ Heating: "Värme", "Hot water": "Varmvatten", Idle: "Vilar", Off: "Av", Operating: "I drift", Blocked: "Blockerad" })[value] || value;
 }
 
 function renderHistory() {
@@ -1892,6 +1967,7 @@ async function init() {
   $("price_provider").addEventListener("change", changePriceProvider);
   $("refresh-history").addEventListener("click", () => void refreshHistory());
   $("refresh-energy").addEventListener("click", () => void refreshEnergy());
+  $("refresh-auxiliary").addEventListener("click", () => void refreshAuxiliary());
   $("history-entity").addEventListener("change", () => { if (historyData) renderHistory(); });
   $("refresh-plan").addEventListener("click", () => void refreshPlan());
   $("refresh-hot-water").addEventListener("click", () => void refreshHotWater());
@@ -1910,12 +1986,14 @@ async function init() {
   void refreshHotWater();
   void refreshLearning();
   void refreshEnergy();
+  void refreshAuxiliary();
   window.setInterval(refreshStatus, 15000);
   window.setInterval(refreshLearning, 900000);
   window.setInterval(refreshHotWater, 120000);
   window.setInterval(refreshDashboard, 60000);
   window.setInterval(refreshHistory, 300000);
   window.setInterval(refreshEnergy, 300000);
+  window.setInterval(refreshAuxiliary, 120000);
   window.setInterval(refreshForecast, 1800000);
   window.setInterval(refreshPlan, 300000);
   const resumeDashboard = () => {
@@ -1929,6 +2007,7 @@ async function init() {
     void refreshHotWater();
     void refreshTest();
     void refreshEnergy();
+    void refreshAuxiliary();
   };
   document.addEventListener("visibilitychange", resumeDashboard);
   window.addEventListener("pageshow", resumeDashboard);
@@ -1940,7 +2019,7 @@ async function init() {
     resizeTimer = window.setTimeout(() => {
       if (Math.abs(window.innerWidth - lastWidth) < 40) return;
       lastWidth = window.innerWidth;
-      for (const id of ["energy-chart", "energy-cost-chart"]) chartRedraws.get($(id))?.();
+      for (const id of ["energy-chart", "energy-cost-chart", "auxiliary-chart"]) chartRedraws.get($(id))?.();
       void refreshHistory();
       void refreshPlan();
       void refreshHotWater();
