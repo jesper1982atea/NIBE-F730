@@ -23,6 +23,7 @@ let historyBusy = false;
 let planBusy = false;
 let learningBusy = false;
 let hotWaterBusy = false;
+let energyBusy = false;
 const pendingRefreshes = new Set();
 const readRequests = new Map();
 let entitiesBusy = false;
@@ -183,6 +184,7 @@ function renderSettings(formSettings = settings, preserveView = false) {
   selectOptions("outdoor_entity", (entity) => isTemperature(entity) || entity.entity_id.startsWith("weather."), formSettings.outdoor_entity);
   selectOptions("price_entity", (entity) => entity.entity_id.startsWith("sensor."), formSettings.price_entity);
   selectOptions("forecast_entity", (entity) => entity.entity_id.startsWith("weather."), formSettings.forecast_entity);
+  selectOptions("energy_entity", (entity) => entity.device_class === "energy" && entity.energy_meter_error === null, formSettings.energy_entity);
   $("price_provider").value = formSettings.price_provider;
   const rooms = entities.filter((entity) => isTemperature(entity) || entity.entity_id.startsWith("climate."));
   for (const id of formSettings.room_sensors) {
@@ -609,8 +611,11 @@ async function refreshSavedSettings() {
         if ((roomDraft && roomFields.includes(key)) || (priceDraft && priceFields.includes(key))
           || JSON.stringify(draft[key]) !== JSON.stringify(settings[key])) merged[key] = draft[key];
       }
+      const energyChanged = ["energy_entity", "price_entity", "price_provider", "max_age_minutes"]
+        .some((key) => latest[key] !== settings[key]);
       settings = latest;
       renderSettings(merged, true);
+      if (energyChanged) void refreshEnergy();
     }
     renderSavedSettingsStatus();
   } catch (error) {
@@ -748,6 +753,7 @@ async function save(config) {
     void refreshForecast();
     void refreshPlan();
     void refreshLearning();
+    void refreshEnergy();
   } catch (error) {
     notice(`Kunde inte spara: ${error.message}`, true);
   } finally {
@@ -806,7 +812,7 @@ function drawChart(container, series, options) {
   if (maximum - minimum < 1e-9) { minimum -= 1; maximum += 1; }
   const width = chartWidth(container), narrow = width < 520;
   const height = options.height ?? (narrow ? 220 : 280);
-  const left = narrow ? 46 : 56, right = narrow ? 8 : 20, top = markers.length ? 40 : 16, bottom = 30;
+  const left = options.left ?? (narrow ? 46 : 56), right = narrow ? 8 : 20, top = markers.length ? 40 : 16, bottom = 30;
   const ticks = narrow ? 2 : 4;
   const x = (time) => left + (Math.max(start, Math.min(end, time)) - start) / (end - start) * (width - left - right);
   const y = (value) => top + (maximum - value) / (maximum - minimum) * (height - top - bottom);
@@ -987,6 +993,86 @@ function historyMarkers(changes) {
     className: change.status === "confirmed" ? "done-auto" : "done-other",
     title: historyChangeText(change),
   }));
+}
+
+async function refreshEnergy() {
+  if (energyBusy) { pendingRefreshes.add("energy"); return; }
+  energyBusy = true;
+  const signature = () => JSON.stringify([settings.energy_entity, settings.price_entity, settings.price_provider, settings.max_age_minutes]);
+  const requested = signature();
+  $("energy-data").hidden = true;
+  for (const id of ["energy-metrics", "energy-chart", "energy-cost-chart", "energy-table", "energy-comparisons"]) {
+    chartRedraws.delete($(id));
+    $(id).replaceChildren();
+  }
+  $("energy-price-status").textContent = "";
+  try {
+    if (!settings.energy_entity) {
+      $("energy-status").textContent = "Välj pumpens ackumulerade elmätare i inställningarna. Producerad värme och timräknare används inte som elförbrukning.";
+      return;
+    }
+    $("energy-status").textContent = "Hämtar pumpens elhistorik…";
+    const data = await api("energy");
+    if (signature() !== requested) { pendingRefreshes.add("energy"); return; }
+    const totals = data.totals;
+    $("energy-data").hidden = false;
+    const covered = totals.coverage_seconds / 3600;
+    const priced = totals.priced_seconds / 3600;
+    $("energy-status").textContent = `${data.meter.name} · ${data.meter.entity_id}. ${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
+    $("energy-metrics").replaceChildren(
+      metric({ label: totals.kwh === null ? "Använd el · endast täckt del" : "Använd el · hela perioden",
+        value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
+      metric({ label: totals.cost === null ? "Beräknad kostnad · endast prissatt del" : "Beräknad kostnad · hela perioden",
+        value: priced > 0 ? displayNumber(totals.partial_cost) : null, unit: data.currency || "" }),
+    );
+    $("energy-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(priced)} av 24 timmar. ${data.price_error || "Kostnaden är uppskattad utifrån mätarintervall och historiska priser."}`;
+    const markers = [...historyMarkers(data.changes), ...data.settings_changes.map((change) => ({
+      time: change.timestamp, label: "Inställningar sparade", short: "I", className: "done-other", title: change.label,
+    }))];
+    for (const [id, key, unit, name] of [
+      ["energy-chart", "kwh", " kWh", "Använd el per timme · uppskattad fördelning"],
+      ["energy-cost-chart", "cost", ` ${data.currency || ""}`, "Beräknad kostnad per timme"],
+    ]) {
+      drawChart($(id), [{ name, points: data.hours.map((hour) => [hour.start, hour[key]]), until: data.end }],
+        { start: data.start, end: data.end, unit, integer: false, pad: 0.1, left: 96, markers,
+          empty: "Inga fullständiga timvärden. Se datatäckning och givarval.", label: name });
+    }
+    const table = document.createElement("table");
+    const head = table.createTHead().insertRow();
+    for (const label of ["Timme", "El · kWh", `Kostnad · ${data.currency || "valuta saknas"}`, "El/pris · min täckta"]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      head.append(th);
+    }
+    const body = table.createTBody();
+    for (const hour of data.hours) {
+      const row = body.insertRow();
+      for (const value of [
+        new Date(hour.start * 1000).toLocaleString("sv-SE", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }),
+        displayNumber(hour.kwh), displayNumber(hour.cost),
+        `${displayNumber(hour.coverage_seconds / 60)} / ${displayNumber(hour.priced_seconds / 60)}`,
+      ]) row.insertCell().textContent = value;
+    }
+    $("energy-table").append(table);
+    const hourText = (hour) => !hour ? "timme utanför perioden" :
+      `${clock(hour.start)}: ${displayNumber(hour.kwh)} kWh, ${displayNumber(hour.cost)} ${data.currency || ""}`;
+    const difference = (value) => `${value > 0 ? "+" : ""}${displayNumber(value)}`;
+    $("energy-comparisons").replaceChildren(...data.comparisons.map((change) => {
+      const item = document.createElement("li");
+      const label = change.kind === "settings" ? change.label
+        : `${change.kind === "offset" ? "Kurvförskjutning" : change.entity_id} → ${displayNumber(change.value)} återläst`;
+      item.textContent = `${clock(change.timestamp)} · ${label}. Före ${hourText(change.before)}. Efter ${hourText(change.after)}. Observerad skillnad (efter minus före): ${difference(change.difference_kwh)} kWh, ${difference(change.difference_cost)} ${data.currency || ""}.`;
+      return item;
+    }));
+    if (!data.comparisons.length) $("energy-comparisons").textContent = "Inga återlästa ändringar eller sparade inställningar under perioden.";
+  } catch (error) {
+    if (signature() !== requested) { pendingRefreshes.add("energy"); return; }
+    $("energy-data").hidden = true;
+    $("energy-status").textContent = `Kunde inte läsa elförbrukningen: ${error.message}. Försöker igen automatiskt.`;
+  } finally {
+    energyBusy = false;
+    if (pendingRefreshes.delete("energy")) void refreshEnergy();
+  }
 }
 
 function renderHistory() {
@@ -1511,7 +1597,7 @@ const fieldLabels = {
   nearest_thermostat: "Närmast värmepumpen", thermostat_control_enabled: "Termostatbegränsning",
   fireplace_enabled: "Kaminanpassning", fireplace_rooms: "Kaminrum",
   offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare", price_provider: "Elpriskälla",
-  forecast_entity: "Prognoskälla", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
+  forecast_entity: "Prognoskälla", energy_entity: "Pumpens elmätare", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
   max_offset: "Högsta förskjutning", weather_gain: "Väderpåverkan", room_gain: "Rumspåverkan",
   price_low: "Lågprisgräns", price_high: "Högprisgräns", cheap_boost: "Höjning vid lågt pris",
   expensive_reduction: "Sänkning vid högt pris", deadband: "Toleransband",
@@ -1798,6 +1884,7 @@ async function init() {
   $("price_entity").addEventListener("change", entityHints);
   $("price_provider").addEventListener("change", changePriceProvider);
   $("refresh-history").addEventListener("click", () => void refreshHistory());
+  $("refresh-energy").addEventListener("click", () => void refreshEnergy());
   $("history-entity").addEventListener("change", () => { if (historyData) renderHistory(); });
   $("refresh-plan").addEventListener("click", () => void refreshPlan());
   $("refresh-hot-water").addEventListener("click", () => void refreshHotWater());
@@ -1815,11 +1902,13 @@ async function init() {
   void refreshPlan();
   void refreshHotWater();
   void refreshLearning();
+  void refreshEnergy();
   window.setInterval(refreshStatus, 15000);
   window.setInterval(refreshLearning, 900000);
   window.setInterval(refreshHotWater, 120000);
   window.setInterval(refreshDashboard, 60000);
   window.setInterval(refreshHistory, 300000);
+  window.setInterval(refreshEnergy, 300000);
   window.setInterval(refreshForecast, 1800000);
   window.setInterval(refreshPlan, 300000);
   const resumeDashboard = () => {
@@ -1832,6 +1921,7 @@ async function init() {
     void refreshPlan();
     void refreshHotWater();
     void refreshTest();
+    void refreshEnergy();
   };
   document.addEventListener("visibilitychange", resumeDashboard);
   window.addEventListener("pageshow", resumeDashboard);
@@ -1843,6 +1933,7 @@ async function init() {
     resizeTimer = window.setTimeout(() => {
       if (Math.abs(window.innerWidth - lastWidth) < 40) return;
       lastWidth = window.innerWidth;
+      for (const id of ["energy-chart", "energy-cost-chart"]) chartRedraws.get($(id))?.();
       void refreshHistory();
       void refreshPlan();
       void refreshHotWater();

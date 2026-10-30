@@ -1,5 +1,24 @@
 # Ändringslogg
 
+## 0.2.33
+
+- Nytt kort **Pumpens el och kostnad** visar elanvändning och beräknad
+  kostnad per timme för de senaste 24 avslutade timmarna. Välj och spara
+  en ackumulerad elmätare för just pumpen under **Din värmepump**.
+  Ingen mätare väljs automatiskt och befintlig styrning ändras inte.
+- Kostnaden använder historiska priser från din sparade elpriskälla.
+  Wh/kWh/MWh, valuta/kWh eller valuta/MWh, öre och negativa priser stöds.
+  Timfördelningen uppskattas jämnt mellan mätarrapporter, högst två timmar
+  isär. Endast avgifter och moms som finns i prisgivaren ingår.
+- Styrbegäranden, återlästa ändringar och sparade inställningar markeras
+  i graferna. Före/efter-listan visar observerad skillnad i el och kostnad,
+  inte bevisad effekt eller besparing.
+- Producerad värme räknas inte som använd el. Identifierade periodräknare,
+  räknaråterställningar, långa luckor och saknade priser ger synliga luckor
+  eller tydligt märkta delsummeringar, aldrig påhittad nollförbrukning.
+- Historiken hämtas bara för valda mätare med befintliga minnesgränser,
+  serialisering och cache. Kortet är enbart läsning.
+
 ## 0.2.32
 
 - Pumpens kurvförskjutning och rumstermostater får upp till 60 sekunder
