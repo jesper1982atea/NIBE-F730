@@ -75,6 +75,9 @@ SERVICE_TIMEOUT_SECONDS = 60
 # Keep the current pump value unless the wanted offset is clearly closer to another step:
 # room sensors with 1 °C resolution otherwise make the offset hop every interval.
 HYSTERESIS_STEPS = 0.25
+# The room rule uses the mean of the last hour's per-minute control averages. Sensors that
+# report whole degrees and jump 1–2 °C between reports otherwise move the offset every interval.
+SMOOTHING_SECONDS = 3600
 
 
 class ControlError(Exception):
@@ -536,12 +539,23 @@ def current_readings(config, entities, now, peers):
     return readings
 
 
-def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False):
-    """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule."""
+def smoothed_indoor(samples, now):
+    """Mean of the per-minute control averages within the window; samples are (time, value) pairs."""
+    values = [value for stamp, value in samples if now - SMOOTHING_SECONDS < stamp <= now]
+    return sum(values) / len(values) if values else None
+
+
+def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False, indoor_samples=()):
+    """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule.
+
+    indoor_samples: earlier (time, value) control averages; the room rule then uses their mean
+    together with the current reading instead of the current reading alone.
+    """
     states = {entity["entity_id"]: entity for entity in entities}
     peers = peers or {}
     get = lambda key: fresh_entity(states, key, config["max_age_minutes"], now, peers.get(key, ()))
-    indoor = indoor_temperature(config, get)
+    indoor_now = indoor_temperature(config, get)
+    indoor = smoothed_indoor([*indoor_samples, (now, indoor_now)], now)
     target_shift = max(-config["preheat_degrees"], min(config["preheat_degrees"], target_shift)) if config["preheat_enabled"] else 0.0
     error = config["target_temperature"] + target_shift - indoor
     room_adjustment = 0 if abs(error) <= config["deadband"] else error * config["room_gain"]
@@ -563,7 +577,8 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
     requested = desired
     desired = max(config["min_offset"], min(config["max_offset"], desired))
     result = {
-        "indoor": round(indoor, 2), "outdoor": outdoor, "price": price,
+        "indoor": round(indoor, 2), "indoor_smoothed": round(indoor, 2), "indoor_now": indoor_now,
+        "outdoor": outdoor, "price": price,
         "price_unit": price_unit, "error": round(error, 2), "target_shift": round(target_shift, 2),
         "contributions": {"room": round(room_adjustment, 2), "weather": round(weather_adjustment, 2),
                           "price": price_adjustment, "fireplace": fireplace_adjustment},
@@ -694,6 +709,9 @@ class Controller:
         self.events.add("startup", "Tillägget startat. Återläser värden; väntetid räknas från senaste sparade styrförsök.", settings=self.config)
         self.status = {"message": "Väntar på första avläsningen.", "error_message": None}
         self.peer_cache = (0, {})
+        # Recent control averages for smoothing; in memory only, so a restart starts from the current reading.
+        self.indoor_rooms = ()
+        self.indoor_samples = []
         self.data_dir = str(data_dir)
         # Set by the web layer: callable(config) -> {"windows": [...]} for price-based pre-heating.
         self.preheat_provider = None
@@ -1074,8 +1092,13 @@ class Controller:
                     except ControlError as exc:
                         schedule = {"error": str(exc)}
                 preheat = self.preheat(now, schedule)
+                rooms = tuple(control_rooms(self.config))
+                if rooms != self.indoor_rooms:
+                    self.indoor_rooms, self.indoor_samples = rooms, []
+                self.indoor_samples = [(t, v) for t, v in self.indoor_samples if now - SMOOTHING_SECONDS < t < now]
                 result = evaluate(self.config, entities, now, peers, preheat["shift"],
-                                  fireplace_active=fireplace["phase"] == "active")
+                                  fireplace_active=fireplace["phase"] == "active", indoor_samples=self.indoor_samples)
+                self.indoor_samples.append((now, result.pop("indoor_now")))
                 result["preheat"] = preheat
                 result.update(readings)
                 fireplace["contribution"] = result["contributions"]["fireplace"]
@@ -1121,7 +1144,8 @@ class Controller:
                                 "write_attempt", "Automatiken begär ändrad kurvförskjutning.",
                                 entity_id=self.config["offset_entity"], previous=result["current_offset"],
                                 value=result["next_offset"], target_temperature=self.config["target_temperature"],
-                                indoor=result["indoor"], outdoor=result["outdoor"], price=result["price"],
+                                indoor=result["indoor"], indoor_smoothed=result["indoor_smoothed"],
+                                outdoor=result["outdoor"], price=result["price"],
                                 price_unit=next((e["attributes"].get("unit_of_measurement") for e in entities
                                                  if e["entity_id"] == self.config["price_entity"]), None),
                                 contributions=result["contributions"], desired_offset=result["desired_offset"],

@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from controller import ControlError, Controller, DEFAULTS, HomeAssistant, current_readings, device_peers, discover_nibe, evaluate, validate
+from controller import ControlError, Controller, DEFAULTS, HomeAssistant, current_readings, device_peers, discover_nibe, evaluate, smoothed_indoor, validate
 
 
 def entity(entity_id, value, now=None, **attributes):
@@ -934,6 +934,85 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(page), 100)
         self.assertEqual(len(older), 11)
         self.assertFalse(set(e["id"] for e in page) & set(e["id"] for e in older))
+
+
+class SmoothingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.ha = Mock()
+        self.ha.integration_registry.return_value = []
+        self.ha.states.return_value = fixtures()
+        self.now = time.time()
+        self.controller = Controller(self.ha, self.temp.name)
+
+    def tick(self, minute, living=20, bedroom=22):
+        now = self.now + minute * 60
+        self.ha.states.return_value = [
+            entity("sensor.living", living, now, unit_of_measurement="°C"),
+            entity("sensor.bedroom", bedroom, now, unit_of_measurement="°C"),
+            entity("number.offset", 0, now, min=-10, max=10, step=1),
+        ]
+        with patch("controller.time.time", return_value=now):
+            self.controller.tick()
+        return self.controller.snapshot()
+
+    def test_mean_covers_only_the_last_hour(self):
+        samples = [(self.now - 4000, 30), (self.now - 1800, 20), (self.now - 60, 22)]
+        self.assertEqual(smoothed_indoor(samples, self.now), 21)
+        self.assertIsNone(smoothed_indoor([(self.now - 3600, 20)], self.now))
+
+    def test_room_rule_uses_mean_of_earlier_and_current_readings(self):
+        cfg = config(target_temperature=21, room_gain=1, deadband=0)
+        states = fixtures(self.now)
+        self.assertEqual(evaluate(cfg, states, self.now)["indoor"], 21)
+        result = evaluate(cfg, states, self.now, indoor_samples=[(self.now - 600, 19), (self.now - 4000, 10)])
+        self.assertEqual(result["indoor"], 20)
+        self.assertEqual(result["indoor_smoothed"], 20)
+        self.assertEqual(result["error"], 1)
+        self.assertEqual(result["next_offset"], 1)
+
+    def test_single_sensor_jump_does_not_move_offset(self):
+        self.controller.save(config(enabled=True, target_temperature=21))
+        for minute in range(60):
+            self.tick(minute)
+        status = self.tick(60, living=18)
+        self.assertEqual(status["indoor"], 20)
+        self.assertGreater(status["indoor_smoothed"], 20.9)
+        self.assertEqual(status["next_offset"], 0)
+        self.ha.set_offset.assert_not_called()
+
+    def test_lasting_change_moves_offset_once_the_mean_follows(self):
+        self.controller.save(config(enabled=True, target_temperature=21))
+        for minute in range(60):
+            self.tick(minute)
+        for minute in range(60, 120):
+            self.tick(minute, living=18)
+        self.assertEqual(self.ha.set_offset.call_args_list[0].args, ("number.offset", 1))
+        first = min((e for e in self.controller.events.recent() if e["kind"] == "write_attempt"),
+                    key=lambda e: e["timestamp"])
+        # Raw 20 °C right after the jump; the hour mean needs about half an hour to pass deadband and hysteresis.
+        self.assertGreaterEqual(first["timestamp"], self.now + 80 * 60)
+        self.assertEqual(first["details"]["indoor"], 20)
+        self.assertGreater(first["details"]["indoor_smoothed"], 20)
+
+    def test_changed_control_rooms_restart_the_mean(self):
+        self.controller.save(config(target_temperature=21))
+        for minute in range(30):
+            self.tick(minute)
+        self.assertEqual(len(self.controller.indoor_samples), 30)
+        self.controller.save(config(target_temperature=21, priority_sensors=["sensor.living"]))
+        status = self.tick(30)
+        self.assertEqual(status["indoor_smoothed"], 20)
+        self.assertEqual(len(self.controller.indoor_samples), 1)
+
+    def test_failed_reading_adds_no_sample(self):
+        self.controller.save(config(target_temperature=21))
+        self.tick(0)
+        self.ha.states.return_value = fixtures(self.now + 60)[:-1]
+        with patch("controller.time.time", return_value=self.now + 60), self.assertRaises(ControlError):
+            self.controller.tick()
+        self.assertEqual(len(self.controller.indoor_samples), 1)
 
 
 if __name__ == "__main__":

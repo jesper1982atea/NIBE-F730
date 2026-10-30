@@ -1705,7 +1705,7 @@ function renderEvents() {
     const data = event.details;
     const lines = [];
     for (const [key, change] of Object.entries(data.changes || {})) lines.push(`${fieldLabels[key] || key}: ${logValue(change.from)} → ${logValue(change.to)}`);
-    if (event.kind === "write_attempt") lines.push(`Förskjutning ${data.previous} → ${data.value}. Rum ${displayNumber(data.indoor)} °C, mål ${displayNumber(data.target_temperature)} °C. Rumspåverkan ${displayNumber(data.contributions.room)}, väder ${displayNumber(data.contributions.weather)}, pris ${displayNumber(data.contributions.price)}.${data.target_shift ? ` Mål tillfälligt ${data.target_shift > 0 ? "+" : ""}${displayNumber(data.target_shift)}° (${data.preheat === "preheat" ? "förvärmning" : "dyrt elpris"}).` : ""}`);
+    if (event.kind === "write_attempt") lines.push(`Förskjutning ${data.previous} → ${data.value}. Rum ${displayNumber(data.indoor)} °C${data.indoor_smoothed != null ? ` (timmedel ${displayNumber(data.indoor_smoothed)} °C)` : ""}, mål ${displayNumber(data.target_temperature)} °C. Rumspåverkan ${displayNumber(data.contributions.room)}, väder ${displayNumber(data.contributions.weather)}, pris ${displayNumber(data.contributions.price)}.${data.target_shift ? ` Mål tillfälligt ${data.target_shift > 0 ? "+" : ""}${displayNumber(data.target_shift)}° (${data.preheat === "preheat" ? "förvärmning" : "dyrt elpris"}).` : ""}`);
     if (data.requested !== undefined) lines.push(`Begärt: ${data.requested}. Återläst: ${data.observed}.`);
     if (event.kind === "test_write") lines.push(`Förskjutning ${data.previous} → ${data.value} i ${data.restore_after_minutes} minuter.`);
     if (event.kind === "test_restore") lines.push(`Tillbaka till ${data.value}.`);

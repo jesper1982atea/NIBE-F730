@@ -194,7 +194,8 @@ class ControllerFireplaceTests(unittest.TestCase):
             self.tick(minute, 21 + max(0, minute - 60) / 60)
         status = self.controller.snapshot()
         self.assertEqual(status["fireplace"]["phase"], "active")
-        expected = evaluate(self.cfg, self.ha.states.return_value, self.now + 125 * 60, fireplace_active=True)
+        expected = evaluate(self.cfg, self.ha.states.return_value, self.now + 125 * 60, fireplace_active=True,
+                            indoor_samples=self.controller.indoor_samples[:-1])
         self.assertEqual(status["contributions"], expected["contributions"])
         self.assertEqual(status["next_offset"], expected["next_offset"])
         self.ha.set_offset.assert_not_called()
@@ -204,6 +205,8 @@ class ControllerFireplaceTests(unittest.TestCase):
         self.assertEqual(restored.fireplace_state, self.controller.fireplace_state)
         self.assertEqual(restored.fireplace_observations(), self.controller.fireplace_observations())
 
+    # Checks the fireplace term on top of the instantaneous room rule; smoothing has its own tests.
+    @patch("controller.SMOOTHING_SECONDS", 1)
     def test_enabled_control_adds_single_bounded_reduction_to_priority_average(self):
         self.tick(0)
         self.cfg = {**self.cfg, "enabled": True, "priority_sensors": ["sensor.living"], "min_offset": -5}
