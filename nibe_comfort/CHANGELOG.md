@@ -1,5 +1,13 @@
 # Ändringslogg
 
+## 0.2.37
+
+- Nytt **Semesterläge**: ange från- och till-tid, så sätts pumpens Smart Home
+  Mode till `vacation`, automatiken pausas och pumpens tidigare läge återställs
+  när tiden är slut. Perioden överlever omstart och kan avbrytas eller
+  förlängas. Ny endpoint `PUT /api/vacation` och fältet `vacation` i
+  `/api/status`.
+
 ## 0.2.36
 
 - Ny vy **När går elpatronen?** visar elpatronens egen effekt, observerade

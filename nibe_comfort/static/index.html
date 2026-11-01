@@ -24,6 +24,7 @@
       <a href="#temperature-section">Rum och historik</a>
       <a href="#energy-section">El och kostnad</a>
       <a href="#auxiliary-section">Elpatron</a>
+      <a href="#vacation-card">Semester</a>
       <a href="#fireplace-card">Braskamin</a>
       <a href="#settings-panel">Inställningar</a>
       <a href="#log-panel">Ändringslogg</a>
@@ -146,6 +147,22 @@
       <details class="disclosure"><summary>Hur väljs tiderna?</summary><p>Kräver kommande priser från din sparade elpriskälla, inte bara priset just nu. Dyra perioder är minst en timme med pris minst 25 % över det kommande dygnets mittpris. Förvärmning planeras bara om timmarna före är minst 20 % billigare. Ett lägre mål kan planeras under dyrperioden även utan föregående förvärmning. Starttiden är normalt tre timmar före och anpassas till 1–6 timmar när husmodellen har tillräckligt underlag. Saknas prisunderlag används ditt vanliga mål och orsaken visas i planen.</p></details>
       </div>
       <ul id="learn-windows" class="plan-changes"></ul>
+    </section>
+
+    <section class="card dashboard" id="vacation-card">
+      <span class="section-number">BORTREST</span>
+      <h2>Semesterläge</h2>
+      <p id="vacation-status" role="status">Hämtar semesterläge…</p>
+      <p class="section-intro">Under perioden sätts pumpens eget semesterläge och automatiken här pausas. När tiden är slut återställs pumpens tidigare läge och automatiken fortsätter. Vad semesterläget gör med värme, varmvatten och ventilation bestäms av pumpens egna inställningar.</p>
+      <div class="vacation-times">
+        <label>Från · tomt betyder nu<input type="datetime-local" id="vacation-start"></label>
+        <label>Till<input type="datetime-local" id="vacation-end"></label>
+      </div>
+      <div class="learn-controls">
+        <button type="button" id="vacation-save">Spara semester</button>
+        <button type="button" id="vacation-cancel" class="secondary" hidden>Avbryt semester</button>
+      </div>
+      <p id="vacation-error" class="hint warning" role="status" hidden></p>
     </section>
 
     <section class="card dashboard" id="fireplace-card">
