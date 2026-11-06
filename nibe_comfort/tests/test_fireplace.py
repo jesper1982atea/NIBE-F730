@@ -281,6 +281,25 @@ class ControllerFireplaceTests(unittest.TestCase):
             self.controller.tick()
         self.assertEqual(self.controller.snapshot()["fireplace"]["phase"], "unavailable")
 
+    def test_longer_fireplace_age_accepts_quiet_report_on_change_sensors(self):
+        # Sensors such as SNZB-02D only report a 0.2 °C change, so a stable room is silent for hours.
+        self.controller.save({**self.cfg, "fireplace_max_age_minutes": 90})
+        self.tick(0)
+        with patch("controller.time.time", return_value=self.now + HOUR):
+            self.controller.tick()
+        self.assertNotEqual(self.controller.snapshot()["fireplace"]["phase"], "unavailable")
+        # The setting is honoured in both directions.
+        self.controller.save({**self.cfg, "fireplace_max_age_minutes": 10})
+        now = self.now + 2 * HOUR
+        self.ha.states.return_value = [
+            entity("sensor.living", 21, now - 12 * 60, unit_of_measurement="°C"),
+            entity("sensor.bedroom", 21, now, unit_of_measurement="°C"),
+            entity("number.offset", 0, now, min=-10, max=10, step=1),
+        ]
+        with patch("controller.time.time", return_value=now):
+            self.controller.tick()
+        self.assertEqual(self.controller.snapshot()["fireplace"]["phase"], "unavailable")
+
     def test_observation_disk_failure_prevents_physical_control(self):
         self.controller.config = {**self.cfg, "enabled": True}
         with patch("controller.atomic_json", side_effect=OSError("Disk full")):
@@ -295,7 +314,9 @@ class ControllerFireplaceTests(unittest.TestCase):
         restored = Controller(self.ha, self.temp.name)
         self.assertFalse(restored.settings()["fireplace_enabled"])
         self.assertEqual(restored.settings()["fireplace_rooms"], [])
+        self.assertEqual(restored.settings()["fireplace_max_age_minutes"], 15)
         for changes in ({"fireplace_enabled": "yes"}, {"fireplace_rooms": "sensor.living"},
+                        {"fireplace_max_age_minutes": 4}, {"fireplace_max_age_minutes": 1441},
                         {"fireplace_rooms": ["sensor.unknown"]}, {"fireplace_enabled": True},
                         {"fireplace_enabled": True, "fireplace_rooms": ["sensor.living", "sensor.bedroom"]}):
             with self.assertRaises(ControlError):

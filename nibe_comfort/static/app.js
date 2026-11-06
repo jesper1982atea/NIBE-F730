@@ -1755,7 +1755,7 @@ async function refreshLearning() {
 const fieldLabels = {
   target_temperature: "Måltemperatur", room_sensors: "Rumsgivare", priority_sensors: "Prioriterade rum", enabled: "Automatik",
   nearest_thermostat: "Närmast värmepumpen", thermostat_control_enabled: "Termostatbegränsning",
-  fireplace_enabled: "Kaminanpassning", fireplace_rooms: "Kaminrum",
+  fireplace_enabled: "Kaminanpassning", fireplace_rooms: "Kaminrum", fireplace_max_age_minutes: "Kaminens mätvärdesålder",
   offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare", price_provider: "Elpriskälla",
   forecast_entity: "Prognoskälla", energy_entity: "Pumpens elmätare", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
   max_offset: "Högsta förskjutning", weather_gain: "Väderpåverkan", room_gain: "Rumspåverkan",
@@ -2018,6 +2018,7 @@ async function init() {
   $("preheat_enabled").addEventListener("change", updateSaveState);
   $("fireplace_enabled").addEventListener("change", updateSaveState);
   $("fireplace_rooms").addEventListener("change", updateSaveState);
+  $("fireplace_max_age_minutes").addEventListener("input", updateSaveState);
   $("room_sensors").addEventListener("change", () => {
     renderPriorityPicker(Array.from($("priority_sensors").querySelectorAll("input:checked"), (input) => input.value));
     renderNearestThermostat($("nearest_thermostat").value);

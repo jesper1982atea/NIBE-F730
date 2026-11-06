@@ -211,9 +211,14 @@ värme kan ge samma mönster. Långsam eldning eller värme som sprids jämnt
 till alla rum kan missas. Det är inget brand- eller säkerhetslarm.
 
 Analysen tar en observation högst var femte minut, med giltiga och färska
-temperaturer (högst 15 minuter, eller din kortare mätvärdesgräns) i
-samtliga valda rum. En oförändrad givare kan bekräftas genom färska
-rapporter från samma HA-enhet, som i övrig styrning. En temperaturökning
+temperaturer i samtliga valda rum: högst **Högsta ålder på kaminens
+rumsvärden** (standard 15 minuter, aldrig längre än den vanliga
+mätvärdesgränsen). En oförändrad givare kan bekräftas genom färska
+rapporter från samma HA-enhet, som i övrig styrning. Givare som bara
+rapporterar vid ändring, till exempel Sonoff SNZB-02D (0,2 °C), kan vara
+tysta i timmar när rummet är stabilt och gör då analysen otillgänglig med
+15 minuter. För sådana givare kan gränsen höjas: tystnad betyder då att
+rummet inte har ändrats, och en ökning rapporteras direkt. En temperaturökning
 i kaminrummens snitt måste vara minst 0,5 °C under ungefär 45–75 minuter,
 motsvara minst 0,7 °C per timme och vara minst 0,5 °C större än ökningen
 i övriga rum. Mönstret ska bestå minst tio minuter innan en misstänkt
