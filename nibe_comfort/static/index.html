@@ -76,11 +76,10 @@
       </details>
     </section>
 
-    <section class="card dashboard" id="comfort-card">
-      <span class="section-number">HJÄLP ATT NÅ MÅLET</span>
-      <h2>Varför blir inte rummet varmt?</h2>
+    <section class="card dashboard" id="comfort-card" data-tone="muted">
+      <div class="feature-head"><div class="feature-icon icon-thermo" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14.5V5a2 2 0 1 1 4 0v9.5a4 4 0 1 1-4 0Z"/><path d="M12 9v7"/></svg></div><div><span class="section-number">HJÄLP ATT NÅ MÅLET</span><h2>Varför blir inte rummet varmt?</h2></div><span id="comfort-pill" class="feature-pill">Hämtar…</span></div>
       <p id="comfort-status" role="status">Väntar på aktuella rumstemperaturer…</p>
-      <ul id="comfort-advice"></ul>
+      <ul id="comfort-advice" class="room-advice-list"></ul>
       <details class="disclosure" id="comfort-details">
         <summary>Fördjupning · vad hände efter mer värme?</summary>
       <h3>Efter senaste bekräftade höjningen</h3>
@@ -120,10 +119,11 @@
       </details>
     </section>
 
-    <section class="card dashboard" id="learning-card">
-      <div class="section-heading"><div><span class="section-number">SJÄLVLÄRANDE</span><h2>Ditt hus lär sig</h2></div><button type="button" id="refresh-learning" class="secondary">Uppdatera</button></div>
+    <section class="card dashboard" id="learning-card" data-tone="muted">
+      <div class="feature-head"><div class="feature-icon icon-house" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg></div><div><span class="section-number">SJÄLVLÄRANDE</span><h2>Ditt hus lär sig</h2></div><span id="learn-pill" class="feature-pill">Hämtar…</span><button type="button" id="refresh-learning" class="secondary">Uppdatera</button></div>
       <p id="learn-status" role="status">Hämtar husmodellen…</p>
       <p class="section-intro">En försiktig uppskattning av hur snabbt huset blir varmt. Ju mer historik, desto bättre underlag – det är fortfarande en prognos.</p>
+      <div class="feature-meter"><div class="feature-meter-head"><span>Mätvärden att lära av</span><strong id="learn-meter-text">–</strong></div><div class="feature-track"><i id="learn-meter-bar"></i></div></div>
       <p id="learn-message" class="explanation"></p>
       <details class="disclosure" id="learning-details">
         <summary>Fördjupning · inlärning, siffror och temperaturprognos</summary>
@@ -142,21 +142,24 @@
         <div><label for="preheat_degrees">Tillfällig måländring uppåt/nedåt · °C</label><input id="preheat_degrees" name="preheat_degrees" form="settings" type="number" min="0.1" max="1.5" step="0.1" required></div>
         <button type="submit" form="settings" id="save-preheat">Spara inställningar</button>
       </div>
-      <p id="preheat-example" class="explanation" role="status"></p>
+      <div id="preheat-steps" class="preheat-steps" aria-hidden="true"></div>
+      <p id="preheat-example" class="hint" role="status"></p>
       <p class="hint">Måländringen är inte en garanti för rummens temperatur eller besparing. Huset reagerar långsamt; kurvgränser, tolerans och väntetid gäller fortfarande. Sparad termostatbegränsning kan bromsa förvärmningen eftersom den följer ditt vanliga mål.</p>
       <details class="disclosure"><summary>Hur väljs tiderna?</summary><p>Kräver kommande priser från din sparade elpriskälla, inte bara priset just nu. Dyra perioder är minst en timme med pris minst 25 % över det kommande dygnets mittpris. Förvärmning planeras bara om timmarna före är minst 20 % billigare. Ett lägre mål kan planeras under dyrperioden även utan föregående förvärmning. Starttiden är normalt tre timmar före och anpassas till 1–6 timmar när husmodellen har tillräckligt underlag. Saknas prisunderlag används ditt vanliga mål och orsaken visas i planen.</p></details>
       </div>
+      <h3>Plan närmaste dygnet</h3>
+      <div id="preheat-timeline" class="preheat-timeline" role="img" aria-label="Förvärmning och svalare perioder närmaste dygnet"></div>
       <ul id="learn-windows" class="plan-changes"></ul>
     </section>
 
     <section class="card dashboard" id="vacation-card" data-phase="none">
-      <div class="vacation-head">
-        <div class="vacation-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="3"/><path d="M8 7V5.5A1.5 1.5 0 0 1 9.5 4h5A1.5 1.5 0 0 1 16 5.5V7M3 12h18M10 12v2h4v-2"/></svg></div>
+      <div class="feature-head">
+        <div class="feature-icon icon-trip" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="3"/><path d="M8 7V5.5A1.5 1.5 0 0 1 9.5 4h5A1.5 1.5 0 0 1 16 5.5V7M3 12h18M10 12v2h4v-2"/></svg></div>
         <div>
           <span class="section-number">BORTREST</span>
           <h2>Semesterläge</h2>
         </div>
-        <span id="vacation-pill" class="vacation-pill">Hämtar…</span>
+        <span id="vacation-pill" class="feature-pill">Hämtar…</span>
       </div>
       <div class="vacation-banner">
         <p id="vacation-status" role="status">Hämtar semesterläge…</p>
@@ -187,33 +190,45 @@
       </details>
     </section>
 
-    <section class="card dashboard" id="fireplace-card">
-      <span class="section-number">BRASKAMIN / EXTRAVÄRME</span>
-      <h2>Värme från kaminen</h2>
-      <p id="fireplace-status" role="status">Kaminobservation är av tills du väljer rum och sparar.</p>
-      <p class="section-intro">Automatisk temperaturanalys kan misstänka lokal extravärme, men inte skilja säkert mellan eldning, sol och andra värmekällor. Detta är inte ett brand- eller säkerhetslarm.</p>
-      <p class="hint warning">Ditt prioriterade snitt styr fortfarande. Vid bestående misstänkt extravärme läggs ett extra kaminbidrag på −1 steg till den beräknade kurvförskjutningen, men bara om det styrande snittet inte är under ditt vanliga mål minus toleransen. Kurvan påverkar hela huset; andra rum kan bli kallare och sol kan ge falska träffar. Vanliga intervall, steglängd och gränser gäller.</p>
-      <div class="learn-controls">
-        <label class="toggle"><input type="checkbox" id="fireplace_enabled" name="fireplace_enabled" form="settings"> Jag har braskamin · upptäck extravärme och anpassa kurvan</label>
-        <button type="submit" form="settings" id="save-fireplace">Spara inställningar</button>
+    <section class="card dashboard feature-card" id="fireplace-card" data-tone="muted">
+      <div class="feature-head">
+        <div class="feature-icon icon-flame" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.2 1-3.7 2.2-4.8.2 1.6 1 2.6 2 3 0-3 .3-5.6.8-8.2Z"/></svg></div>
+        <div><span class="section-number">BRASKAMIN / EXTRAVÄRME</span><h2>Värme från kaminen</h2></div>
+        <span id="fireplace-pill" class="feature-pill">Hämtar…</span>
       </div>
-      <label for="fireplace_rooms">Temperaturkällor i rummet med kamin</label>
-      <div id="fireplace_rooms" class="sensor-list" role="group" aria-describedby="fireplace-help"></div>
-      <p id="fireplace-help" class="hint">Välj bland rumsgivarna i inställningarna. Välj bara kaminens rum, inte alla rum värmen sprids till. Minst ett annat valt rum behövs som jämförelse. Inget börjar gälla förrän du sparar.</p>
-      <div><label for="fireplace_max_age_minutes">Högsta ålder på kaminens rumsvärden · minuter</label><input id="fireplace_max_age_minutes" name="fireplace_max_age_minutes" form="settings" type="number" min="5" max="1440" step="1" required aria-describedby="fireplace-age-help"></div>
-      <p id="fireplace-age-help" class="hint">Standard 15 minuter. Gäller alla valda rum i kaminanalysen, även jämförelserummen. Givare som bara rapporterar ändringar kan vara tysta länge, men tystnad kan också bero på batteri-, radio- eller integrationsfel. En högre gräns kan ge osäkrare kaminbedömning och extra värmesänkning. Höj bara efter att du kontrollerat givarens rapportering. Gränsen blir aldrig längre än Högsta ålder på mätvärden och ändrar inte den vanliga rumsregeln.</p>
-      <p id="fireplace-learning" class="explanation"></p>
-      <p id="fireplace-control" class="explanation" role="status"></p>
-      <ul id="fireplace-effects"></ul>
+      <div class="feature-banner">
+        <p id="fireplace-status" role="status">Kaminobservation är av tills du väljer rum och sparar.</p>
+        <p id="fireplace-control" class="feature-sub" role="status"></p>
+      </div>
+      <div class="feature-meter">
+        <div class="feature-meter-head"><span>Inlärning av typiska förlopp</span><strong id="fireplace-learn-count">0 av 3</strong></div>
+        <div class="feature-track"><i id="fireplace-learn-bar"></i></div>
+        <p id="fireplace-learning" class="hint"></p>
+      </div>
+      <ul id="fireplace-effects" class="feature-list"></ul>
+      <div class="feature-settings">
+        <h3>Inställningar</h3>
+        <label class="toggle"><input type="checkbox" id="fireplace_enabled" name="fireplace_enabled" form="settings"> Jag har braskamin · upptäck extravärme och anpassa kurvan</label>
+        <label for="fireplace_rooms">Kaminens rum</label>
+        <div id="fireplace_rooms" class="sensor-list chip-list" role="group" aria-describedby="fireplace-help"></div>
+        <p id="fireplace-help" class="hint">Välj bland rumsgivarna i inställningarna. Välj bara kaminens rum, inte alla rum värmen sprids till. Minst ett annat valt rum behövs som jämförelse. Inget börjar gälla förrän du sparar.</p>
+        <div class="feature-row">
+          <div><label for="fireplace_max_age_minutes">Högsta ålder på kaminens rumsvärden · minuter</label><input id="fireplace_max_age_minutes" name="fireplace_max_age_minutes" form="settings" type="number" min="5" max="1440" step="1" required aria-describedby="fireplace-age-help"></div>
+          <button type="submit" form="settings" id="save-fireplace">Spara inställningar</button>
+        </div>
+      </div>
+      <h3>Senaste misstänkta perioder</h3>
+      <ul id="fireplace-history" class="feature-timeline"></ul>
       <details class="disclosure">
         <summary>Så upptäcks och lärs extravärmen</summary>
+        <p>Automatisk temperaturanalys kan misstänka lokal extravärme, men inte skilja säkert mellan eldning, sol och andra värmekällor. Detta är inte ett brand- eller säkerhetslarm.</p>
+        <p class="hint warning">Ditt prioriterade snitt styr fortfarande. Vid bestående misstänkt extravärme läggs ett extra kaminbidrag på −1 steg till den beräknade kurvförskjutningen, men bara om det styrande snittet inte är under ditt vanliga mål minus toleransen. Kurvan påverkar hela huset; andra rum kan bli kallare och sol kan ge falska träffar. Vanliga intervall, steglängd och gränser gäller.</p>
+        <p id="fireplace-age-help" class="hint">Standard 15 minuter. Gäller alla valda rum i kaminanalysen, även jämförelserummen. Givare som bara rapporterar ändringar kan vara tysta länge, men tystnad kan också bero på batteri-, radio- eller integrationsfel. En högre gräns kan ge osäkrare kaminbedömning och extra värmesänkning. Höj bara efter att du kontrollerat givarens rapportering. Gränsen blir aldrig längre än Högsta ålder på mätvärden och ändrar inte den vanliga rumsregeln.</p>
         <p>Vi jämför kaminrummets snabba temperaturökning under ungefär en timme med övriga valda rum. Mönstret måste bestå innan en misstänkt period sparas. En långsam eller jämnt spridd värmeökning kan missas; sol kan ge falska träffar. Aktuella värden krävs i alla valda rum.</p>
         <p>Efter minst tre avslutade förlopp med samma rumsval visas typisk observerad varaktighet och temperaturökning i rummen. Det visar vad som hände samtidigt, inte hur mycket värme kaminen säkert gav eller hur länge glöden varar. Varaktigheten gäller tills den lokala temperaturskillnaden klingat av, inte tills hela huset svalnat.</p>
         <p>Kaminbidraget är en extra sänkning av det beräknade målet, inte ytterligare ett steg ned vid varje avläsning. När observationen tar slut, aktuella värden saknas eller det styrande snittet är för kallt tas bidraget bort och kurvan räknas om. Även då gäller minsta ändringsintervall. Huvudautomatiken måste vara på för att några ändringar ska skickas.</p>
         <p>Observationer sparas från aktiveringen och överlever omstart. Misstänkta perioder och sex timmar därefter undantas från pumpens inlärning. Temperaturprognosen pausas under en pågående observation; den inlärda varaktigheten används inte för att skicka framtida styrkommandon.</p>
       </details>
-      <h3>Senaste misstänkta perioder</h3>
-      <ul id="fireplace-history"></ul>
     </section>
 
     <section class="card dashboard" id="hot-water-card">
@@ -264,12 +279,12 @@
       <details class="disclosure"><summary>Avancerat · mätpunkter som tabell</summary><div id="history-table" class="table-scroll"></div></details>
     </section>
 
-    <section class="card dashboard">
-      <span class="section-number">PUMPEN JUST NU</span>
-      <h2>Värme, drift och el</h2>
+    <section class="card dashboard" id="pump-card" data-tone="muted">
+      <div class="feature-head"><div class="feature-icon icon-pump" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="3"/><circle cx="12" cy="11" r="4"/><path d="M12 7v1.5M12 13.5V15M8 11h1.5M14.5 11H16M8 18h8"/></svg></div><div><span class="section-number">PUMPEN JUST NU</span><h2>Värme, drift och el</h2></div><span id="pump-pill" class="feature-pill">Hämtar…</span></div>
       <p id="overview-status" role="status">Hämtar pumpstatus…</p>
       <p class="section-intro">Rapporterad drift och eventuella larm. Saknad information betyder inte att pumpen är avstängd.</p>
-      <div id="pump-metrics" class="live-grid"></div>
+      <div id="pump-metrics" class="live-grid pump-grid"></div>
+      <p id="pump-missing" class="hint" hidden></p>
       <details class="disclosure" id="electricity-details">
         <summary>Visa elförbrukning · pumpen jämfört med hela huset</summary>
       <h3>Elförbrukning</h3>
@@ -302,8 +317,8 @@
       </div>
     </section>
 
-    <section class="card dashboard" id="auxiliary-section">
-      <div class="section-heading"><div><span class="section-number">ELTILLSATS · SENASTE 24 AVSLUTADE TIMMARNA</span><h2>När går elpatronen?</h2></div><button type="button" id="refresh-auxiliary" class="secondary">Uppdatera</button></div>
+    <section class="card dashboard" id="auxiliary-section" data-tone="muted">
+      <div class="feature-head"><div class="feature-icon icon-bolt" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 13h6l-1 8 8-10h-6l1-8Z"/></svg></div><div><span class="section-number">ELTILLSATS · SENASTE 24 AVSLUTADE TIMMARNA</span><h2>När går elpatronen?</h2></div><span id="auxiliary-pill" class="feature-pill">Hämtar…</span><button type="button" id="refresh-auxiliary" class="secondary">Uppdatera</button></div>
       <p class="section-intro">Se elpatronens egen effekt, observerade körperioder och uppskattad kostnad. Detta är en del av pumpens el, inte en extra kostnad att lägga ovanpå pumpens totalsiffra.</p>
       <p id="auxiliary-status" role="status">Hämtar elpatronens historik…</p>
       <div id="auxiliary-data" hidden>

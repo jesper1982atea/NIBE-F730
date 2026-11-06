@@ -172,6 +172,7 @@ function renderPreheatExample() {
   const degrees = $("preheat_degrees").valueAsNumber;
   if (!Number.isFinite(target) || !Number.isFinite(degrees)) {
     $("preheat-example").textContent = "Ange måltemperatur och tillfällig måländring för att se exemplet.";
+    $("preheat-steps").replaceChildren();
     return;
   }
   const scope = $("priority_sensors").querySelector("input:checked") ? "prioriterade rum" : "valda rum";
@@ -181,6 +182,39 @@ function renderPreheatExample() {
     && JSON.stringify(draft.priority_sensors) === JSON.stringify(settings.priority_sensors)
     && JSON.stringify(draft.room_sensors) === JSON.stringify(settings.room_sensors);
   $("preheat-example").textContent = `${saved ? "Dina inställningar" : "Exempel med osparade värden"}: vanligt mål ${displayNumber(target)} °C för ${scope} → före dyrperiod ${displayNumber(target + degrees)} °C → under dyrperiod ${displayNumber(target - degrees)} °C → tillbaka till ${displayNumber(target)} °C. ${$("preheat_enabled").checked ? "Planeringen är vald." : "Planeringen är av."}${saved ? "" : " Ändringarna börjar gälla först när du sparar."}`;
+  $("preheat-steps").classList.toggle("off", !$("preheat_enabled").checked);
+  $("preheat-steps").replaceChildren(...[
+    ["Vanligt", target, ""], ["Före dyrt", target + degrees, "preheat"], ["Under dyrt", target - degrees, "coast"], ["Efter", target, ""],
+  ].map(([label, value, kind]) => {
+    const step = Object.assign(document.createElement("div"), { className: `preheat-step ${kind}` });
+    step.append(Object.assign(document.createElement("small"), { textContent: label }),
+      Object.assign(document.createElement("strong"), { textContent: `${displayNumber(value)}°` }));
+    return step;
+  }));
+}
+
+// Next 24 hours as a strip: red blocks = preheat, blue = allowed to cool, line = now.
+function renderPreheatTimeline(windows, now) {
+  const span = 24 * 3600;
+  const strip = document.createElement("div");
+  strip.className = "preheat-strip";
+  for (const w of windows) {
+    const from = Math.max(0, (w.start - now) / span), to = Math.min(1, (w.end - now) / span);
+    if (to <= 0 || from >= 1) continue;
+    const block = document.createElement("i");
+    block.className = w.kind === "preheat" ? "preheat" : "coast";
+    block.style.left = `${from * 100}%`;
+    block.style.width = `${(to - from) * 100}%`;
+    strip.append(block);
+  }
+  const ticks = document.createElement("div");
+  ticks.className = "preheat-ticks";
+  for (let i = 0; i <= 4; i++) {
+    ticks.append(Object.assign(document.createElement("span"), {
+      textContent: i === 0 ? "nu" : new Date((now + i * span / 4) * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" }),
+    }));
+  }
+  $("preheat-timeline").replaceChildren(strip, ticks);
 }
 
 function renderSettings(formSettings = settings, preserveView = false) {
@@ -318,26 +352,53 @@ function fireplaceRoomName(id) {
   return [entityAreas[id]?.area_name, entities.find((e) => e.entity_id === id)?.name || id].filter(Boolean).join(" · ");
 }
 
+// Shared status pill and colour tone for the feature cards.
+function featureTone(card, pill, tone, text) {
+  $(card).dataset.tone = tone;
+  $(pill).textContent = text;
+}
+
 function renderFireplace() {
   const state = lastStatus?.fireplace;
   $("fireplace-status").textContent = state?.message || (settings?.fireplace_enabled
     ? "Väntar på aktuell kaminobservation." : "Kaminobservation är av.");
   $("fireplace-control").textContent = state?.control_note || "";
+  $("fireplace-control").hidden = !$("fireplace-control").textContent;
   $("fireplace-learning").textContent = state?.learned
     ? `Typisk observerad varaktighet: ${displayNumber(state.duration_hours)} timmar från ${state.completed} avslutade förlopp. Ingen säker prognos för den här eldningen.`
     : `Lär sig: ${state?.completed || 0} avslutade förlopp. Minst tre med samma rumsval behövs för typisk varaktighet och temperaturförändring.`;
+  const completed = state?.completed || 0;
+  $("fireplace-learn-count").textContent = state?.learned ? `Inlärd · ${completed} förlopp` : `${Math.min(completed, 3)} av 3`;
+  $("fireplace-learn-bar").style.width = `${Math.round(Math.min(1, completed / 3) * 100)}%`;
   if (state?.active_since != null) $("fireplace-status").textContent += ` Observerat förlopp från ${new Date(state.active_since * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.`;
+  const enabled = state ? state.enabled : settings?.fireplace_enabled;
+  const [tone, text] = !enabled ? ["muted", "Av"]
+    : state?.phase === "active" ? (state.contribution < 0 ? ["red", "Sänker värmen"] : ["amber", "Extravärme"])
+    : state?.phase === "candidate" ? ["amber", "Misstänkt värme"]
+    : state?.phase === "learning" ? ["blue", "Samlar data"]
+    : state?.phase === "idle" ? ["green", "Bevakar"]
+    : state?.phase === "unavailable" ? ["muted", "Saknar värden"] : ["muted", "Väntar"];
+  featureTone("fireplace-card", "fireplace-pill", tone, text);
   $("fireplace-effects").replaceChildren(...(state?.room_effects || []).map((room) => {
     const item = document.createElement("li");
     const name = entityAreas[room.entity_id]?.area_name || entities.find((e) => e.entity_id === room.entity_id)?.name || room.entity_id;
-    item.textContent = `${name}: typisk uppmätt ökning +${displayNumber(room.rise)} °C${room.arrival_minutes == null ? "" : ` · först observerad +0,3 °C efter cirka ${room.arrival_minutes} min`}. Inte säkert orsakat av kaminen.`;
+    const strong = Object.assign(document.createElement("strong"), { textContent: `+${displayNumber(room.rise)} °C` });
+    item.append(strong, `${name}: typisk uppmätt ökning +${displayNumber(room.rise)} °C${room.arrival_minutes == null ? "" : ` · först observerad +0,3 °C efter cirka ${room.arrival_minutes} min`}. Inte säkert orsakat av kaminen.`);
     return item;
   }));
-  $("fireplace-history").replaceChildren(...(state?.recent || []).slice().reverse().map((episode) => {
+  const recent = (state?.recent || []).slice().reverse();
+  $("fireplace-history").replaceChildren(...(recent.length ? recent.map((episode) => {
     const item = document.createElement("li");
-    item.textContent = `${new Date(episode.start * 1000).toLocaleString("sv-SE")} – ${new Date(episode.end * 1000).toLocaleTimeString("sv-SE")}: ${episode.complete ? "lokal extravärme klingade av" : "avbruten/osäker observation, används inte för typisk varaktighet"}.`;
+    item.className = episode.complete ? "complete" : "uncertain";
+    const when = Object.assign(document.createElement("strong"), {
+      textContent: `${new Date(episode.start * 1000).toLocaleString("sv-SE", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} – ${new Date(episode.end * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}`,
+    });
+    const what = Object.assign(document.createElement("span"), {
+      textContent: episode.complete ? "lokal extravärme klingade av" : "avbruten/osäker observation, används inte för typisk varaktighet",
+    });
+    item.append(when, what);
     return item;
-  }));
+  }) : [Object.assign(document.createElement("li"), { className: "empty", textContent: "Inga misstänkta perioder ännu." })]));
 }
 
 function limitPriorityPicker() {
@@ -494,8 +555,26 @@ function renderComfort() {
     items.push("Andra rum är redan minst 2 °C över målet. Kontrollera de kalla rummens termostater innan du tillåter mer värme till hela huset.");
   if (cold.length && lastStatus?.control_limit?.direction === "upper")
     items.push("Övre säkerhetsgränsen begränsar förskjutningen. En höjd gräns värmer hela huset och garanterar inte att just detta rum når målet.");
-  $("comfort-advice").replaceChildren(...items.map((text) => {
-    const li = document.createElement("li"); li.textContent = text; return li;
+  const missingRoom = rooms.some((room) => controlling.includes(room.entity_id) && room.temperature == null);
+  const [tone, pill] = !rooms.length ? ["muted", "Inga värden"] : cold.length ? ["amber", cold.length === 1 ? "1 rum under målet" : `${cold.length} rum under målet`]
+    : missingRoom ? ["red", "Givare saknas"] : ["green", "Alla rum nära målet"];
+  featureTone("comfort-card", "comfort-pill", tone, pill);
+  $("comfort-advice").replaceChildren(...items.map((text, index) => {
+    const li = document.createElement("li");
+    const room = cold[index];
+    if (!room) { li.className = "room-advice-note"; li.textContent = text; return li; }
+    li.className = "room-advice";
+    const head = document.createElement("div");
+    head.className = "room-advice-head";
+    head.append(Object.assign(document.createElement("strong"), { textContent: room.name }),
+      Object.assign(document.createElement("span"), { textContent: `${displayNumber(room.temperature)} °C av ${displayNumber(settings.target_temperature)} °C` }));
+    // The bar spans target − 3 °C … target, so a room 1 °C short is two thirds full.
+    const track = Object.assign(document.createElement("div"), { className: "feature-track" });
+    const fill = document.createElement("i");
+    fill.style.width = `${Math.round(Math.max(0.04, Math.min(1, 1 - (settings.target_temperature - room.temperature) / 3)) * 100)}%`;
+    track.append(fill);
+    li.append(head, track, Object.assign(document.createElement("p"), { textContent: text.replace(`${room.name}: ${displayNumber(room.temperature)} °C, mål ${displayNumber(settings.target_temperature)} °C. `, "") }));
+    return li;
   }));
   const changes = eventRows.filter((event) => event.kind === "offset_observed"
     && event.details?.entity_id === settings?.offset_entity)
@@ -1082,7 +1161,23 @@ async function refreshOverview() {
   try {
     const data = await api("overview");
     if (provider !== settings.price_provider) return;
-    $("pump-metrics").replaceChildren(...data.pump.map(metric));
+    // Readings without a value are listed on one line; alarms are always shown as tiles.
+    const known = data.pump.filter((item) => item.value !== null || item.active === true);
+    const missing = data.pump.filter((item) => !known.includes(item));
+    $("pump-metrics").replaceChildren(...known.map((item) => {
+      const block = metric(item);
+      const value = String(item.value ?? "");
+      block.dataset.state = item.active === true ? "alarm" : /^(I drift|Värme|Varmvatten)$/.test(value) ? "on"
+        : /^(Av|Stoppad|Vilar|Viloläge)$/.test(value) ? "off" : "value";
+      return block;
+    }));
+    $("pump-missing").textContent = missing.length ? `Saknas: ${missing.map((item) => item.label).join(", ")}. Ingen entydig givare hittades.` : "";
+    $("pump-missing").hidden = !missing.length;
+    const compressor = data.pump.find((item) => item.label === "Kompressor")?.value;
+    const [tone, text] = data.pump.some((item) => item.active === true) ? ["red", "Larm"]
+      : compressor === "I drift" ? ["green", "Kompressor i drift"]
+      : compressor ? ["muted", `Kompressor: ${compressor.toLowerCase()}`] : ["muted", "Okänt läge"];
+    featureTone("pump-card", "pump-pill", tone, text);
     $("electricity-metrics").replaceChildren(...data.pump_electricity.map(metric), ...data.house.map(metric));
     if (data.price) $("electricity-metrics").append(metric(data.price));
     if (!data.pump_electricity.length) $("electricity-metrics").prepend(metric({
@@ -1093,6 +1188,8 @@ async function refreshOverview() {
   } catch (error) {
     if (provider !== settings.price_provider) return;
     $("pump-metrics").replaceChildren();
+    $("pump-missing").hidden = true;
+    featureTone("pump-card", "pump-pill", "muted", "Kan inte läsas");
     $("electricity-metrics").replaceChildren();
     $("overview-status").textContent = `Kunde inte läsa pumpstatus: ${error.message}`;
   }
@@ -1226,6 +1323,7 @@ async function refreshAuxiliary() {
   }
   try {
     $("auxiliary-status").textContent = "Hämtar elpatronens historik…";
+    $("auxiliary-section").classList.remove("is-empty");
     const data = await api("auxiliary");
     if (signature() !== requested) { pendingRefreshes.add("auxiliary"); return; }
     const totals = data.totals;
@@ -1273,10 +1371,14 @@ async function refreshAuxiliary() {
       ? "Inga körperioder observerades i den täckta delen. Det säger inget om dataluckorna."
       : "Underlag saknas. Inga slutsatser om drifttid eller kostnad kan dras.";
     $("auxiliary-data").hidden = false;
+    featureTone("auxiliary-section", "auxiliary-pill", data.current.error ? "muted" : data.current.active ? "amber" : "green",
+      data.current.error ? "Okänt just nu" : data.current.active ? `I drift · ${displayNumber(data.current.kw)} kW` : "Av just nu");
   } catch (error) {
     if (signature() !== requested) { pendingRefreshes.add("auxiliary"); return; }
     $("auxiliary-data").hidden = true;
     $("auxiliary-status").textContent = `Kunde inte läsa elpatronen: ${error.message.replace(/[.!?]+\s*$/, "")}. Försöker igen automatiskt.`;
+    $("auxiliary-section").classList.add("is-empty");
+    featureTone("auxiliary-section", "auxiliary-pill", "muted", "Ingen data");
   } finally {
     auxiliaryBusy = false;
     if (pendingRefreshes.delete("auxiliary")) void refreshAuxiliary();
@@ -1751,6 +1853,10 @@ async function refreshLearning() {
     const titles = { learning: "Lär sig fortfarande", rough: "Grov bild av huset", good: "Känner huset väl" };
     $("learn-status").textContent = data.error || (model ? `${titles[model.status]} · uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE")}` : "Ingen modell ännu.");
     $("learn-message").textContent = [model?.message, data.prediction_note].filter(Boolean).join(" ");
+    featureTone("learning-card", "learn-pill", { learning: "blue", rough: "amber", good: "green" }[model?.status] || "muted",
+      { learning: "Lär sig", rough: "Grov bild", good: "Känner huset" }[model?.status] || "Ingen modell");
+    $("learn-meter-text").textContent = model ? `${displayNumber(model.days)} av 7 dygn` : "–";
+    $("learn-meter-bar").style.width = `${model ? Math.round(Math.max(0, Math.min(1, model.hours / model.needed_hours)) * 100) : 0}%`;
     $("learn-message").hidden = !$("learn-message").textContent;
     $("learn-progress").replaceChildren(...(model ? [
       progressRow("Mätvärden", model.hours, model.needed_hours, `${displayNumber(model.days)} av 7 dygn`),
@@ -1796,6 +1902,7 @@ async function refreshLearning() {
     if (!items.length) items.push(Object.assign(document.createElement("li"), { className: "muted", textContent: preheat.note || "Inga förvärmningar planerade." }));
     const head = Object.assign(document.createElement("li"), { className: "plan-heading", textContent: `${state} ${lead}`.trim() });
     $("learn-windows").replaceChildren(head, ...items);
+    renderPreheatTimeline(windows, data.now);
   } catch (error) {
     $("learn-status").textContent = `Kunde inte läsa husmodellen: ${error.message}`;
   } finally {
