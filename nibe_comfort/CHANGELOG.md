@@ -1,5 +1,25 @@
 # Ändringslogg
 
+## 0.2.37
+
+- Rumsregeln använder medelvärdet av den senaste timmens avläsningar av
+  det styrande snittet i stället för enbart senaste värdet. Givare med
+  heltalsupplösning som hoppar 1–2 °C mellan rapporterna flyttar inte
+  längre förskjutningen varje intervall. Varaktiga ändringar slår igenom
+  inom ungefär en halvtimme. Ändringsloggen visar timmedlet.
+- Nytt **Semesterläge**: ange från- och till-tid, så sätts pumpens Smart Home
+  Mode till `vacation`, automatiken pausas och pumpens tidigare läge återställs
+  när tiden är slut. Perioden överlever omstart och kan avbrytas eller
+  förlängas. Ny endpoint `PUT /api/vacation` och fältet `vacation` i
+  `/api/status`.
+- Granskningsrättningar: styrningen väntar på återläst återställning efter
+  semester, gamla väljarlägen används inte som bekräftelse och pumptest
+  kan inte överlappa semester. Sparade tider visas i formuläret utan att
+  osparade datumändringar försvinner vid uppdatering.
+- Kaminens kallrumsskydd behåller aktuell rumstemperatur även när
+  rumsregeln använder timmedel. Befintliga inställningar är oförändrade;
+  semesterläget kräver att du själv sparar en period.
+
 ## 0.2.36
 
 - Ny vy **När går elpatronen?** visar elpatronens egen effekt, observerade

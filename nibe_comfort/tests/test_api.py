@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -52,6 +53,26 @@ class ApiTests(unittest.TestCase):
         except HTTPError as exc:
             with exc:
                 return exc.code, json.load(exc)
+
+    def test_vacation_endpoint_validates_and_schedules(self):
+        self.ha.integration_registry.return_value = [
+            {"entity_id": "number.offset", "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": "select.pump_smart_home_mode", "device_id": "pump", "platform": "myuplink"},
+        ]
+        self.controller.config = config()
+        self.ha.states.side_effect = lambda: fixtures() + [
+            {"entity_id": "select.pump_smart_home_mode", "state": "normal", "attributes": {"options": ["normal", "vacation"]}}]
+        self.assertEqual(self.request("/api/vacation", "PUT", {"action": "x"})[0], 400)
+        self.assertEqual(self.request("/api/vacation", "PUT", [1])[0], 400)
+        self.assertEqual(self.request("/api/vacation", "PUT", {"action": "schedule", "end": 1})[0], 400)
+        self.assertEqual(self.request("/api/vacation", "PUT", {"action": "cancel"})[0], 400)
+        self.assertEqual(self.request("/api/vacation", "PUT", {"action": "cancel"}, token=False)[0], 401)
+        end = time.time() + 3600
+        code, body = self.request("/api/vacation", "PUT", {"action": "schedule", "start": None, "end": end})
+        self.assertEqual(code, 200)
+        self.assertEqual(body["vacation"]["phase"], "scheduled")
+        self.assertEqual(self.request("/api/status")[1]["vacation"]["end"], end)
+        self.assertEqual(self.request("/api/vacation", "PUT", {"action": "cancel"}), (200, {"vacation": None}))
 
     def test_fireplace_settings_and_read_only_observation_status(self):
         cfg = config(fireplace_enabled=True, fireplace_rooms=["sensor.living"])

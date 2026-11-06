@@ -1266,8 +1266,72 @@ try {
     "The run table scrolls horizontally instead of squeezing headings into individual letters");
   await auxiliaryPage.locator("#auxiliary-section").screenshot({ path: `${artifacts}/auxiliary-mobile.png` });
   await auxiliaryPage.close();
+  const vacationPage = await browser.newPage({ viewport: { width: 390, height: 844 }, timezoneId: "Europe/Stockholm" });
+  vacationPage.on("pageerror", (error) => errors.push(error.message));
+  vacationPage.on("dialog", (dialog) => dialog.accept());
+  let vacationPlan = null, vacationWrites = [], vacationError = false;
+  const settingsWritesBeforeVacation = writes;
+  await vacationPage.route("**/api/status", (route) => route.fulfill({ json: {
+    indoor: 22, indoor_smoothed: 21.5, current_offset: 3, desired_offset: 2, next_offset: 2,
+    enabled: true, checked_at: Date.now() / 1000, rooms: [], warm_rooms: [],
+    contributions: { room: 0.5, weather: 0, price: 0 }, vacation: vacationPlan,
+  } }));
+  await vacationPage.route("**/api/vacation", (route) => {
+    const body = route.request().postDataJSON();
+    vacationWrites.push(body);
+    if (vacationError) return route.fulfill({ status: 400, json: { error: "Smart Home Mode hittades inte." } });
+    vacationPlan = body.action === "cancel" ? null : {
+      phase: vacationPlan?.phase || "scheduled", confirmed: vacationPlan?.confirmed || false,
+      start: body.start ?? vacationPlan?.start ?? now, end: body.end, error: null,
+    };
+    return route.fulfill({ json: { vacation: vacationPlan } });
+  });
+  await vacationPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await vacationPage.waitForFunction(() => document.getElementById("vacation-status").textContent === "Ingen semester planerad.");
+  assert.match(await vacationPage.locator("#explanation").textContent(), /timmedel 21,5/);
+  await vacationPage.locator("#vacation-save").click();
+  assert.match(await vacationPage.locator("#vacation-error").textContent(), /när du kommer hem/);
+  assert.equal(vacationWrites.length, 0);
+  await vacationPage.locator("#vacation-start").fill("2026-12-01T10:00");
+  await vacationPage.locator("#vacation-end").fill("2026-12-08T15:00");
+  await vacationPage.locator("#vacation-save").click();
+  await vacationPage.waitForFunction(() => document.getElementById("vacation-status").textContent.startsWith("Planerad"));
+  assert.equal(vacationWrites[0].start, Date.parse("2026-12-01T10:00:00+01:00") / 1000);
+  assert.equal(vacationWrites[0].end, Date.parse("2026-12-08T15:00:00+01:00") / 1000);
+  await vacationPage.locator("#vacation-end").fill("2026-12-09T15:00");
+  await vacationPage.evaluate(() => refreshStatus());
+  assert.equal(await vacationPage.locator("#vacation-end").inputValue(), "2026-12-09T15:00", "Polling preserves unsaved dates");
+  await vacationPage.reload();
+  await vacationPage.waitForFunction(() => document.getElementById("vacation-start").value === "2026-12-01T10:00");
+  assert.equal(await vacationPage.locator("#vacation-end").inputValue(), "2026-12-08T15:00", "Reload shows saved dates, not the discarded draft");
+  vacationPlan = { ...vacationPlan, phase: "active", confirmed: true };
+  await vacationPage.evaluate(() => refreshStatus());
+  assert.equal(await vacationPage.locator("#vacation-start").isDisabled(), true);
+  assert.equal(await vacationPage.locator("#mode").textContent(), "Semesterläge");
+  await vacationPage.locator("#vacation-end").fill("2026-12-10T15:00");
+  await vacationPage.locator("#vacation-save").click();
+  await vacationPage.waitForFunction(() => document.getElementById("vacation-status").textContent.includes("10"));
+  assert.equal(vacationWrites.at(-1).start, null, "Extending active vacation never resubmits the original start");
+  vacationPlan = { ...vacationPlan, phase: "restoring" };
+  await vacationPage.evaluate(() => refreshStatus());
+  assert.equal(await vacationPage.locator("#vacation-save").isDisabled(), true);
+  assert.match(await vacationPage.locator("#vacation-status").textContent(), /väntar på återläsning/);
+  assert.equal(await vacationPage.locator("#mode").textContent(), "Semesterläge");
+  vacationPlan = { ...vacationPlan, phase: "scheduled", confirmed: false };
+  await vacationPage.evaluate(() => refreshStatus());
+  await vacationPage.locator("#vacation-cancel").click();
+  await vacationPage.waitForFunction(() => document.getElementById("vacation-status").textContent === "Ingen semester planerad.");
+  assert.equal(await vacationPage.locator("#vacation-end").inputValue(), "");
+  vacationError = true;
+  await vacationPage.locator("#vacation-end").fill("2026-12-09T15:00");
+  await vacationPage.locator("#vacation-save").click();
+  await vacationPage.waitForFunction(() => document.getElementById("vacation-error").textContent.includes("Smart Home Mode"));
+  assert.equal(await vacationPage.locator("#vacation-end").inputValue(), "2026-12-09T15:00");
+  assert.equal(writes, settingsWritesBeforeVacation, "Vacation actions never rewrite heating settings");
+  assert.equal(await vacationPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await vacationPage.close();
   assert.deepEqual(errors, []);
-  console.log(process.env.ENERGY_ONLY ? "Energy and auxiliary UI passed: selection, runs, context, costs, errors, recovery and mobile layout."
+  console.log(process.env.ENERGY_ONLY ? "Energy, auxiliary and vacation UI passed: context, costs, dates, drafts, errors, recovery and mobile layout."
     : "Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
 } finally {
   await browser.close();

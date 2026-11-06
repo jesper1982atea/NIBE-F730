@@ -194,7 +194,8 @@ class ControllerFireplaceTests(unittest.TestCase):
             self.tick(minute, 21 + max(0, minute - 60) / 60)
         status = self.controller.snapshot()
         self.assertEqual(status["fireplace"]["phase"], "active")
-        expected = evaluate(self.cfg, self.ha.states.return_value, self.now + 125 * 60, fireplace_active=True)
+        expected = evaluate(self.cfg, self.ha.states.return_value, self.now + 125 * 60, fireplace_active=True,
+                            indoor_samples=self.controller.indoor_samples[:-1])
         self.assertEqual(status["contributions"], expected["contributions"])
         self.assertEqual(status["next_offset"], expected["next_offset"])
         self.ha.set_offset.assert_not_called()
@@ -204,6 +205,8 @@ class ControllerFireplaceTests(unittest.TestCase):
         self.assertEqual(restored.fireplace_state, self.controller.fireplace_state)
         self.assertEqual(restored.fireplace_observations(), self.controller.fireplace_observations())
 
+    # Checks the fireplace term on top of the instantaneous room rule; smoothing has its own tests.
+    @patch("controller.SMOOTHING_SECONDS", 1)
     def test_enabled_control_adds_single_bounded_reduction_to_priority_average(self):
         self.tick(0)
         self.cfg = {**self.cfg, "enabled": True, "priority_sensors": ["sensor.living"], "min_offset": -5}
@@ -241,6 +244,14 @@ class ControllerFireplaceTests(unittest.TestCase):
         self.cfg["priority_sensors"] = []
         result = evaluate(self.cfg, states, self.now, fireplace_active=True)
         self.assertEqual(result["contributions"]["fireplace"], -1, "Without priorities the selected-room average governs")
+
+    def test_smoothed_warm_history_does_not_bypass_current_cold_room_guard(self):
+        states = fixtures(self.now)
+        states[0]["state"], states[1]["state"] = "20", "20"
+        result = evaluate(self.cfg, states, self.now, fireplace_active=True,
+                          indoor_samples=[(self.now - 60 * i, 24) for i in range(1, 60)])
+        self.assertGreater(result["indoor_smoothed"], 23)
+        self.assertEqual(result["contributions"]["fireplace"], 0)
 
     def test_current_missing_readings_remove_fireplace_reduction(self):
         for minute in range(0, 126, 5):

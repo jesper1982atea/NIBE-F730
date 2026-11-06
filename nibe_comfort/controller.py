@@ -75,6 +75,13 @@ SERVICE_TIMEOUT_SECONDS = 60
 # Keep the current pump value unless the wanted offset is clearly closer to another step:
 # room sensors with 1 °C resolution otherwise make the offset hop every interval.
 HYSTERESIS_STEPS = 0.25
+# The room rule uses the mean of the last hour's per-minute control averages. Sensors that
+# report whole degrees and jump 1–2 °C between reports otherwise move the offset every interval.
+SMOOTHING_SECONDS = 3600
+VACATION_MODE = "vacation"
+VACATION_MODE_SUFFIX = "_smart_home_mode"
+VACATION_RETRY_SECONDS = 300
+VACATION_MAX_SECONDS = 366 * 86400
 
 
 class ControlError(Exception):
@@ -162,6 +169,25 @@ def validate(config):
     return result
 
 
+def validate_vacation(plan):
+    """Saved vacation plan, or None when no vacation is planned."""
+    if plan is None or plan == {}:
+        return None
+    if (not isinstance(plan, dict) or plan.get("phase") not in ("scheduled", "active", "restoring")
+            or not isinstance(plan.get("entity_id"), str) or not plan["entity_id"].startswith("select.")
+            or not plan["entity_id"].endswith(VACATION_MODE_SUFFIX)
+            or not isinstance(plan.get("confirmed"), bool)
+            or "previous" not in plan or (plan["previous"] is not None and not isinstance(plan["previous"], str))
+            or "error" not in plan or (plan["error"] is not None and not isinstance(plan["error"], str))):
+        raise ControlError("Ogiltig sparad semesterperiod.")
+    for key in ("start", "end", "attempted_at"):
+        if not isinstance(plan.get(key), (int, float)) or number(plan[key], "Semesterperiod") < 0:
+            raise ControlError("Ogiltig sparad semesterperiod.")
+    if plan["end"] < plan["start"]:
+        raise ControlError("Ogiltig sparad semesterperiod.")
+    return plan
+
+
 def atomic_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -228,6 +254,9 @@ class HomeAssistant:
 
     def set_thermostat(self, entity_id, value):
         self.request("/services/climate/set_temperature", {"entity_id": entity_id, "temperature": value}, timeout=SERVICE_TIMEOUT_SECONDS)
+
+    def set_select(self, entity_id, option):
+        self.request("/services/select/select_option", {"entity_id": entity_id, "option": option}, timeout=SERVICE_TIMEOUT_SECONDS)
 
     def integration_registry(self):
         template = (
@@ -536,12 +565,23 @@ def current_readings(config, entities, now, peers):
     return readings
 
 
-def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False):
-    """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule."""
+def smoothed_indoor(samples, now):
+    """Mean of the per-minute control averages within the window; samples are (time, value) pairs."""
+    values = [value for stamp, value in samples if now - SMOOTHING_SECONDS < stamp <= now]
+    return sum(values) / len(values) if values else None
+
+
+def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False, indoor_samples=()):
+    """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule.
+
+    indoor_samples: earlier (time, value) control averages; the room rule then uses their mean
+    together with the current reading instead of the current reading alone.
+    """
     states = {entity["entity_id"]: entity for entity in entities}
     peers = peers or {}
     get = lambda key: fresh_entity(states, key, config["max_age_minutes"], now, peers.get(key, ()))
-    indoor = indoor_temperature(config, get)
+    indoor_now = indoor_temperature(config, get)
+    indoor = smoothed_indoor([*indoor_samples, (now, indoor_now)], now)
     target_shift = max(-config["preheat_degrees"], min(config["preheat_degrees"], target_shift)) if config["preheat_enabled"] else 0.0
     error = config["target_temperature"] + target_shift - indoor
     room_adjustment = 0 if abs(error) <= config["deadband"] else error * config["room_gain"]
@@ -558,12 +598,13 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
         price = number(price_entity["state"], "Elpris")
         price_unit = price_entity.get("attributes", {}).get("unit_of_measurement", "")
         price_adjustment = price_contribution(config, price, error)
-    fireplace_adjustment = fireplace_contribution(config, indoor, fireplace_active)
+    fireplace_adjustment = fireplace_contribution(config, indoor_now, fireplace_active)
     desired = config["base_offset"] + room_adjustment + weather_adjustment + price_adjustment + fireplace_adjustment
     requested = desired
     desired = max(config["min_offset"], min(config["max_offset"], desired))
     result = {
-        "indoor": round(indoor, 2), "outdoor": outdoor, "price": price,
+        "indoor": round(indoor, 2), "indoor_smoothed": round(indoor, 2), "indoor_now": indoor_now,
+        "outdoor": outdoor, "price": price,
         "price_unit": price_unit, "error": round(error, 2), "target_shift": round(target_shift, 2),
         "contributions": {"room": round(room_adjustment, 2), "weather": round(weather_adjustment, 2),
                           "price": price_adjustment, "fireplace": fireplace_adjustment},
@@ -694,6 +735,9 @@ class Controller:
         self.events.add("startup", "Tillägget startat. Återläser värden; väntetid räknas från senaste sparade styrförsök.", settings=self.config)
         self.status = {"message": "Väntar på första avläsningen.", "error_message": None}
         self.peer_cache = (0, {})
+        # Recent control averages for smoothing; in memory only, so a restart starts from the current reading.
+        self.indoor_rooms = ()
+        self.indoor_samples = []
         self.data_dir = str(data_dir)
         # Set by the web layer: callable(config) -> {"windows": [...]} for price-based pre-heating.
         self.preheat_provider = None
@@ -715,6 +759,8 @@ class Controller:
                 state["attempted_at"] = number(state["attempted_at"], "Senaste termostatförsök")
                 if state["attempted_at"] < 0:
                     raise ControlError("Ogiltig tid för senaste termostatförsök.")
+        self.vacation_path = Path(data_dir) / "vacation-state.json"
+        self.vacation = validate_vacation(json.loads(self.vacation_path.read_text())) if self.vacation_path.exists() else None
 
     def peers(self):
         """Same-device entities per entity, refreshed every 5 minutes."""
@@ -730,7 +776,7 @@ class Controller:
         return copy.deepcopy(self.config)
 
     def snapshot(self):
-        return copy.deepcopy(self.status)
+        return {**copy.deepcopy(self.status), "vacation": copy.deepcopy(self.vacation)}
 
     def fireplace_observations(self):
         return fireplace_intervals(self.fireplace_state)
@@ -751,6 +797,8 @@ class Controller:
     def save(self, config):
         config = validate(config)
         with self.lock:
+            if self.vacation and config["offset_entity"] != self.config["offset_entity"]:
+                raise ControlError("Avsluta semesterperioden och invänta återställning innan du byter pumpanslutning.")
             if config["enabled"]:
                 entities = self.ha.states()
                 peers = self.peers()
@@ -930,6 +978,150 @@ class Controller:
             self.preheat_kind = result["kind"]
         return result
 
+    def store_vacation(self, plan):
+        # Replaced, never edited in place: snapshot() reads it without the lock.
+        atomic_json(self.vacation_path, plan or {})
+        self.vacation = plan
+
+    def vacation_entity(self):
+        """The pump's Smart Home Mode selector: on the same device as the offset, with a vacation option."""
+        offset = self.config["offset_entity"]
+        if not offset:
+            raise ControlError("Ingen kurvförskjutning är vald. Välj din pump under Inställningar först.")
+        selectors = [key for key in self.peers().get(offset, ())
+                     if key.startswith("select.") and key.endswith(VACATION_MODE_SUFFIX)]
+        if len(selectors) != 1:
+            raise ControlError("Pumpens Smart Home Mode hittades inte entydigt i Home Assistant.")
+        entity = next((e for e in self.ha.states() if e["entity_id"] == selectors[0]), None)
+        if not entity or VACATION_MODE not in entity["attributes"].get("options", ()):
+            raise ControlError("Pumpens semesterläge är inte tillgängligt just nu. Försök igen om en stund.")
+        return selectors[0]
+
+    def schedule_vacation(self, start, end):
+        """Plan a vacation. A running vacation keeps its start; only the end moves."""
+        with self.lock:
+            if self.test and self.test["phase"] in ("running", "restoring"):
+                raise ControlError("Avsluta pumptestet och invänta återställning innan du planerar semester.")
+            now = time.time()
+            plan = self.vacation
+            start = now if start is None else max(now, number(start, "Starttid"))
+            end = number(end, "Sluttid")
+            if plan and plan["phase"] == "restoring":
+                raise ControlError("Semesterläget håller på att avslutas. Försök igen om en stund.")
+            active = bool(plan and plan["phase"] == "active")
+            if active:
+                start = plan["start"]
+            if end <= max(now, start):
+                raise ControlError("Sluttiden måste ligga efter starttiden och framåt i tiden.")
+            if end - now > VACATION_MAX_SECONDS:
+                raise ControlError("Semesterperioden måste sluta inom ett år.")
+            if active:
+                plan = {**plan, "end": end}
+            else:
+                plan = {"phase": "scheduled", "entity_id": self.vacation_entity(), "start": start, "end": end,
+                        "previous": None, "confirmed": False, "attempted_at": 0, "error": None}
+            self.store_vacation(plan)
+            self.events.add("vacation_scheduled", "Semesterperiod sparad.", start=plan["start"], end=end)
+            return copy.deepcopy(plan)
+
+    def cancel_vacation(self):
+        with self.lock:
+            plan = self.vacation
+            if not plan or plan["phase"] == "restoring":
+                raise ControlError("Ingen semesterperiod att avbryta.")
+            if plan["phase"] == "scheduled":
+                self.store_vacation(None)
+                self.events.add("vacation_cancelled", "Planerad semesterperiod borttagen.")
+                return None
+            # The next tick restores the pump, the same way as at the planned end.
+            plan = {**plan, "end": time.time()}
+            self.store_vacation(plan)
+            self.events.add("vacation_cancelled", "Semesterläget avbryts; pumpen återställs vid nästa avläsning.")
+            return copy.deepcopy(plan)
+
+    def vacation_paused(self):
+        """Comfort control only yields once the pump has really confirmed vacation mode."""
+        plan = self.vacation
+        return bool(plan and (plan["phase"] == "restoring" or plan["confirmed"]))
+
+    def vacation_write(self, plan, option, now):
+        if now - plan["attempted_at"] < VACATION_RETRY_SECONDS:
+            return
+        retry = plan["attempted_at"] > 0
+        plan = {**plan, "attempted_at": now}
+        self.store_vacation(plan)
+        try:
+            self.ha.set_select(plan["entity_id"], option)
+        except ControlError as exc:
+            # The cloud write may still land: read back and retry instead of giving up.
+            if plan["error"] != str(exc):
+                self.events.add("vacation_failed", "Pumpens läge kunde inte ändras; försöker igen.",
+                                entity_id=plan["entity_id"], value=option, error=str(exc))
+            self.store_vacation({**plan, "error": str(exc)})
+            return
+        self.store_vacation({**plan, "error": "Pumpen har inte bekräftat ändringen ännu; försöker igen." if retry else None})
+
+    def vacation_step(self, entities, now):
+        """Follow the vacation plan. Runs before evaluate so failing room sensors cannot block the restore."""
+        plan = self.vacation
+        if not plan:
+            return
+        states = {e["entity_id"]: e for e in entities}
+        try:
+            entity = fresh_entity(states, plan["entity_id"], self.config["max_age_minutes"], now,
+                                  self.peers().get(plan["entity_id"], ()))
+            mode = entity["state"]
+        except ControlError as exc:
+            mode = None
+            if plan["error"] != str(exc):
+                plan = {**plan, "error": str(exc)}
+                self.store_vacation(plan)
+        if plan["phase"] == "scheduled":
+            if now >= plan["end"]:
+                self.store_vacation(None)
+                self.events.add("vacation_missed", "Semesterperioden passerade utan att den kunde startas.")
+                return
+            if now < plan["start"] or mode is None:
+                return
+            if self.test and self.test["phase"] in ("running", "restoring"):
+                self.store_vacation({**plan, "error": "Väntar tills pumptestet är återställt."})
+                return
+            if VACATION_MODE not in entity["attributes"].get("options", ()):
+                self.store_vacation({**plan, "error": "Pumpen erbjuder inte semesterläge just nu."})
+                return
+            plan = {**plan, "phase": "active", "previous": None if mode == VACATION_MODE else mode}
+            self.store_vacation(plan)
+            self.events.add("vacation_started", "Semesterperioden börjar.", entity_id=plan["entity_id"], previous=mode)
+        if plan["phase"] == "active":
+            if now < plan["end"]:
+                if mode == VACATION_MODE and not plan["confirmed"]:
+                    self.store_vacation({**plan, "confirmed": True, "error": None})
+                    self.events.add("vacation_confirmed", "Semesterläge återläst från pumpen. Automatiken pausas tills perioden är slut.")
+                elif mode is not None and not plan["confirmed"]:
+                    self.vacation_write(plan, VACATION_MODE, now)
+                elif mode is not None and plan["error"]:
+                    self.store_vacation({**plan, "error": None})
+                return
+            plan = {**plan, "phase": "restoring", "attempted_at": 0, "error": None}
+            self.store_vacation(plan)
+            self.events.add("vacation_ended", "Semesterperioden är slut. Inväntar återställning före vanlig styrning.",
+                            previous=plan["previous"])
+        if mode is None:
+            return
+        previous = plan["previous"]
+        if mode == VACATION_MODE and previous is not None:
+            if previous not in entity["attributes"].get("options", ()):
+                self.store_vacation({**plan, "error": "Pumpens tidigare läge kan inte väljas just nu. Kontrollera pumpen."})
+                return
+            self.vacation_write(plan, previous, now)
+            return
+        self.store_vacation(None)
+        self.events.add("vacation_done", (
+            "Pumpen stod redan i semesterläge vid starten och lämnades orörd." if previous is None else
+            "Pumpens läge är återställt." if mode == previous else
+            "Pumpens läge ändrades av något annat och lämnades orört."
+        ), previous=previous, observed=mode)
+
     def save_test(self):
         atomic_json(self.test_path, self.test or {})
 
@@ -959,6 +1151,8 @@ class Controller:
     def start_test(self):
         """Move the offset one step for TEST_SECONDS so the user can see the pump react, then restore it."""
         with self.lock:
+            if self.vacation:
+                raise ControlError("Avsluta semesterperioden och invänta återställning innan du startar ett pumptest.")
             if self.test and self.test["phase"] in ("running", "restoring"):
                 raise ControlError("Ett test pågår redan.")
             if self.pending:
@@ -1061,6 +1255,7 @@ class Controller:
             try:
                 entities = self.ha.states()
                 now = time.time()
+                self.vacation_step(entities, now)
                 peers = self.peers()
                 readings = current_readings(self.config, entities, now, peers)
                 fireplace = self.fireplace_step(entities, now, peers)
@@ -1074,10 +1269,18 @@ class Controller:
                     except ControlError as exc:
                         schedule = {"error": str(exc)}
                 preheat = self.preheat(now, schedule)
+                rooms = tuple(control_rooms(self.config))
+                if rooms != self.indoor_rooms:
+                    self.indoor_rooms, self.indoor_samples = rooms, []
+                self.indoor_samples = [(t, v) for t, v in self.indoor_samples if now - SMOOTHING_SECONDS < t < now]
                 result = evaluate(self.config, entities, now, peers, preheat["shift"],
-                                  fireplace_active=fireplace["phase"] == "active")
+                                  fireplace_active=fireplace["phase"] == "active", indoor_samples=self.indoor_samples)
+                self.indoor_samples.append((now, result.pop("indoor_now")))
                 result["preheat"] = preheat
                 result.update(readings)
+                vacation = self.vacation_paused()
+                if vacation and result["writable"]:
+                    result["next_offset"] = result["current_offset"]
                 fireplace["contribution"] = result["contributions"]["fireplace"]
                 fireplace["control_note"] = (
                     "Extra kaminbidrag −1 steg i beräknad kurvförskjutning. Vanliga intervall, steg och gränser gäller."
@@ -1102,9 +1305,11 @@ class Controller:
                 testing = bool(self.test and self.test["phase"] in ("running", "restoring"))
                 self.status = {**copy.deepcopy(result), "message": "Avläst. Kontrollerar styrning och återläsning.",
                                "control_in_progress": True}
-                result["thermostat_control"] = self.thermostat_step(entities, now, peers, testing)
+                result["thermostat_control"] = self.thermostat_step(entities, now, peers, testing or vacation)
                 if testing:
                     result["message"] = "Test av styrningen pågår: automatiken väntar tills testet är klart."
+                elif vacation:
+                    result["message"] = "Semesterläge: pumpen sköter värmen och automatiken väntar tills perioden är slut."
                 elif self.config["enabled"]:
                     result["message"] = "Ingen ändring behövs."
                     if result["control_limit"]:
@@ -1121,7 +1326,8 @@ class Controller:
                                 "write_attempt", "Automatiken begär ändrad kurvförskjutning.",
                                 entity_id=self.config["offset_entity"], previous=result["current_offset"],
                                 value=result["next_offset"], target_temperature=self.config["target_temperature"],
-                                indoor=result["indoor"], outdoor=result["outdoor"], price=result["price"],
+                                indoor=result["indoor"], indoor_smoothed=result["indoor_smoothed"],
+                                outdoor=result["outdoor"], price=result["price"],
                                 price_unit=next((e["attributes"].get("unit_of_measurement") for e in entities
                                                  if e["entity_id"] == self.config["price_entity"]), None),
                                 contributions=result["contributions"], desired_offset=result["desired_offset"],
