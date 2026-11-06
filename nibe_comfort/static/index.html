@@ -149,20 +149,42 @@
       <ul id="learn-windows" class="plan-changes"></ul>
     </section>
 
-    <section class="card dashboard" id="vacation-card">
-      <span class="section-number">BORTREST</span>
-      <h2>Semesterläge</h2>
-      <p id="vacation-status" role="status">Hämtar semesterläge…</p>
-      <p class="section-intro">Under perioden sätts pumpens eget semesterläge och automatiken här pausas efter återläsning. När tiden är slut återställs pumpens tidigare läge; automatiken väntar tills återställningen är bekräftad. Vad semesterläget gör med värme, varmvatten och ventilation bestäms av pumpens egna inställningar. Kontrollera funktionen på din pump innan du förlitar dig på den under en resa.</p>
-      <div class="vacation-times">
-        <label>Från · tomt betyder nu<input type="datetime-local" id="vacation-start"></label>
-        <label>Till<input type="datetime-local" id="vacation-end"></label>
+    <section class="card dashboard" id="vacation-card" data-phase="none">
+      <div class="vacation-head">
+        <div class="vacation-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="3"/><path d="M8 7V5.5A1.5 1.5 0 0 1 9.5 4h5A1.5 1.5 0 0 1 16 5.5V7M3 12h18M10 12v2h4v-2"/></svg></div>
+        <div>
+          <span class="section-number">BORTREST</span>
+          <h2>Semesterläge</h2>
+        </div>
+        <span id="vacation-pill" class="vacation-pill">Hämtar…</span>
       </div>
-      <div class="learn-controls">
+      <div class="vacation-banner">
+        <p id="vacation-status" role="status">Hämtar semesterläge…</p>
+        <div id="vacation-timeline" class="vacation-timeline" hidden>
+          <div class="vacation-ends"><span><small>Åker</small><strong id="vacation-from-label"></strong></span><span id="vacation-length" class="vacation-length"></span><span><small>Hem</small><strong id="vacation-to-label"></strong></span></div>
+          <div class="vacation-track"><i id="vacation-progress"></i></div>
+        </div>
+      </div>
+      <div class="vacation-times">
+        <label><span>Åker</span><input type="datetime-local" id="vacation-start"><small id="vacation-start-hint">Tomt betyder nu</small></label>
+        <span class="vacation-arrow" aria-hidden="true">→</span>
+        <label><span>Kommer hem</span><input type="datetime-local" id="vacation-end"><small id="vacation-duration">Välj hemkomst</small></label>
+      </div>
+      <div id="vacation-presets" class="vacation-presets" role="group" aria-label="Snabbval för hemkomst">
+        <span>Snabbval:</span>
+        <button type="button" class="chip" data-days="2">Helg</button>
+        <button type="button" class="chip" data-days="7">1 vecka</button>
+        <button type="button" class="chip" data-days="14">2 veckor</button>
+      </div>
+      <div class="vacation-actions">
         <button type="button" id="vacation-save">Spara semester</button>
         <button type="button" id="vacation-cancel" class="secondary" hidden>Avbryt semester</button>
       </div>
       <p id="vacation-error" class="hint warning" role="status" hidden></p>
+      <details class="disclosure"><summary>Så fungerar semesterläget</summary>
+        <p>Under perioden sätts pumpens eget semesterläge och automatiken här pausas efter återläsning. När tiden är slut återställs pumpens tidigare läge; automatiken väntar tills återställningen är bekräftad.</p>
+        <p>Vad semesterläget gör med värme, varmvatten och ventilation bestäms av pumpens egna inställningar. Kontrollera funktionen på din pump innan du förlitar dig på den under en resa.</p>
+      </details>
     </section>
 
     <section class="card dashboard" id="fireplace-card">

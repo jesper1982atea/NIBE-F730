@@ -536,6 +536,7 @@ function displayNumber(value) {
 let statusBusy = false;
 
 const vacationTime = (time) => new Date(time * 1000).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" });
+const vacationDay = (time) => new Date(time * 1000).toLocaleString("sv-SE", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 let vacationBusy = false;
 let vacationDraft = false;
 let vacationRendered;
@@ -561,11 +562,62 @@ function renderVacation() {
   $("vacation-cancel").hidden = !plan || phase === "restoring";
   $("vacation-cancel").disabled = vacationBusy;
   $("vacation-start").disabled = phase === "active" || phase === "restoring";
+  const state = !lastStatus ? "unknown" : !plan ? "none" : phase === "active" && !plan.confirmed ? "starting" : phase;
+  $("vacation-card").dataset.phase = state;
+  $("vacation-pill").textContent = { unknown: "Okänt", none: "Ingen planerad", scheduled: "Planerad",
+    starting: "Startar", active: "Pågår", restoring: "Återställer" }[state] || "Okänt";
+  $("vacation-timeline").hidden = !plan;
+  if (plan) {
+    const now = Date.now() / 1000;
+    $("vacation-from-label").textContent = vacationDay(plan.start);
+    $("vacation-to-label").textContent = vacationDay(plan.end);
+    $("vacation-length").textContent = phase === "active" && now > plan.start
+      ? `${vacationLength(plan.end - now)} kvar` : vacationLength(plan.end - plan.start);
+    const done = plan.end > plan.start ? (now - plan.start) / (plan.end - plan.start) : 1;
+    $("vacation-progress").style.width = `${Math.round(Math.min(1, Math.max(0, done)) * 100)}%`;
+  }
+  $("vacation-presets").hidden = phase === "restoring";
+  $("vacation-start-hint").textContent = phase === "active" || phase === "restoring" ? "Semestern har börjat" : "Tomt betyder nu";
   if (lastStatus && !vacationDraft && JSON.stringify(plan) !== vacationRendered) {
     $("vacation-start").value = plan ? vacationInputTime(plan.start) : "";
     $("vacation-end").value = plan ? vacationInputTime(plan.end) : "";
     vacationRendered = JSON.stringify(plan);
   }
+  renderVacationDuration();
+}
+
+function vacationLength(seconds) {
+  const hours = Math.max(0, Math.round(seconds / 3600));
+  const days = Math.floor(hours / 24);
+  const rest = hours % 24;
+  if (!days) return `${rest} h`;
+  return `${days} dygn${rest ? ` ${rest} h` : ""}`;
+}
+
+function vacationDraftStart() {
+  const plan = lastStatus?.vacation;
+  if (plan?.phase === "active") return plan.start;
+  const value = $("vacation-start").value;
+  const stamp = value ? new Date(value).getTime() / 1000 : Date.now() / 1000;
+  return Number.isFinite(stamp) ? stamp : null;
+}
+
+function renderVacationDuration() {
+  const end = $("vacation-end").value ? new Date($("vacation-end").value).getTime() / 1000 : null;
+  const start = vacationDraftStart();
+  $("vacation-duration").textContent = end === null || !Number.isFinite(end) ? "Välj hemkomst"
+    : start === null || end <= start ? "Hemkomsten måste vara efter avresan"
+    : `Borta ${vacationLength(end - start)}`;
+}
+
+function vacationPreset(days) {
+  const start = vacationDraftStart() ?? Date.now() / 1000;
+  const end = new Date((start + days * 86400) * 1000);
+  end.setMinutes(0, 0, 0);
+  if (end.getTime() / 1000 <= start) end.setHours(end.getHours() + 1);
+  $("vacation-end").value = vacationInputTime(end.getTime() / 1000);
+  vacationDraft = true;
+  renderVacationDuration();
 }
 
 async function vacationAction(body) {
@@ -2056,7 +2108,8 @@ async function init() {
   $("test-stop").addEventListener("click", () => void testAction("stop"));
   $("older-events").addEventListener("click", () => void refreshEvents(true));
   $("vacation-save").addEventListener("click", saveVacation);
-  for (const id of ["vacation-start", "vacation-end"]) $(id).addEventListener("input", () => { vacationDraft = true; });
+  for (const id of ["vacation-start", "vacation-end"]) $(id).addEventListener("input", () => { vacationDraft = true; renderVacationDuration(); });
+  for (const chip of document.querySelectorAll("#vacation-presets [data-days]")) chip.addEventListener("click", () => vacationPreset(Number(chip.dataset.days)));
   $("vacation-cancel").addEventListener("click", () => void vacationAction({ action: "cancel" }));
   await refreshStatus();
   void showVersion();
