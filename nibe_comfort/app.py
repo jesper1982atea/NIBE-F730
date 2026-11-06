@@ -193,6 +193,25 @@ def handler_for(controller, api_token=None, insights=None):
                     LOG.exception("Kunde inte spara testläget")
                     self.respond(500, {"error": "Testläget kunde inte sparas på disk."})
                 return
+            if path == "/api/vacation":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(length)) if 0 < length <= 1024 else {}
+                    action = body.get("action")
+                    if action == "schedule":
+                        plan = controller.schedule_vacation(body.get("start"), body.get("end"))
+                    elif action == "cancel":
+                        plan = controller.cancel_vacation()
+                    else:
+                        self.respond(400, {"error": "action måste vara schedule eller cancel."})
+                        return
+                    self.respond(200, {"vacation": plan})
+                except (ValueError, AttributeError, ControlError) as exc:
+                    self.respond(400, {"error": str(exc) or "Ogiltig begäran."})
+                except (OSError, sqlite3.Error):
+                    LOG.exception("Kunde inte spara semesterperioden")
+                    self.respond(500, {"error": "Semesterperioden kunde inte sparas på disk."})
+                return
             if path != "/api/settings":
                 self.respond(404, {"error": "Sökvägen finns inte."})
                 return

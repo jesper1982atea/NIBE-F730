@@ -953,10 +953,32 @@ Loggen innehåller inga åtkomsttoken men innehåller valda entiteter och
 styrinställningar. Den har ingen automatisk gallring: äldre poster kan läsas
 med paginering i UI/API. Övervaka tilläggets diskutrymme vid långvarig användning.
 
+## Semesterläge
+
+Under **Semesterläge** anger du när du reser och när du kommer hem. Lämnar
+du Från tomt börjar perioden direkt. Perioden sparas och överlever omstart.
+
+- Vid starten läses pumpens Smart Home Mode (myUplink), läget sparas och
+  pumpen sätts i `vacation`. Väljaren hittas på samma enhet som
+  kurvförskjutningen. Finns ingen sådan väljare går perioden inte att spara.
+- Automatiken pausas först när pumpen läst tillbaka `vacation`. Går det inte
+  att sätta läget fortsätter vanlig styrning och nytt försök görs var femte
+  minut, med felet synligt i rutan.
+- Vid sluttiden fortsätter automatiken och pumpens tidigare läge sätts
+  tillbaka. Var tillägget avstängt görs det vid nästa start. Har någon annan
+  ändrat läget under perioden lämnas det orört.
+- Avbryt semester återställer direkt. Under pågående semester går sluttiden
+  att ändra.
+
+Läget ändras även om huvudautomatiken står på övervakning, eftersom du själv
+har bett om det. Kurvförskjutningen ligger kvar på sitt senaste värde under
+perioden. Vad `vacation` gör med värme, varmvatten och ventilation bestäms av
+pumpens egna inställningar. Tillägget sätter bara läget.
+
 ## Begränsningar
 
 Första versionen stöder ett klimatsystem och ett gemensamt rumsmål.
-Den styr inte zonventiler, varmvatten, ventilation, semesterläge eller
+Den styr inte zonventiler, varmvatten, ventilation eller
 kompressorn direkt. Den är inte verifierad mot just din F730 förrän du
 har provat den med din installation. Kontrollera NIBEs rekommendationer
 för ditt hus och värmesystem innan automatisk styrning aktiveras.

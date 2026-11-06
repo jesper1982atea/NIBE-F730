@@ -535,6 +535,50 @@ function displayNumber(value) {
 
 let statusBusy = false;
 
+const vacationTime = (time) => new Date(time * 1000).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" });
+
+function renderVacation() {
+  const plan = lastStatus?.vacation || null;
+  const phase = plan?.phase;
+  $("vacation-status").textContent = !lastStatus ? "Semesterläget kan inte läsas just nu."
+    : !plan ? "Ingen semester planerad."
+    : phase === "scheduled" ? `Planerad ${vacationTime(plan.start)} till ${vacationTime(plan.end)}.`
+    : phase === "restoring" ? "Semestern är slut. Återställer pumpens läge."
+    : plan.confirmed ? `Semesterläge på till ${vacationTime(plan.end)}. Automatiken väntar.`
+    : `Sätter pumpen i semesterläge, till ${vacationTime(plan.end)}. Automatiken fortsätter tills pumpen bekräftat.`;
+  $("vacation-error").textContent = plan?.error || "";
+  $("vacation-error").hidden = !plan?.error;
+  $("vacation-save").textContent = phase === "active" ? "Ändra sluttid" : "Spara semester";
+  $("vacation-save").disabled = phase === "restoring";
+  $("vacation-cancel").hidden = !plan || phase === "restoring";
+  $("vacation-start").disabled = phase === "active";
+}
+
+async function vacationAction(body) {
+  try {
+    const { vacation } = await api("vacation", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    if (lastStatus) lastStatus.vacation = vacation;
+    renderVacation();
+    void refreshDashboard();
+  } catch (error) {
+    $("vacation-error").textContent = error.message;
+    $("vacation-error").hidden = false;
+  }
+}
+
+function saveVacation() {
+  const seconds = (id) => $(id).value ? new Date($(id).value).getTime() / 1000 : null;
+  const end = seconds("vacation-end");
+  if (end === null) {
+    $("vacation-error").textContent = "Ange när du kommer hem.";
+    $("vacation-error").hidden = false;
+    return;
+  }
+  void vacationAction({ action: "schedule", start: seconds("vacation-start"), end });
+}
+
 async function refreshStatus() {
   if (statusBusy) { pendingRefreshes.add("status"); return; }
   statusBusy = true;
@@ -551,10 +595,12 @@ async function refreshStatus() {
         error: "Avläsningen är inte aktuell.", thermostat_error: "Avläsningen är inte aktuell." })),
     } : response;
     if (typeof state.enabled === "boolean") {
-      $("mode").textContent = state.enabled ? "Automatik aktiverad" : "Övervakning";
-      $("mode").classList.toggle("active", state.enabled);
+      const away = state.vacation?.phase === "active" && state.vacation.confirmed;
+      $("mode").textContent = away ? "Semesterläge" : state.enabled ? "Automatik aktiverad" : "Övervakning";
+      $("mode").classList.toggle("active", state.enabled && !away);
     }
     lastStatus = state;
+    renderVacation();
     renderFireplace();
     renderRoomImpact();
     $("indoor").textContent = displayNumber(state.indoor);
@@ -590,6 +636,7 @@ async function refreshStatus() {
     $("status-title").textContent = "Kontakt med tillägget saknas";
     $("status-message").textContent = error.message;
     lastStatus = null;
+    renderVacation();
     renderFireplace();
     renderRoomImpact();
     for (const id of ["indoor", "outdoor-now", "current-offset", "hero-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
@@ -1976,6 +2023,8 @@ async function init() {
   $("test-start").addEventListener("click", () => void testAction("start"));
   $("test-stop").addEventListener("click", () => void testAction("stop"));
   $("older-events").addEventListener("click", () => void refreshEvents(true));
+  $("vacation-save").addEventListener("click", saveVacation);
+  $("vacation-cancel").addEventListener("click", () => void vacationAction({ action: "cancel" }));
   await refreshStatus();
   void showVersion();
   void refreshTest();
