@@ -312,3 +312,22 @@ button.chip:hover{border-color:var(--tone);color:var(--tone);filter:none}
 #comfort-card .room-advice-list>li{margin:0}
 #auxiliary-current:not(:empty){margin:16px 0 12px;padding:14px 16px;border-radius:16px;color:var(--ink);font-weight:550;background:color-mix(in srgb,var(--tone) 9%,var(--soft));border:1px solid color-mix(in srgb,var(--tone) 22%,transparent)}
 #auxiliary-status{font-size:12px}
+
+/* One colour language: every icon tile in the brand green (status colours live in the pills), planned changes in the shared blue, tidier mobile heads */
+.feature-icon,.icon-flame,.icon-house,.icon-pump,.icon-thermo,.icon-bolt{color:var(--green);background:color-mix(in srgb,var(--green) 13%,var(--paper));border:1px solid color-mix(in srgb,var(--green) 18%,transparent);box-shadow:none}
+.plan-changes li.planned{border-color:#4269bb}
+.key.planned{color:#4269bb}
+.chart-event.planned line{stroke:#4269bb}
+.chart-event.planned rect{fill:#e9eef8;stroke:#4269bb}
+.chart-event.planned text{fill:#2d4a86}
+:root[data-theme=dark] .plan-changes li.planned{border-color:#7ea2ef}
+:root[data-theme=dark] .key.planned{color:#9db9f3}
+:root[data-theme=dark] .chart-event.planned line{stroke:#7ea2ef}
+:root[data-theme=dark] .chart-event.planned rect{fill:#1d2840;stroke:#7ea2ef}
+:root[data-theme=dark] .chart-event.planned text{fill:#cddbfa}
+.feature-timeline li:before{border-color:var(--tone,var(--green))}
+.fold>summary .section-number{justify-self:start}
+@media(max-width:600px){
+  .feature-head>.feature-pill{margin-left:56px}
+  .feature-head>.feature-pill+button{margin-left:auto}
+}
