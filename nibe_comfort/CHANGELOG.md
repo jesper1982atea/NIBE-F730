@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## 0.2.38
+
+- Elpatronvyn räknar en effektgivare som står still som giltig (#37).
+  myUplink rapporterar bara när värdet ändras, så en avstängd elpatron gav
+  en enda historikrad och visades som okänd med 0 av 24 timmar täckta.
+  Nu gäller registrerade 0 kW fram till nästa tillstånd eller periodens slut.
+  Okända, otillgängliga och ogiltiga värden bryter perioden; saknad historik
+  fylls inte med nollor.
+- Effekter över noll behåller gränsen på 15 minuter mellan rapporter och
+  extrapoleras inte efter sista avläsningen. Pumpens totala elmätning och
+  temperaturstyrning är oförändrade. Rättningen bygger på Peters förslag
+  och är avgränsad till issue #37.
+
 ## 0.2.37
 
 - Rumsregeln använder medelvärdet av den senaste timmens avläsningar av

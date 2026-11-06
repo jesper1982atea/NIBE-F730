@@ -645,9 +645,18 @@ Periodgränser och dataluckor kan ge okänd början/slut. Antalet perioder
 avser enbart den täckta delen.
 
 Samma W/kW-integrering och historiska prisberäkning används som för
-pumpens el: föregående effekt gäller fram till nästa rapport, med högst
-15 minuter mellan rapporterna. Ingen extrapolering efter sista rapporten
-eller över dataluckor. Kostnad visas per period med full eller partiell
+pumpens el, men med ett undantag för avstängd elpatron:
+registrerade 0 kW gäller fram till nästa tillstånd eller periodens slut.
+HA:s historik inkluderar tillståndet vid periodens början som standard,
+så en givare som bara rapporterar ändringar kan ha en enda rad för hela
+dygnet. Den visar då 0 perioder, 0 min och 0 kWh samt 0 kr när
+prishistorik finns. Över noll gäller fortfarande högst 15 minuter mellan
+rapporterna och ingen extrapolering efter sista avläsningen.
+Otillgängliga, okända eller ogiltiga värden bryter nollperioden; saknat
+starttillstånd fylls inte i. Ett avbrott som integrationen aldrig
+registrerar som otillgängligt kan inte upptäckas ur denna historik.
+Aktuell status kontrolleras separat och kan därför vara okänd trots
+historiskt registrerade nollor. Kostnad visas per period med full eller partiell
 pristäckning; saknade priser betyder inte gratis el. Varken dagens pris
 eller en annan elpriskälla används som reserv.
 

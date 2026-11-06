@@ -152,11 +152,22 @@ def price_intervals(price_rows, price_id, end, price_max_age):
     return price_segments, currency, price_error
 
 
-def usage_intervals(meter, start, end, power=False):
+def usage_intervals(meter, start, end, power=False, hold_zero=False):
+    """Intervals with a known rate, and how many were skipped.
+
+    Auxiliary power can retain a recorded zero until its next state change or
+    ``end``. Unknown/unavailable rows break that hold. Non-zero power keeps the
+    normal gap limit and is never extrapolated after its last report.
+    """
+    if power and hold_zero and meter and meter[-1][0] < end and meter[-1][1] == 0:
+        meter = [*meter, (end, None)]
     intervals = []
     skipped = 0
     for (left, previous), (right, current) in zip(meter, meter[1:]):
         if right <= start or left >= end:
+            continue
+        if power and hold_zero and previous == 0:
+            intervals.append((max(start, left), min(end, right), 0.0))
             continue
         delta = None
         if current is not None and previous is not None:
@@ -169,14 +180,14 @@ def usage_intervals(meter, start, end, power=False):
     return intervals, skipped
 
 
-def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, price_max_age, power=False):
+def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, price_max_age, power=False, hold_zero=False):
     meter, _ = samples(meter_rows, meter_id, power=power)
     price_segments, currency, price_error = price_intervals(price_rows, price_id, end, price_max_age)
     hours = [{
         "start": stamp, "end": min(end, stamp + 3600), "measured_kwh": 0.0,
         "priced_kwh": 0.0, "partial_cost": 0.0, "coverage_seconds": 0.0, "priced_seconds": 0.0,
     } for stamp in range(int(start), int(end), 3600)]
-    intervals, skipped = usage_intervals(meter, start, end, power)
+    intervals, skipped = usage_intervals(meter, start, end, power, hold_zero)
     price_starts = [segment[0] for segment in price_segments]
     for left, right, rate in intervals:
         for hour in hours:

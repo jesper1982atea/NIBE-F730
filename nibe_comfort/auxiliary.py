@@ -60,9 +60,10 @@ def context_at(points, stamp):
 
 
 def heater_report(rows, price_rows, power_id, price_id, contexts, start, end, price_max_age):
-    report = consumption_report(rows, price_rows, power_id, price_id, start, end, price_max_age, power=True)
+    report = consumption_report(rows, price_rows, power_id, price_id, start, end, price_max_age,
+                                power=True, hold_zero=True)
     readings, _ = samples(rows, power_id, power=True)
-    intervals, _ = usage_intervals(readings, start, end, power=True)
+    intervals, _ = usage_intervals(readings, start, end, power=True, hold_zero=True)
     prices, _, _ = price_intervals(price_rows, price_id, end, price_max_age)
     context_points = {key: context_history(group) for key, group in contexts.items()}
     runs = []
