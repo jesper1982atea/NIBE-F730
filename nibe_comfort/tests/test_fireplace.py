@@ -302,7 +302,7 @@ class ControllerFireplaceTests(unittest.TestCase):
 
     def test_fireplace_age_is_capped_and_unavailable_is_never_accepted(self):
         self.controller.config = {**self.cfg, "fireplace_max_age_minutes": 1440, "max_age_minutes": 20}
-        now = self.now + HOUR
+        now = int(self.now) + HOUR
         states = [
             entity("sensor.living", 21, now - 21 * 60, unit_of_measurement="°C"),
             entity("sensor.bedroom", 21, now, unit_of_measurement="°C"),
