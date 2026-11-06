@@ -171,13 +171,20 @@ def validate(config):
 
 def validate_vacation(plan):
     """Saved vacation plan, or None when no vacation is planned."""
-    if not plan:
+    if plan is None or plan == {}:
         return None
     if (not isinstance(plan, dict) or plan.get("phase") not in ("scheduled", "active", "restoring")
-            or not isinstance(plan.get("entity_id"), str) or not isinstance(plan.get("confirmed"), bool)):
+            or not isinstance(plan.get("entity_id"), str) or not plan["entity_id"].startswith("select.")
+            or not plan["entity_id"].endswith(VACATION_MODE_SUFFIX)
+            or not isinstance(plan.get("confirmed"), bool)
+            or "previous" not in plan or (plan["previous"] is not None and not isinstance(plan["previous"], str))
+            or "error" not in plan or (plan["error"] is not None and not isinstance(plan["error"], str))):
         raise ControlError("Ogiltig sparad semesterperiod.")
     for key in ("start", "end", "attempted_at"):
-        number(plan.get(key), "Semesterperiod")
+        if not isinstance(plan.get(key), (int, float)) or number(plan[key], "Semesterperiod") < 0:
+            raise ControlError("Ogiltig sparad semesterperiod.")
+    if plan["end"] < plan["start"]:
+        raise ControlError("Ogiltig sparad semesterperiod.")
     return plan
 
 
@@ -591,7 +598,7 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
         price = number(price_entity["state"], "Elpris")
         price_unit = price_entity.get("attributes", {}).get("unit_of_measurement", "")
         price_adjustment = price_contribution(config, price, error)
-    fireplace_adjustment = fireplace_contribution(config, indoor, fireplace_active)
+    fireplace_adjustment = fireplace_contribution(config, indoor_now, fireplace_active)
     desired = config["base_offset"] + room_adjustment + weather_adjustment + price_adjustment + fireplace_adjustment
     requested = desired
     desired = max(config["min_offset"], min(config["max_offset"], desired))
@@ -790,6 +797,8 @@ class Controller:
     def save(self, config):
         config = validate(config)
         with self.lock:
+            if self.vacation and config["offset_entity"] != self.config["offset_entity"]:
+                raise ControlError("Avsluta semesterperioden och invänta återställning innan du byter pumpanslutning.")
             if config["enabled"]:
                 entities = self.ha.states()
                 peers = self.peers()
@@ -991,6 +1000,8 @@ class Controller:
     def schedule_vacation(self, start, end):
         """Plan a vacation. A running vacation keeps its start; only the end moves."""
         with self.lock:
+            if self.test and self.test["phase"] in ("running", "restoring"):
+                raise ControlError("Avsluta pumptestet och invänta återställning innan du planerar semester.")
             now = time.time()
             plan = self.vacation
             start = now if start is None else max(now, number(start, "Starttid"))
@@ -1031,7 +1042,7 @@ class Controller:
     def vacation_paused(self):
         """Comfort control only yields once the pump has really confirmed vacation mode."""
         plan = self.vacation
-        return bool(plan and plan["phase"] == "active" and plan["confirmed"])
+        return bool(plan and (plan["phase"] == "restoring" or plan["confirmed"]))
 
     def vacation_write(self, plan, option, now):
         if now - plan["attempted_at"] < VACATION_RETRY_SECONDS:
@@ -1055,14 +1066,28 @@ class Controller:
         plan = self.vacation
         if not plan:
             return
-        entity = next((e for e in entities if e["entity_id"] == plan["entity_id"]), None)
-        mode = entity["state"] if entity and entity["state"] not in ("unknown", "unavailable") else None
+        states = {e["entity_id"]: e for e in entities}
+        try:
+            entity = fresh_entity(states, plan["entity_id"], self.config["max_age_minutes"], now,
+                                  self.peers().get(plan["entity_id"], ()))
+            mode = entity["state"]
+        except ControlError as exc:
+            mode = None
+            if plan["error"] != str(exc):
+                plan = {**plan, "error": str(exc)}
+                self.store_vacation(plan)
         if plan["phase"] == "scheduled":
             if now >= plan["end"]:
                 self.store_vacation(None)
                 self.events.add("vacation_missed", "Semesterperioden passerade utan att den kunde startas.")
                 return
             if now < plan["start"] or mode is None:
+                return
+            if self.test and self.test["phase"] in ("running", "restoring"):
+                self.store_vacation({**plan, "error": "Väntar tills pumptestet är återställt."})
+                return
+            if VACATION_MODE not in entity["attributes"].get("options", ()):
+                self.store_vacation({**plan, "error": "Pumpen erbjuder inte semesterläge just nu."})
                 return
             plan = {**plan, "phase": "active", "previous": None if mode == VACATION_MODE else mode}
             self.store_vacation(plan)
@@ -1074,14 +1099,20 @@ class Controller:
                     self.events.add("vacation_confirmed", "Semesterläge återläst från pumpen. Automatiken pausas tills perioden är slut.")
                 elif mode is not None and not plan["confirmed"]:
                     self.vacation_write(plan, VACATION_MODE, now)
+                elif mode is not None and plan["error"]:
+                    self.store_vacation({**plan, "error": None})
                 return
             plan = {**plan, "phase": "restoring", "attempted_at": 0, "error": None}
             self.store_vacation(plan)
-            self.events.add("vacation_ended", "Semesterperioden är slut. Automatiken fortsätter.", previous=plan["previous"])
+            self.events.add("vacation_ended", "Semesterperioden är slut. Inväntar återställning före vanlig styrning.",
+                            previous=plan["previous"])
         if mode is None:
             return
         previous = plan["previous"]
         if mode == VACATION_MODE and previous is not None:
+            if previous not in entity["attributes"].get("options", ()):
+                self.store_vacation({**plan, "error": "Pumpens tidigare läge kan inte väljas just nu. Kontrollera pumpen."})
+                return
             self.vacation_write(plan, previous, now)
             return
         self.store_vacation(None)
@@ -1120,6 +1151,8 @@ class Controller:
     def start_test(self):
         """Move the offset one step for TEST_SECONDS so the user can see the pump react, then restore it."""
         with self.lock:
+            if self.vacation:
+                raise ControlError("Avsluta semesterperioden och invänta återställning innan du startar ett pumptest.")
             if self.test and self.test["phase"] in ("running", "restoring"):
                 raise ControlError("Ett test pågår redan.")
             if self.pending:

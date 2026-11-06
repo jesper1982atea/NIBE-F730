@@ -12,6 +12,13 @@
   när tiden är slut. Perioden överlever omstart och kan avbrytas eller
   förlängas. Ny endpoint `PUT /api/vacation` och fältet `vacation` i
   `/api/status`.
+- Granskningsrättningar: styrningen väntar på återläst återställning efter
+  semester, gamla väljarlägen används inte som bekräftelse och pumptest
+  kan inte överlappa semester. Sparade tider visas i formuläret utan att
+  osparade datumändringar försvinner vid uppdatering.
+- Kaminens kallrumsskydd behåller aktuell rumstemperatur även när
+  rumsregeln använder timmedel. Befintliga inställningar är oförändrade;
+  semesterläget kräver att du själv sparar en period.
 
 ## 0.2.36
 

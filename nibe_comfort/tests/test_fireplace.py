@@ -245,6 +245,14 @@ class ControllerFireplaceTests(unittest.TestCase):
         result = evaluate(self.cfg, states, self.now, fireplace_active=True)
         self.assertEqual(result["contributions"]["fireplace"], -1, "Without priorities the selected-room average governs")
 
+    def test_smoothed_warm_history_does_not_bypass_current_cold_room_guard(self):
+        states = fixtures(self.now)
+        states[0]["state"], states[1]["state"] = "20", "20"
+        result = evaluate(self.cfg, states, self.now, fireplace_active=True,
+                          indoor_samples=[(self.now - 60 * i, 24) for i in range(1, 60)])
+        self.assertGreater(result["indoor_smoothed"], 23)
+        self.assertEqual(result["contributions"]["fireplace"], 0)
+
     def test_current_missing_readings_remove_fireplace_reduction(self):
         for minute in range(0, 126, 5):
             self.tick(minute, 21 + max(0, minute - 60) / 60)

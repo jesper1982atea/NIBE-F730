@@ -746,6 +746,8 @@ flyttar förskjutningen varje intervall. Startsidan visar aktuellt snitt;
 ändringsloggen visar även timmedlet som användes. Timmedlet börjar om när du
 ändrar vilka givare som styr och efter omstart av tillägget. Förvärmning
 ändrar målet direkt och påverkas inte av utjämningen.
+Kaminens skydd mot ytterligare sänkning när styrande rum är kalla använder
+fortfarande aktuellt snitt, inte ett äldre varmt timmedel.
 
 Grundinställningen tillåter högst 1 förskjutningssteg per 30 minuter.
 Värmesystem är tröga; detta är en enkel begränsad proportionell reglering,
@@ -964,16 +966,24 @@ du Från tomt börjar perioden direkt. Perioden sparas och överlever omstart.
 - Automatiken pausas först när pumpen läst tillbaka `vacation`. Går det inte
   att sätta läget fortsätter vanlig styrning och nytt försök görs var femte
   minut, med felet synligt i rutan.
-- Vid sluttiden fortsätter automatiken och pumpens tidigare läge sätts
-  tillbaka. Var tillägget avstängt görs det vid nästa start. Har någon annan
+- Vid sluttiden återställs pumpens tidigare läge. Automatiken väntar tills
+  återställningen har lästs tillbaka, även vid kommunikationsfel.
+  Var tillägget avstängt görs det vid nästa start. Har någon annan
   ändrat läget under perioden lämnas det orört.
-- Avbryt semester återställer direkt. Under pågående semester går sluttiden
+- Avbryt semester begär återställning vid nästa avläsning. Under pågående semester går sluttiden
   att ändra.
+- Gamla eller otillgängliga väljarlägen bekräftar inte en ändring; fel
+  visas i semesterrutan. Pumptest och semester kan inte överlappa, och
+  pumpanslutningen kan inte bytas förrän semesterperioden har avslutats.
 
 Läget ändras även om huvudautomatiken står på övervakning, eftersom du själv
 har bett om det. Kurvförskjutningen ligger kvar på sitt senaste värde under
 perioden. Vad `vacation` gör med värme, varmvatten och ventilation bestäms av
 pumpens egna inställningar. Tillägget sätter bara läget.
+Det är inte fysiskt verifierat vad Smart Home Mode `vacation` gör på alla
+pumpmodeller. Kontrollera funktionen och pumpens inställningar innan
+du förlitar dig på den under en resa. Semesterläge är av tills du själv
+sparar en period.
 
 ## Begränsningar
 

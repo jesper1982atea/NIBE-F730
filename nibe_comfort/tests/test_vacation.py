@@ -41,7 +41,8 @@ class VacationTests(unittest.TestCase):
         return fixtures() + [entity(MODE, state, **attributes)]
 
     def step(self, at):
-        self.controller.vacation_step(self.states(), at)
+        with patch("controller.time.time", return_value=at):
+            self.controller.vacation_step(self.states(), at)
 
     def kinds(self):
         return [event["kind"] for event in self.controller.events.recent()]
@@ -66,7 +67,7 @@ class VacationTests(unittest.TestCase):
         self.step(self.now + 3660)
         self.assertTrue(self.controller.vacation_paused())
         self.step(self.now + 7201)
-        self.assertFalse(self.controller.vacation_paused())
+        self.assertTrue(self.controller.vacation_paused())
         self.assertEqual(self.mode, "home")
         self.step(self.now + 7260)
         self.assertIsNone(self.controller.vacation)
@@ -81,6 +82,9 @@ class VacationTests(unittest.TestCase):
         self.assertIn("Semesterläge", self.controller.status["message"])
         self.assertEqual(self.controller.status["next_offset"], self.controller.status["current_offset"])
         with patch("controller.time.time", return_value=self.now + 3601):
+            self.controller.tick()
+        self.ha.set_offset.assert_not_called()
+        with patch("controller.time.time", return_value=self.now + 3661):
             self.controller.tick()
         self.ha.set_offset.assert_called_once()
         self.assertEqual(self.mode, "normal")
@@ -125,17 +129,69 @@ class VacationTests(unittest.TestCase):
         self.step(self.now + 60 + VACATION_RETRY_SECONDS)
         self.assertIn("inte bekräftat", self.controller.vacation["error"])
 
-    def test_restore_retries_while_control_has_resumed(self):
+    def test_restore_retries_while_control_stays_paused_until_readback(self):
         self.run_active()
         self.ha.set_select.side_effect = ControlError("timeout")
         self.step(self.now + 3601)
         self.assertEqual(self.controller.vacation["phase"], "restoring")
-        self.assertFalse(self.controller.vacation_paused())
+        self.assertTrue(self.controller.vacation_paused())
         self.ha.set_select.side_effect = lambda _entity, option: setattr(self, "mode", option)
         self.step(self.now + 3601 + VACATION_RETRY_SECONDS)
         self.step(self.now + 3700 + VACATION_RETRY_SECONDS)
         self.assertEqual(self.mode, "normal")
         self.assertIsNone(self.controller.vacation)
+
+    def test_failed_restore_does_not_send_comfort_commands(self):
+        self.controller.config = config(enabled=True, target_temperature=23)
+        self.run_active()
+        self.ha.set_select.side_effect = ControlError("timeout")
+        for at in (self.now + 3601, self.now + 3661):
+            with patch("controller.time.time", return_value=at):
+                self.controller.tick()
+        self.assertTrue(self.controller.vacation_paused())
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
+
+    def test_stale_selector_without_live_peers_is_not_confirmed_or_written(self):
+        self.controller.config["max_age_minutes"] = 5
+        self.schedule(hours=2)
+        self.controller.peer_cache = (self.now + 3600, {})
+        self.controller.vacation_step(self.states(), self.now + 3600)
+        self.ha.set_select.assert_not_called()
+        self.assertFalse(self.controller.vacation_paused())
+        self.assertTrue(self.controller.vacation["error"])
+        self.step(self.now + 3660)
+        self.assertEqual(self.ha.set_select.call_count, 1)
+
+    def test_selector_without_vacation_option_is_not_written(self):
+        self.schedule()
+        states = self.states()
+        states[-1]["attributes"]["options"] = ["normal"]
+        self.controller.vacation_step(states, self.now + 60)
+        self.ha.set_select.assert_not_called()
+        self.assertIn("erbjuder inte", self.controller.vacation["error"])
+
+    def test_test_and_vacation_cannot_overlap_or_change_pump(self):
+        self.schedule()
+        with self.assertRaisesRegex(ControlError, "semesterperioden"):
+            self.controller.start_test()
+        with self.assertRaisesRegex(ControlError, "byter pumpanslutning"):
+            self.controller.save(config(offset_entity="number.other"))
+        self.controller.cancel_vacation()
+        self.controller.test = {"phase": "restoring"}
+        with self.assertRaisesRegex(ControlError, "pumptestet"):
+            self.schedule()
+        self.ha.set_select.assert_not_called()
+
+    def test_invalid_saved_plans_are_rejected_before_use(self):
+        self.schedule()
+        valid = self.controller.vacation
+        for bad in ([], False, "", {**valid, "start": "123"}, {**valid, "end": -1},
+                    {**valid, "entity_id": "number.offset"}, {**valid, "previous": []},
+                    {k: v for k, v in valid.items() if k != "previous"},
+                    {k: v for k, v in valid.items() if k != "error"}):
+            with self.subTest(plan=bad), self.assertRaises(ControlError):
+                validate_vacation(bad)
 
     def test_unavailable_selector_delays_restore_without_ending_the_plan(self):
         self.run_active()
@@ -170,7 +226,8 @@ class VacationTests(unittest.TestCase):
         restarted = self.make()
         restarted.config = config(enabled=True)
         self.assertTrue(restarted.vacation_paused())
-        restarted.vacation_step(self.states(), self.now + 86400)
+        with patch("controller.time.time", return_value=self.now + 86400):
+            restarted.vacation_step(self.states(), self.now + 86400)
         self.assertEqual(self.mode, "normal")
 
     def test_period_missed_entirely_never_touches_the_pump(self):
