@@ -65,6 +65,18 @@ class OverviewTests(unittest.TestCase):
         self.assertEqual(data["price"]["value"], "1.4")
         self.assertEqual(data["pump_electricity"], [])
 
+    def test_numeric_status_counter_is_not_shown_as_operating_mode(self):
+        # F370 exposes "status: (50095)" in minutes with the same suffix as the text status of F730/S-series.
+        self.states.append(entity("sensor.pump_status", "15001.0", unit_of_measurement="min", device_class="duration"))
+        self.registry.append({"entity_id": "sensor.pump_status", "device_id": "pump", "platform": "myuplink"})
+        data = overview(self.states, self.registry, self.config, self.now)
+        operation = next(item for item in data["pump"] if item["key"] == "operation")
+        self.assertIsNone(operation["value"])
+        self.states[-1] = entity("sensor.pump_status", "Heating")
+        data = overview(self.states, self.registry, self.config, self.now)
+        operation = next(item for item in data["pump"] if item["key"] == "operation")
+        self.assertEqual(operation["value"], "Värme", "text status from other models still works")
+
     def test_active_alarm_is_visible_and_stale_alarm_is_not_reported_as_clear(self):
         self.states[1]["state"] = "on"
         data = overview(self.states, self.registry, self.config, self.now)
@@ -427,6 +439,12 @@ class HotWaterTests(unittest.TestCase):
         self.assertEqual([e["size"] for e in events], ["stor", "liten"])
         self.assertEqual(events[0]["drop"], 16.0)
         self.assertEqual(events[0]["start"], t + 20000 - 900)
+
+    def test_numeric_status_counter_is_not_used_for_charging(self):
+        self.states[5] = entity("sensor.pump_status", "15001.0", self.now, unit_of_measurement="min", device_class="duration")
+        data = hot_water(self.states, self.registry, self.config, {}, self.now)
+        self.assertNotIn("status", data["entities"])
+        self.assertIsNone(data["charging"], "unknown, not 'not charging'")
 
     def test_charge_periods_join_and_run_until_now(self):
         rows = [[0, "Heating"], [100, "Hot water"], [400, "Heating"], [900, "Hot water"]]

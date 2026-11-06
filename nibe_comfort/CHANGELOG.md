@@ -1,5 +1,19 @@
 # Ändringslogg
 
+## Ej släppt
+
+- Driftläge hämtas bara från en textstatus (t.ex. Heating, Hot water). Vissa
+  modeller, som F370, har en räknare med samma namnslut (`_status`, i minuter);
+  den visades som "Driftläge 15001.0 min", användes som körningskontext för
+  elpatronen och gjorde att varmvattnet aldrig visades som laddande. Gäller
+  alla modeller: en givare med enhet eller varaktighetsklass räknas inte som driftläge.
+- "Osparade ändringar: Rumsgivare" visades direkt efter laddning när de sparade
+  rummen låg i en annan ordning än i rumsväljaren. Sparad ordning behålls nu.
+  Samma fel gav "Exempel med osparade värden" i förvärmningen.
+- Pumpens värden visas med decimalkomma som resten av sidan.
+- Nytt utseende: korthuvud med ikon och statusetikett, statusrutor, mätare och
+  tidslinjer för semester, kamin, husmodell, pump, rum och elpatron.
+
 ## 0.2.39
 
 - Ny inställning **Högsta ålder på kaminens rumsvärden**

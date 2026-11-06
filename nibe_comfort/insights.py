@@ -11,7 +11,7 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from controller import ControlError, control_rooms, device_peers, fresh_entity, next_step, number, price_contribution, temperature
+from controller import ControlError, control_rooms, device_peers, fresh_entity, next_step, number, price_contribution, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 from energy import POWER_UNITS, consumption_report, discover_meter, meter_error, produced_energy
 from auxiliary import heater_entities, heater_report
@@ -110,7 +110,8 @@ def overview(states, registry, config, now):
     pump_states = [by_id[e] for e in sorted(pump_ids) if e in by_id]
     for suffix, (key, label) in LABELS.items():
         matches = [by_id[e] for e in pump_ids if e in by_id and e.endswith(suffix)
-                   and e.startswith(("sensor.", "binary_sensor."))]
+                   and e.startswith(("sensor.", "binary_sensor."))
+                   and (key != "operation" or text_status(by_id[e]))]
         if len(matches) != 1:
             pump.append({"key": key, "label": label, "value": None, "error": "Ingen entydig givare hittades."})
             continue
@@ -190,11 +191,13 @@ def pump_device_entities(registry, offset_entity):
     return {r["entity_id"] for r in registry if r.get("platform") == "myuplink" and r.get("device_id") == selected["device_id"]}
 
 
-def hot_water_entities(registry, offset_entity):
+def hot_water_entities(registry, offset_entity, states=None):
     ids = pump_device_entities(registry, offset_entity)
+    by_id = {s["entity_id"]: s for s in states or ()}
     found = {}
     for key, (prefix, suffix) in HOT_WATER.items():
-        matches = [e for e in ids if e.startswith(prefix) and e.endswith(suffix)]
+        matches = [e for e in ids if e.startswith(prefix) and e.endswith(suffix)
+                   and (key != "status" or e not in by_id or text_status(by_id[e]))]
         if len(matches) == 1:
             found[key] = matches[0]
     return found
@@ -241,7 +244,7 @@ def charge_periods(rows, now):
 
 def hot_water(states, registry, config, groups, now, days=7):
     by_id = {s["entity_id"]: s for s in states}
-    ids = hot_water_entities(registry, config["offset_entity"])
+    ids = hot_water_entities(registry, config["offset_entity"], states)
     start = now - days * 86400
     result = {
         "now": now, "start": start, "days": days, "entities": ids,
@@ -897,7 +900,7 @@ class Insights:
             now = time.time()
             registry = self.registry()
             states = self.ha.states()
-            ids = [e for k, e in hot_water_entities(registry, config["offset_entity"]).items() if k != "demand"]
+            ids = [e for k, e in hot_water_entities(registry, config["offset_entity"], states).items() if k != "demand"]
             groups = {}
             if ids:
                 query = urlencode({

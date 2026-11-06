@@ -643,6 +643,14 @@ async function dashboardChecks() {
   await priorityPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await priorityPage.locator("#room-impact-list .room-impact-row").first().waitFor({ state: "attached" });
   assert.equal(await priorityPage.locator("#indoor").textContent(), "23");
+  // The room picker is sorted for display; a saved selection in another order is not an unsaved change.
+  for (const order of [[thirdRoom, thermostat, "sensor.living"], ["sensor.living", thermostat, thirdRoom]]) {
+    priorityConfig = { ...priorityConfig, room_sensors: order };
+    await priorityPage.reload();
+    await priorityPage.locator("#room-impact-list .room-impact-row").first().waitFor({ state: "attached" });
+    await priorityPage.waitForFunction(() => document.getElementById("settings-save-status").textContent !== "");
+    assert.equal(await priorityPage.locator("#settings-save-status").textContent(), "Inga osparade ändringar.", order.join());
+  }
   assert.equal(await priorityPage.locator("#house-indoor").textContent(), "23");
   assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), false);
   await priorityPage.locator("#settings-panel > summary").click();

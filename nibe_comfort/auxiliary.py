@@ -3,7 +3,7 @@
 import math
 from bisect import bisect_right
 
-from controller import ControlError
+from controller import ControlError, text_status
 from energy import POWER_UNITS, consumption_report, price_intervals, samples, timestamp, usage_intervals
 
 
@@ -31,7 +31,8 @@ def heater_entities(states, pump_ids):
         raise ControlError("Elpatronens effektgivare måste rapportera W eller kW.")
     contexts = {}
     for key, (suffix, _) in CONTEXT.items():
-        matches = [s for s in selected if s["entity_id"].endswith(suffix)]
+        matches = [s for s in selected if s["entity_id"].endswith(suffix)
+                   and (key != "operation" or text_status(s))]
         if len(matches) == 1:
             contexts[key] = matches[0]
     return power, contexts

@@ -388,6 +388,21 @@ def entity_age(entity, now):
         raise ControlError(f"{entity['entity_id']}: tidsstämpel saknas eller är ogiltig.") from exc
 
 
+def text_status(entity):
+    """True for a textual operating-status sensor (Heating, Hot water, ...).
+
+    Several NIBE models also expose a numeric counter whose entity id ends in `_status`
+    (F370: \"status: (50095)\" in minutes). A counter with a unit or a duration class is not a mode."""
+    attrs = entity.get("attributes", {})
+    if attrs.get("unit_of_measurement") or attrs.get("device_class") in ("duration", "timestamp"):
+        return False
+    try:
+        float(entity.get("state"))
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
 def fresh_entity(states, entity_id, max_age, now, peers=()):
     """Return a valid, recently reported entity.
 

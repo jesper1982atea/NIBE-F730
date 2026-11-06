@@ -313,7 +313,10 @@ function readSettings() {
   const result = { ...settings };
   for (const [key, value] of Object.entries(settings)) {
     if (["room_sensors", "priority_sensors", "fireplace_rooms"].includes(key)) {
-      result[key] = Array.from($(key).querySelectorAll("input:checked"), (input) => input.value);
+      // The pickers are sorted for display; keep the saved order so an unchanged selection
+      // is not reported as an unsaved change. Newly chosen rooms are added last.
+      const checked = Array.from($(key).querySelectorAll("input:checked"), (input) => input.value);
+      result[key] = [...value.filter((id) => checked.includes(id)), ...checked.filter((id) => !value.includes(id))];
     } else if (typeof value === "boolean") result[key] = $(key).checked;
     else if (typeof value === "number") result[key] = $(key).valueAsNumber;
     else result[key] = $(key).value;
@@ -1148,7 +1151,9 @@ function metric(item) {
   const label = document.createElement("span");
   label.textContent = item.label;
   const value = document.createElement("strong");
-  value.textContent = item.value === null ? "Okänt" : `${item.value} ${item.unit || ""}`.trim();
+  // Home Assistant states are raw strings ("36.8"); show numbers the Swedish way like the rest of the page.
+  const shown = typeof item.value === "string" && /^-?\d+(\.\d+)?$/.test(item.value) ? displayNumber(Number(item.value)) : item.value;
+  value.textContent = item.value === null ? "Okänt" : `${shown} ${item.unit || ""}`.trim();
   const detail = document.createElement("small");
   detail.textContent = item.error || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE")}` : "");
   if (item.entity_id) block.title = item.entity_id;

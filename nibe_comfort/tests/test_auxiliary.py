@@ -161,6 +161,12 @@ class HeaterReportTests(unittest.TestCase):
         self.assertEqual(data["runs"][0]["context"]["operation"]["value"], "Hot water")
         self.assertIsNone(data["runs"][1]["context"]["operation"], "Too old to explain a later run")
 
+    def test_numeric_status_counter_is_not_operation_context(self):
+        states = heater_rows()[:1] + [row(MODE, "15001.0", START, unit_of_measurement="min", device_class="duration")]
+        power, contexts = discover(states)
+        self.assertEqual(power["entity_id"], POWER)
+        self.assertNotIn("operation", contexts)
+
     def test_discovery_only_uses_same_pump_power_not_total_or_energy(self):
         states = heater_rows()[:1] + [row(MODE, "Heating", START)]
         power, contexts = discover(states)
