@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## 0.2.39
+
+- Ny inställning **Högsta ålder på kaminens rumsvärden**
+  (`fireplace_max_age_minutes`, standard 15 minuter som tidigare). Rumsgivare
+  som bara rapporterar vid ändring, till exempel Sonoff SNZB-02D, kan vara
+  tysta i timmar när rummet är stabilt. Med 15 minuter var kaminanalysen då
+  otillgänglig trots stabila rum.
+  Gränsen blir aldrig längre än den vanliga mätvärdesgränsen. Befintliga
+  installationer behåller 15 minuter.
+- Hjälptexten beskriver osäkerheten med äldre avläsningar: uteblivna
+  rapporter är inte bevis för stabil temperatur. Otillgängliga värden
+  godtas inte och den vanliga temperaturstyrningens åldersgräns är oförändrad.
+
 ## 0.2.38
 
 - Elpatronvyn räknar en effektgivare som står still som giltig (#37).

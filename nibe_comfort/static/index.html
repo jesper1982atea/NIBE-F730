@@ -178,6 +178,8 @@
       <label for="fireplace_rooms">Temperaturkällor i rummet med kamin</label>
       <div id="fireplace_rooms" class="sensor-list" role="group" aria-describedby="fireplace-help"></div>
       <p id="fireplace-help" class="hint">Välj bland rumsgivarna i inställningarna. Välj bara kaminens rum, inte alla rum värmen sprids till. Minst ett annat valt rum behövs som jämförelse. Inget börjar gälla förrän du sparar.</p>
+      <div><label for="fireplace_max_age_minutes">Högsta ålder på kaminens rumsvärden · minuter</label><input id="fireplace_max_age_minutes" name="fireplace_max_age_minutes" form="settings" type="number" min="5" max="1440" step="1" required aria-describedby="fireplace-age-help"></div>
+      <p id="fireplace-age-help" class="hint">Standard 15 minuter. Gäller alla valda rum i kaminanalysen, även jämförelserummen. Givare som bara rapporterar ändringar kan vara tysta länge, men tystnad kan också bero på batteri-, radio- eller integrationsfel. En högre gräns kan ge osäkrare kaminbedömning och extra värmesänkning. Höj bara efter att du kontrollerat givarens rapportering. Gränsen blir aldrig längre än Högsta ålder på mätvärden och ändrar inte den vanliga rumsregeln.</p>
       <p id="fireplace-learning" class="explanation"></p>
       <p id="fireplace-control" class="explanation" role="status"></p>
       <ul id="fireplace-effects"></ul>

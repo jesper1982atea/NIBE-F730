@@ -1018,6 +1018,9 @@ async function dashboardChecks() {
   await page.waitForTimeout(100);
   assert.equal(await livePage.locator("#indoor").textContent(), "21,7", "Resuming cancels stalled reads and ignores their late response");
   await livePage.close();
+}
+
+async function fireplaceChecks() {
   const firePage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   firePage.on("pageerror", (error) => errors.push(error.message));
   firePage.on("dialog", (dialog) => dialog.accept());
@@ -1067,12 +1070,37 @@ async function dashboardChecks() {
   assert.match(await firePage.locator("#fireplace-control").textContent(), /kaminbidrag −1.*Övervakning/);
   assert.match(await firePage.locator("#room-impact-list").textContent(), /prioriterat.*kaminrum/);
   assert.equal(fireWrites, 1, "Rendering suspected extra heat must not save or send new commands");
+  assert.equal(await firePage.locator("#fireplace_max_age_minutes").inputValue(), "15");
+  assert.match(await firePage.locator("#fireplace-age-help").textContent(), /tystnad.*fel.*osäkrare/);
+  await firePage.locator("#fireplace_max_age_minutes").fill("90");
+  assert.match(await firePage.locator("#settings-save-status").textContent(), /Osparade.*Kaminens mätvärdesålder/);
+  await firePage.evaluate(() => refreshStatus());
+  assert.equal(await firePage.locator("#fireplace_max_age_minutes").inputValue(), "90", "Polling preserves the age draft");
+  assert.equal(fireWrites, 1);
+  await firePage.locator("#save-fireplace").click();
+  await firePage.waitForFunction(() => !document.getElementById("settings-save-status").textContent.includes("Osparade"));
+  assert.equal(fireSettings.fireplace_max_age_minutes, 90);
+  assert.equal(fireSettings.max_age_minutes, defaults.max_age_minutes);
+  assert.equal(fireSettings.enabled, false);
+  await firePage.waitForLoadState("networkidle");
+  await firePage.reload();
+  await firePage.waitForFunction(() => document.getElementById("fireplace_max_age_minutes").value === "90");
+  const ageWrites = fireWrites;
+  await firePage.locator("#fireplace_max_age_minutes").fill("4");
+  await firePage.locator("#save-fireplace").click();
+  assert.equal(fireWrites, ageWrites, "Invalid age does not submit settings");
+  await firePage.locator("#fireplace_max_age_minutes").fill("10");
+  await firePage.locator("#save-fireplace").click();
+  await firePage.waitForFunction(() => !document.getElementById("settings-save-status").textContent.includes("Osparade"));
+  assert.equal(fireSettings.fireplace_max_age_minutes, 10);
   await firePage.setViewportSize({ width: 390, height: 844 });
   assert.equal(await firePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await firePage.waitForLoadState("networkidle");
   await firePage.close();
 }
 try {
   if (!process.env.ENERGY_ONLY) await dashboardChecks();
+  await fireplaceChecks();
   const energyPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   energyPage.on("pageerror", (error) => errors.push(error.message));
   let energySettings = { ...defaults, room_sensors: ["sensor.living"], offset_entity: offset, price_entity: price };
@@ -1353,7 +1381,7 @@ try {
   assert.equal(await vacationPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await vacationPage.close();
   assert.deepEqual(errors, []);
-  console.log(process.env.ENERGY_ONLY ? "Energy, auxiliary and vacation UI passed: context, costs, dates, drafts, errors, recovery and mobile layout."
+  console.log(process.env.ENERGY_ONLY ? "Energy, auxiliary, fireplace and vacation UI passed: limits, context, costs, dates, drafts, errors, recovery and mobile layout."
     : "Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
 } finally {
   await browser.close();

@@ -25,6 +25,7 @@ DEFAULTS = {
     "thermostat_control_enabled": False,
     "fireplace_enabled": False,
     "fireplace_rooms": [],
+    "fireplace_max_age_minutes": 15.0,
     "offset_entity": "",
     "outdoor_entity": "",
     "price_entity": "",
@@ -64,6 +65,7 @@ LIMITS = {
     "max_step": (0.1, 2),
     "min_interval_minutes": (10, 1440),
     "max_age_minutes": (5, 1440),
+    "fireplace_max_age_minutes": (5, 1440),
     "preheat_degrees": (0.1, 1.5),
 }
 
@@ -723,6 +725,7 @@ class Controller:
                 saved.setdefault("thermostat_control_enabled", False)
                 saved.setdefault("fireplace_enabled", False)
                 saved.setdefault("fireplace_rooms", [])
+                saved.setdefault("fireplace_max_age_minutes", 15.0)
                 saved.setdefault("price_provider", "tibber")
                 saved.setdefault("energy_entity", "")
             self.config = validate(saved)
@@ -795,8 +798,9 @@ class Controller:
         return fireplace_intervals(self.fireplace_state)
 
     def fireplace_step(self, entities, now, peers):
-        # A short freshness limit is necessary to distinguish a rise from a reporting gap.
-        config = {**self.config, "max_age_minutes": min(15, self.config["max_age_minutes"])}
+        # Longer limits are opt-in: quiet sensors and missed reports cannot be distinguished here.
+        limit = min(self.config["fireplace_max_age_minutes"], self.config["max_age_minutes"])
+        config = {**self.config, "max_age_minutes": limit}
         readings = current_readings(config, entities, now, peers)["rooms"] if config["fireplace_enabled"] else []
         state, status, events = update_fireplace(self.fireplace_state, self.config, readings, now)
         if state != self.fireplace_state:
