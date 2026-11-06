@@ -6,10 +6,12 @@
   (`fireplace_max_age_minutes`, standard 15 minuter som tidigare). Rumsgivare
   som bara rapporterar vid ändring, till exempel Sonoff SNZB-02D, kan vara
   tysta i timmar när rummet är stabilt. Med 15 minuter var kaminanalysen då
-  otillgänglig nästan hela tiden (med två sådana givare fanns färska värden
-  i båda rummen bara i 26 av 576 femminuterspunkter under två dygn).
+  otillgänglig trots stabila rum.
   Gränsen blir aldrig längre än den vanliga mätvärdesgränsen. Befintliga
   installationer behåller 15 minuter.
+- Hjälptexten beskriver osäkerheten med äldre avläsningar: uteblivna
+  rapporter är inte bevis för stabil temperatur. Otillgängliga värden
+  godtas inte och den vanliga temperaturstyrningens åldersgräns är oförändrad.
 
 ## 0.2.38
 

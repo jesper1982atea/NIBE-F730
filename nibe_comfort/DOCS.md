@@ -217,8 +217,14 @@ mätvärdesgränsen). En oförändrad givare kan bekräftas genom färska
 rapporter från samma HA-enhet, som i övrig styrning. Givare som bara
 rapporterar vid ändring, till exempel Sonoff SNZB-02D (0,2 °C), kan vara
 tysta i timmar när rummet är stabilt och gör då analysen otillgänglig med
-15 minuter. För sådana givare kan gränsen höjas: tystnad betyder då att
-rummet inte har ändrats, och en ökning rapporteras direkt. En temperaturökning
+15 minuter. För sådana givare kan gränsen höjas medvetet, men tystnad är
+inte bevis för oförändrad temperatur: batteri-, radio- eller integrationsfel
+kan också ge uteblivna rapporter. En högre gräns kan fördröja upptäckten av
+saknade värden och ge osäkrare kaminbedömning och extra värmesänkning.
+Kontrollera givarens rapportering innan du höjer gränsen. Standardvärdet
+för befintliga installationer är oförändrat. Gränsen gäller alla valda
+rum i kaminanalysen, inklusive jämförelserummen, och ändrar inte den
+vanliga rumsregelns åldersgräns. En temperaturökning
 i kaminrummens snitt måste vara minst 0,5 °C under ungefär 45–75 minuter,
 motsvara minst 0,7 °C per timme och vara minst 0,5 °C större än ökningen
 i övriga rum. Mönstret ska bestå minst tio minuter innan en misstänkt

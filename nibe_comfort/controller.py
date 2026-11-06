@@ -798,9 +798,7 @@ class Controller:
         return fireplace_intervals(self.fireplace_state)
 
     def fireplace_step(self, entities, now, peers):
-        # A short freshness limit is necessary to distinguish a rise from a reporting gap.
-        # Sensors that only report on change (e.g. 0.2 °C steps) can use a longer limit:
-        # silence then means the room has not changed, and a rise is reported.
+        # Longer limits are opt-in: quiet sensors and missed reports cannot be distinguished here.
         limit = min(self.config["fireplace_max_age_minutes"], self.config["max_age_minutes"])
         config = {**self.config, "max_age_minutes": limit}
         readings = current_readings(config, entities, now, peers)["rooms"] if config["fireplace_enabled"] else []
