@@ -118,6 +118,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn("states.climate", template)
         self.assertIn("device_entities(did)", template)
         self.assertIn("did not in ns.items", template)
+        self.assertIn("states.sensor", template)
+        self.assertIn("config_entry_id(eid) == entry", template)
+        self.assertIn("'room_device'", template)
 
     def test_client_resolves_entity_and_device_area_assignments(self):
         ha = HomeAssistant("token")
@@ -411,6 +414,21 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(peers["sensor.other"], [])
         self.assertNotIn("sensor.loose", peers)
 
+    def test_room_peer_requires_same_device_and_config_entry_and_never_revives_unavailable(self):
+        registry = [
+            {"entity_id": key, "device_id": "living", "platform": "room_device", "config_entry_id": entry}
+            for key, entry in (("sensor.living", "zigbee"), ("sensor.humidity", "zigbee"),
+                               ("sensor.other", "other"))
+        ]
+        peers = device_peers(registry)
+        self.assertEqual(peers["sensor.living"], ["sensor.humidity"])
+        self.entities[0]["last_updated"] = entity("sensor.living", 20, self.now - 4 * 3600)["last_updated"]
+        self.entities.append(entity("sensor.humidity", 40, self.now))
+        self.assertEqual(evaluate(config(), self.entities, self.now, peers)["indoor"], 21)
+        self.entities[0]["state"] = "unavailable"
+        with self.assertRaises(ControlError):
+            evaluate(config(), self.entities, self.now, peers)
+
     def test_unchanged_climate_uses_fresh_report_from_same_device(self):
         cfg = config(room_sensors=["climate.store"])
         states = [
@@ -484,6 +502,85 @@ class ControllerTests(unittest.TestCase):
 
     def allow_write(self):
         self.controller.last_write = time.time() - 3600
+
+    def outage(self):
+        rows = fixtures()
+        next(e for e in rows if e["entity_id"] == "number.offset")["state"] = "unavailable"
+        self.ha.states.side_effect = lambda: rows
+        return rows
+
+    def test_short_pump_outage_has_no_stale_offset_goal_or_comfort_writes(self):
+        from controller import OUTAGE_MESSAGE
+        self.enable()
+        self.outage()
+        self.controller.tick()
+        status = self.controller.snapshot()
+        self.assertEqual(status["message"], OUTAGE_MESSAGE)
+        self.assertIsNone(status["current_offset"])
+        self.assertIsNone(status["desired_offset"])
+        self.assertIsNone(status["contributions"])
+        self.assertIsNone(status["error_message"])
+        self.assertFalse(status["writable"])
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
+        self.controller.outage_since = time.time() - 1800
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        self.assertIn("otillgänglig", self.controller.status["error_message"])
+        self.ha.states.side_effect = lambda: fixtures()
+        self.controller.tick()
+        self.assertIsNone(self.controller.outage_since)
+        self.assertIsNone(self.controller.status["error_message"])
+
+    def test_outage_does_not_hide_missing_controlling_room_or_allow_invalid_save(self):
+        self.enable()
+        rows = self.outage()
+        rows[0]["state"] = "unavailable"
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        self.assertIn("sensor.living", self.controller.status["error_message"])
+        with self.assertRaises(ControlError):
+            self.controller.save(config(enabled=True, target_temperature=22))
+
+    def test_missing_offset_is_not_treated_as_temporary_outage(self):
+        self.enable()
+        self.ha.states.side_effect = lambda: [e for e in fixtures() if e["entity_id"] != "number.offset"]
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        self.assertIsNone(self.controller.outage_since)
+
+    def test_outage_does_not_bypass_settings_validation(self):
+        self.enable()
+        self.outage()
+        with self.assertRaises(ControlError):
+            self.controller.save(config(enabled=True, target_temperature=22))
+        self.assertEqual(self.controller.config["target_temperature"], 23)
+
+    def test_outage_grace_restarts_on_recovery_and_sends_no_thermostat_commands(self):
+        self.enable()
+        self.controller.config["thermostat_control_enabled"] = True
+        self.controller.thermostat_step = Mock(return_value={})
+        self.outage()
+        self.controller.tick()
+        self.controller.thermostat_step.assert_not_called()
+        self.controller.outage_since -= 1500
+        self.ha.states.side_effect = lambda: fixtures()
+        self.controller.tick()
+        self.assertIsNone(self.controller.outage_since)
+        self.controller.thermostat_step.reset_mock()
+        self.outage()
+        self.controller.tick()
+        self.assertIsNone(self.controller.status["error_message"])
+        self.controller.thermostat_step.assert_not_called()
+
+    def test_three_selected_rooms_do_not_allow_dropping_an_unavailable_room(self):
+        self.controller.config = config(enabled=True, room_sensors=["sensor.living", "sensor.bedroom", "sensor.hall"])
+        self.ha.states.side_effect = lambda: [
+            *fixtures()[1:], entity("sensor.living", "unavailable"), entity("sensor.hall", 21, unit_of_measurement="°C"),
+        ]
+        with self.assertRaises(ControlError):
+            self.controller.tick()
+        self.ha.set_offset.assert_not_called()
 
     def test_monitor_never_writes(self):
         self.controller.save(config(target_temperature=23))
@@ -639,13 +736,13 @@ class ControllerTests(unittest.TestCase):
         self.ha.states.side_effect = lambda: [
             *fixtures()[:-1], entity("number.offset", "unavailable", min=-10, max=10, step=1),
         ]
-        with self.assertRaises(ControlError):
-            self.controller.tick()
+        self.controller.tick()
         status = self.controller.snapshot()
         self.assertEqual((status["indoor"], status["outdoor"]), (21, -10))
         self.assertIsNone(status["current_offset"])
         self.assertIn("current_offset", status["reading_errors"])
-        self.assertNotIn("next_offset", status)
+        self.assertIsNone(status["next_offset"])
+        self.assertIsNotNone(status["outage_since"])
         self.ha.set_offset.assert_not_called()
         self.ha.states.side_effect = lambda: fixtures()
         self.controller.tick()

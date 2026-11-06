@@ -1,5 +1,26 @@
 # Ändringslogg
 
+## 0.2.38
+
+- Elpatronvyn räknar en effektgivare som står still som giltig (#37).
+  myUplink rapporterar bara när värdet ändras, så en avstängd elpatron gav
+  en enda historikrad och visades som okänd med 0 av 24 timmar täckta.
+  Nu gäller registrerade 0 kW fram till nästa tillstånd eller periodens slut.
+  Okända, otillgängliga och ogiltiga värden bryter perioden; saknad historik
+  fylls inte med nollor.
+- Effekter över noll behåller gränsen på 15 minuter mellan rapporter och
+  extrapoleras inte efter sista avläsningen. Pumpens totala elmätning och
+  energiberäkning är oförändrade. Rättningen bygger på Peters förslag
+  och är avgränsad till issue #37.
+- Granskade delar av Peters avbrottsförslag: vid otillgänglig kurvförskjutning
+  väntar kurv- och termostatstyrningen med tydligt besked i upp till
+  30 minuter, sedan visas ett pausfel. Gamla pumpvärden och mål visas
+  inte som aktuella; fel i styrande rumsgivare döljs inte.
+- En oförändrad rumstemperatur kan bekräftas av färska rapporter från
+  samma HA-enhet och samma integrationspost. Otillgängliga givare
+  förblir ogiltiga. Saknade styrande rum hoppas inte över, kaminens
+  kortare åldersgräns och valideringen vid sparande behålls.
+
 ## 0.2.37
 
 - Rumsregeln använder medelvärdet av den senaste timmens avläsningar av

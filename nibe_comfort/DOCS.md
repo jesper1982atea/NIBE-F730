@@ -645,9 +645,18 @@ Periodgränser och dataluckor kan ge okänd början/slut. Antalet perioder
 avser enbart den täckta delen.
 
 Samma W/kW-integrering och historiska prisberäkning används som för
-pumpens el: föregående effekt gäller fram till nästa rapport, med högst
-15 minuter mellan rapporterna. Ingen extrapolering efter sista rapporten
-eller över dataluckor. Kostnad visas per period med full eller partiell
+pumpens el, men med ett undantag för avstängd elpatron:
+registrerade 0 kW gäller fram till nästa tillstånd eller periodens slut.
+HA:s historik inkluderar tillståndet vid periodens början som standard,
+så en givare som bara rapporterar ändringar kan ha en enda rad för hela
+dygnet. Den visar då 0 perioder, 0 min och 0 kWh samt 0 kr när
+prishistorik finns. Över noll gäller fortfarande högst 15 minuter mellan
+rapporterna och ingen extrapolering efter sista avläsningen.
+Otillgängliga, okända eller ogiltiga värden bryter nollperioden; saknat
+starttillstånd fylls inte i. Ett avbrott som integrationen aldrig
+registrerar som otillgängligt kan inte upptäckas ur denna historik.
+Aktuell status kontrolleras separat och kan därför vara okänd trots
+historiskt registrerade nollor. Kostnad visas per period med full eller partiell
 pristäckning; saknade priser betyder inte gratis el. Varken dagens pris
 eller en annan elpriskälla används som reserv.
 
@@ -856,6 +865,18 @@ faktisk besparingsberäkning ingår inte.
   samma pump** har rapporterats inom åldersgränsen. Det visar att
   integrationen fortfarande levererar data. Tystnar hela pumpen, eller blir
   värdet otillgängligt, pausas styrningen som tidigare.
+- För separata temperaturgivare används färska rapporter från sensorer
+  på samma HA-enhet och samma integrationspost som livstecken för ett
+  oförändrat värde. `unknown` och `unavailable` godtas aldrig på detta sätt.
+  Styrande givare hoppas inte över om de saknas.
+- Vid otillgänglig kurvförskjutning väntar kurv- och termostatstyrningen
+  i upp till 30 minuter med beskedet **Väntar på pumpens värden**.
+  Saknade pumpvärden och beräknade mål visas inte som aktuella.
+  Därefter visas ett pausfel. Fel i styrande rumsgivare visas direkt;
+  saknade entiteter och kommunikationsfel omfattas inte av vänteläget.
+  Semesterlägets återställning hanteras fortfarande separat och kan
+  fortsätta om dess väljare är tillgänglig. Säkerhetskontroller vid
+  sparande och kaminens kortare tidsgräns är oförändrade.
 - Samma kontroll gäller rumstermostater (`climate`), till exempel LK:
   en färsk rapport från en annan entitet på exakt samma HA-enhet kan
   bekräfta en oförändrad termostat. Givare från andra enheter används

@@ -47,10 +47,10 @@ class HeaterReportTests(unittest.TestCase):
         self.assertEqual(len(data["runs"]), 2)
         self.assertEqual(data["observed_starts"], 2)
         self.assertEqual(data["runtime_seconds"], 900)
-        self.assertEqual(data["totals"]["coverage_seconds"], 1800)
+        self.assertEqual(data["totals"]["coverage_seconds"], 86400, "The last report, 0 kW, holds until the end")
         self.assertEqual(data["totals"]["measured_kwh"], 1)
         self.assertEqual(data["totals"]["partial_cost"], 2)
-        self.assertIsNone(data["totals"]["kwh"], "Not a complete day")
+        self.assertEqual(data["totals"]["kwh"], 1)
         first, second = data["runs"]
         self.assertEqual(first["seconds"], 600)
         self.assertEqual(first["max_kw"], 6)
@@ -74,6 +74,56 @@ class HeaterReportTests(unittest.TestCase):
         rows = heater_rows((3, 3))
         rows[-1]["last_updated"] = row(POWER, 3, START + 901)["last_updated"]
         self.assertEqual(report(rows)["runtime_seconds"], 0)
+
+    def test_steady_zero_is_off_for_the_whole_period(self):
+        # Issue #37: myUplink only reports on change, so a heater that stays off has a single row.
+        data = report(heater_rows((0,)))
+        self.assertEqual(data["runs"], [])
+        self.assertEqual(data["runtime_seconds"], 0)
+        self.assertEqual(data["totals"]["coverage_seconds"], 86400)
+        self.assertEqual(data["totals"]["kwh"], 0)
+        self.assertEqual(data["totals"]["cost"], 0)
+        self.assertEqual(data["skipped_intervals"], 0)
+        self.assertTrue(all(h["kwh"] == 0 for h in data["hours"]))
+        rows = heater_rows((0, 7, 0))
+        rows[1]["last_updated"] = row(POWER, 7, START + 30000)["last_updated"]
+        rows[2]["last_updated"] = row(POWER, 0, START + 30600)["last_updated"]
+        data = report(rows)
+        self.assertEqual(data["runtime_seconds"], 600)
+        self.assertAlmostEqual(data["runs"][0]["kwh"], 7 * 600 / 3600)
+        self.assertTrue(data["runs"][0]["start_observed"] and data["runs"][0]["end_observed"])
+        self.assertEqual(data["totals"]["coverage_seconds"], 86400)
+
+    def test_zero_hold_stops_at_invalid_states_and_resumes_only_at_next_zero(self):
+        for invalid in ("unavailable", "unknown", "bad", -1):
+            with self.subTest(state=invalid):
+                data = report(heater_rows((0, invalid)))
+                self.assertEqual(data["totals"]["coverage_seconds"], 300)
+                self.assertIsNone(data["totals"]["kwh"])
+                self.assertIsNone(data["totals"]["cost"])
+                recovered = report(heater_rows((0, invalid, 0)))
+                self.assertEqual(recovered["totals"]["coverage_seconds"], 86400 - 300)
+                self.assertEqual(recovered["runs"], [])
+
+    def test_zero_history_before_window_holds_but_missing_prefix_stays_unknown(self):
+        initial = heater_rows((0,))
+        initial[0]["last_updated"] = row(POWER, 0, START - 86400)["last_updated"]
+        self.assertEqual(report(initial)["totals"]["coverage_seconds"], 86400)
+        initial[0]["last_updated"] = row(POWER, 0, START + 3600)["last_updated"]
+        data = report(initial)
+        self.assertIsNone(data["hours"][0]["kwh"])
+        self.assertEqual(data["totals"]["coverage_seconds"], 23 * 3600)
+        self.assertTrue(all(h["kwh"] == 0 for h in data["hours"][1:]))
+
+    def test_zero_hold_does_not_extrapolate_nonzero_or_change_total_pump_energy(self):
+        from energy import consumption_report
+        rows = heater_rows((0,))
+        total = consumption_report(rows, price_rows(), POWER, PRICE, START, END, 7200, power=True)
+        self.assertEqual(total["totals"]["coverage_seconds"], 0)
+        self.assertEqual(report(heater_rows((3,)))["totals"]["coverage_seconds"], 0)
+        data = report(heater_rows((0, 3)))
+        self.assertEqual(data["totals"]["coverage_seconds"], 300)
+        self.assertIsNone(data["totals"]["kwh"])
 
     def test_window_boundaries_and_last_sample_are_not_extrapolated(self):
         data = report(heater_rows((3, 0, 0)))
@@ -154,9 +204,21 @@ class HeaterIntegrationTests(unittest.TestCase):
         query = parse_qs(urlsplit(self.ha.request.call_args.args[0]).query)
         self.assertEqual(set(query["filter_entity_id"][0].split(",")), {POWER, MODE, PRICE})
         self.assertEqual(query["significant_changes_only"], ["0"])
+        self.assertNotIn("skip_initial_state", query, "Recorder must include its initial state")
         self.assertNotIn("no_attributes", query)
         self.ha.set_offset.assert_not_called()
         self.ha.set_thermostat.assert_not_called()
+
+    def test_single_initial_zero_covers_day_even_if_current_status_is_unknown(self):
+        self.ha.request.return_value = [heater_rows((0,)), price_rows()]
+        with patch("insights.time.time", return_value=END + 60):
+            data = self.insights.auxiliary(self.cfg)
+        self.assertEqual(data["totals"]["coverage_seconds"], 86400)
+        self.assertEqual(data["totals"]["kwh"], 0)
+        self.assertEqual(data["totals"]["cost"], 0)
+        self.assertEqual(data["runtime_seconds"], 0)
+        self.assertEqual(data["runs"], [])
+        self.assertIsNone(data["current"]["active"], "Historical zero must not override current freshness checks")
 
     def test_stale_current_is_unknown_not_off_but_history_survives(self):
         with patch("insights.time.time", return_value=END + 60):

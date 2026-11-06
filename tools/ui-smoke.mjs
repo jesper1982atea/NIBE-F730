@@ -1188,6 +1188,7 @@ try {
   const auxiliaryPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   auxiliaryPage.on("pageerror", (error) => errors.push(error.message));
   let auxiliaryFail = false, auxiliaryMissing = false, auxiliaryStale = false, auxiliaryEmpty = false, auxiliaryNoCoverage = false;
+  let auxiliaryZeroDay = false;
   let auxiliaryHold = false, releaseAuxiliary, auxiliaryReads = 0, auxiliaryActive = 0, auxiliaryMaxActive = 0;
   let auxiliarySettings = { ...defaults, offset_entity: offset, price_entity: price };
   await auxiliaryPage.route("**/api/settings", (route) => route.fulfill({ json: auxiliarySettings }));
@@ -1201,13 +1202,15 @@ try {
     return route.fulfill({ json: {
       start: energyEnd - 86400, end: energyEnd, checked_at: now,
       method: "power", meter: { entity_id: "sensor.pump_power_internal_add_heat", name: "Elpatronens egen effekt" },
-      current: { active: auxiliaryStale ? null : true, kw: auxiliaryStale ? null : 3,
+      current: { active: auxiliaryStale ? null : !auxiliaryZeroDay, kw: auxiliaryStale ? null : auxiliaryZeroDay ? 0 : 3,
         error: auxiliaryStale ? "Mätvärdet är för gammalt." : null },
-      hours: energyHours, currency: priced ? "SEK" : null, price_provider: provider,
+      hours: auxiliaryZeroDay ? energyHours.map((hour) => ({ ...hour, kwh: 0 })) : energyHours,
+      currency: priced ? "SEK" : null, price_provider: provider,
       price_entity: price, price_error: priced ? null : "Prishistorik saknas.",
-      skipped_intervals: 2, runtime_seconds: auxiliaryEmpty ? 0 : 600, observed_starts: auxiliaryEmpty ? 0 : 1,
+      skipped_intervals: auxiliaryZeroDay ? 0 : 2, runtime_seconds: auxiliaryEmpty ? 0 : 600, observed_starts: auxiliaryEmpty ? 0 : 1,
       totals: { measured_kwh: auxiliaryEmpty ? 0 : 0.5, partial_cost: priced && !auxiliaryEmpty ? 1 : 0,
-        coverage_seconds: auxiliaryNoCoverage ? 0 : 3600, priced_seconds: priced && !auxiliaryNoCoverage ? 3600 : 0 },
+        coverage_seconds: auxiliaryNoCoverage ? 0 : auxiliaryZeroDay ? 86400 : 3600,
+        priced_seconds: priced && !auxiliaryNoCoverage ? auxiliaryZeroDay ? 86400 : 3600 : 0 },
       runs: auxiliaryEmpty ? [] : [{
         start: energyEnd - 3600, end: energyEnd - 3000, seconds: 600, kwh: 0.5, max_kw: 3,
         start_observed: true, end_observed: false, cost: priced ? 1 : null, partial_cost: priced ? 1 : 0,
@@ -1239,6 +1242,13 @@ try {
   await auxiliaryPage.locator("#refresh-auxiliary").click();
   await auxiliaryPage.waitForFunction(() => !document.getElementById("auxiliary-data").hidden);
   assert.match(await auxiliaryPage.locator("#auxiliary-runs").textContent(), /Inga körperioder.*säger inget om dataluckorna/);
+  auxiliaryZeroDay = true; auxiliaryMissing = false; auxiliaryStale = false;
+  await auxiliaryPage.locator("#refresh-auxiliary").click();
+  await auxiliaryPage.waitForFunction(() => document.getElementById("auxiliary-coverage").textContent.includes("24 av 24 timmar"));
+  assert.match(await auxiliaryPage.locator("#auxiliary-metrics").textContent(), /0 st.*0 min.*0 kWh.*0 SEK/);
+  assert.match(await auxiliaryPage.locator("#auxiliary-current").textContent(), /är av.*0 kW/);
+  assert.doesNotMatch(await auxiliaryPage.locator("#auxiliary-chart").textContent(), /Inga fullständiga timvärden/);
+  auxiliaryZeroDay = false;
   auxiliaryNoCoverage = true;
   await auxiliaryPage.locator("#refresh-auxiliary").click();
   await auxiliaryPage.waitForFunction(() => document.getElementById("auxiliary-runs").textContent.includes("Underlag saknas"));
@@ -1269,12 +1279,14 @@ try {
   const vacationPage = await browser.newPage({ viewport: { width: 390, height: 844 }, timezoneId: "Europe/Stockholm" });
   vacationPage.on("pageerror", (error) => errors.push(error.message));
   vacationPage.on("dialog", (dialog) => dialog.accept());
-  let vacationPlan = null, vacationWrites = [], vacationError = false;
+  let vacationPlan = null, vacationWrites = [], vacationError = false, pumpOutage = false;
   const settingsWritesBeforeVacation = writes;
   await vacationPage.route("**/api/status", (route) => route.fulfill({ json: {
     indoor: 22, indoor_smoothed: 21.5, current_offset: 3, desired_offset: 2, next_offset: 2,
     enabled: true, checked_at: Date.now() / 1000, rooms: [], warm_rooms: [],
     contributions: { room: 0.5, weather: 0, price: 0 }, vacation: vacationPlan,
+    ...(pumpOutage ? { outage_since: Date.now() / 1000, current_offset: null, desired_offset: null,
+      next_offset: null, contributions: null, message: "Pumpens värden är tillfälligt borta från myUplink." } : {}),
   } }));
   await vacationPage.route("**/api/vacation", (route) => {
     const body = route.request().postDataJSON();
@@ -1289,6 +1301,16 @@ try {
   await vacationPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await vacationPage.waitForFunction(() => document.getElementById("vacation-status").textContent === "Ingen semester planerad.");
   assert.match(await vacationPage.locator("#explanation").textContent(), /timmedel 21,5/);
+  pumpOutage = true;
+  await vacationPage.evaluate(() => refreshStatus());
+  assert.equal(await vacationPage.locator("#mode").textContent(), "Väntar på pumpen");
+  assert.equal(await vacationPage.locator("#status-title").textContent(), "Väntar på pumpens värden");
+  assert.equal(await vacationPage.locator("#mode").evaluate((node) => node.classList.contains("active")), false);
+  assert.doesNotMatch(await vacationPage.locator("#hero-offset").textContent(), /3/);
+  assert.doesNotMatch(await vacationPage.locator("#explanation").textContent(), /timmedel/);
+  pumpOutage = false;
+  await vacationPage.evaluate(() => refreshStatus());
+  assert.equal(await vacationPage.locator("#mode").textContent(), "Automatik aktiverad");
   await vacationPage.locator("#vacation-save").click();
   assert.match(await vacationPage.locator("#vacation-error").textContent(), /när du kommer hem/);
   assert.equal(vacationWrites.length, 0);

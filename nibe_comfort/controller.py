@@ -72,6 +72,8 @@ TEST_SECONDS = 600
 RESTORE_CONFIRM_SECONDS = 900
 # Service calls wait for the integration's cloud write (myUplink often needs more than 15 s).
 SERVICE_TIMEOUT_SECONDS = 60
+OUTAGE_GRACE_SECONDS = 1800
+OUTAGE_MESSAGE = "Pumpens värden är tillfälligt borta från myUplink. Kurv- och termostatstyrningen väntar på aktuella värden."
 # Keep the current pump value unless the wanted offset is clearly closer to another step:
 # room sensors with 1 °C resolution otherwise make the offset hop every interval.
 HYSTERESIS_STEPS = 0.25
@@ -273,6 +275,16 @@ class HomeAssistant:
             "{% for eid in device_entities(did) %}"
             "{% set ns.items = ns.items + "
             "[{'entity_id': eid, 'device_id': did, 'platform': 'climate_device'}] %}"
+            "{% endfor %}{% endif %}{% endfor %}"
+            "{% for s in states.sensor | selectattr('attributes.device_class', 'defined')"
+            " | selectattr('attributes.device_class', 'eq', 'temperature') %}"
+            "{% set did = device_id(s.entity_id) %}"
+            "{% set entry = config_entry_id(s.entity_id) %}"
+            "{% if did and entry and did not in ns.items | map(attribute='device_id') | list %}"
+            "{% for eid in device_entities(did) if eid.split('.')[0] in ['sensor', 'binary_sensor']"
+            " and config_entry_id(eid) == entry %}"
+            "{% set ns.items = ns.items + "
+            "[{'entity_id': eid, 'device_id': did, 'platform': 'room_device', 'config_entry_id': entry}] %}"
             "{% endfor %}{% endif %}{% endfor %}{{ ns.items | to_json }}"
         )
         registry = self.request("/template", {"template": template})
@@ -410,7 +422,7 @@ def device_peers(registry):
     groups = {}
     for item in registry:
         if item["device_id"]:
-            groups.setdefault((item.get("platform"), item["device_id"]), set()).add(item["entity_id"])
+            groups.setdefault((item.get("platform"), item["device_id"], item.get("config_entry_id")), set()).add(item["entity_id"])
     peers = {}
     for members in groups.values():
         for entity_id in members:
@@ -718,6 +730,7 @@ class Controller:
         self.pending = None
         self.observed_offset = None
         self.last_error = None
+        self.outage_since = None
         self.state_path = Path(data_dir) / "control-state.json"
         # Preserve the interval from the actual attempt, not the process start.
         self.last_write = 0
@@ -1255,10 +1268,30 @@ class Controller:
             try:
                 entities = self.ha.states()
                 now = time.time()
+                offset = next((e for e in entities if e["entity_id"] == self.config["offset_entity"]), None)
+                unavailable = offset is not None and offset["state"] == "unavailable"
+                if not unavailable:
+                    self.outage_since = None
                 self.vacation_step(entities, now)
                 peers = self.peers()
                 readings = current_readings(self.config, entities, now, peers)
                 fireplace = self.fireplace_step(entities, now, peers)
+                if unavailable:
+                    # Do not silently drop a missing controlling room during a pump outage.
+                    states = {e["entity_id"]: e for e in entities}
+                    indoor_temperature(self.config, lambda key: fresh_entity(
+                        states, key, self.config["max_age_minutes"], now, peers.get(key, ())))
+                    if self.outage_since is None:
+                        self.outage_since = now
+                    if now - self.outage_since < OUTAGE_GRACE_SECONDS and not self.last_error:
+                        self.status = {
+                            **readings, "fireplace": fireplace, "outage_since": self.outage_since,
+                            "message": OUTAGE_MESSAGE, "error_message": None, "checked_at": now,
+                            "enabled": self.config["enabled"], "settings": copy.deepcopy(self.config),
+                            "desired_offset": None, "next_offset": None, "contributions": None,
+                            "writable": False, "pending_write": copy.deepcopy(self.pending),
+                        }
+                        return
                 self.test_step(entities, now)
                 self.observe(entities, now, peers)
                 if self.config["preheat_enabled"]:
