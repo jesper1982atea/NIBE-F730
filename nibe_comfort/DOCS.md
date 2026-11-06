@@ -865,6 +865,18 @@ faktisk besparingsberäkning ingår inte.
   samma pump** har rapporterats inom åldersgränsen. Det visar att
   integrationen fortfarande levererar data. Tystnar hela pumpen, eller blir
   värdet otillgängligt, pausas styrningen som tidigare.
+- För separata temperaturgivare används färska rapporter från sensorer
+  på samma HA-enhet och samma integrationspost som livstecken för ett
+  oförändrat värde. `unknown` och `unavailable` godtas aldrig på detta sätt.
+  Styrande givare hoppas inte över om de saknas.
+- Vid otillgänglig kurvförskjutning väntar kurv- och termostatstyrningen
+  i upp till 30 minuter med beskedet **Väntar på pumpens värden**.
+  Saknade pumpvärden och beräknade mål visas inte som aktuella.
+  Därefter visas ett pausfel. Fel i styrande rumsgivare visas direkt;
+  saknade entiteter och kommunikationsfel omfattas inte av vänteläget.
+  Semesterlägets återställning hanteras fortfarande separat och kan
+  fortsätta om dess väljare är tillgänglig. Säkerhetskontroller vid
+  sparande och kaminens kortare tidsgräns är oförändrade.
 - Samma kontroll gäller rumstermostater (`climate`), till exempel LK:
   en färsk rapport från en annan entitet på exakt samma HA-enhet kan
   bekräfta en oförändrad termostat. Givare från andra enheter används

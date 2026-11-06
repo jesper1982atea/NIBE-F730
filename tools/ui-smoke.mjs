@@ -1279,12 +1279,14 @@ try {
   const vacationPage = await browser.newPage({ viewport: { width: 390, height: 844 }, timezoneId: "Europe/Stockholm" });
   vacationPage.on("pageerror", (error) => errors.push(error.message));
   vacationPage.on("dialog", (dialog) => dialog.accept());
-  let vacationPlan = null, vacationWrites = [], vacationError = false;
+  let vacationPlan = null, vacationWrites = [], vacationError = false, pumpOutage = false;
   const settingsWritesBeforeVacation = writes;
   await vacationPage.route("**/api/status", (route) => route.fulfill({ json: {
     indoor: 22, indoor_smoothed: 21.5, current_offset: 3, desired_offset: 2, next_offset: 2,
     enabled: true, checked_at: Date.now() / 1000, rooms: [], warm_rooms: [],
     contributions: { room: 0.5, weather: 0, price: 0 }, vacation: vacationPlan,
+    ...(pumpOutage ? { outage_since: Date.now() / 1000, current_offset: null, desired_offset: null,
+      next_offset: null, contributions: null, message: "Pumpens värden är tillfälligt borta från myUplink." } : {}),
   } }));
   await vacationPage.route("**/api/vacation", (route) => {
     const body = route.request().postDataJSON();
@@ -1299,6 +1301,16 @@ try {
   await vacationPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await vacationPage.waitForFunction(() => document.getElementById("vacation-status").textContent === "Ingen semester planerad.");
   assert.match(await vacationPage.locator("#explanation").textContent(), /timmedel 21,5/);
+  pumpOutage = true;
+  await vacationPage.evaluate(() => refreshStatus());
+  assert.equal(await vacationPage.locator("#mode").textContent(), "Väntar på pumpen");
+  assert.equal(await vacationPage.locator("#status-title").textContent(), "Väntar på pumpens värden");
+  assert.equal(await vacationPage.locator("#mode").evaluate((node) => node.classList.contains("active")), false);
+  assert.doesNotMatch(await vacationPage.locator("#hero-offset").textContent(), /3/);
+  assert.doesNotMatch(await vacationPage.locator("#explanation").textContent(), /timmedel/);
+  pumpOutage = false;
+  await vacationPage.evaluate(() => refreshStatus());
+  assert.equal(await vacationPage.locator("#mode").textContent(), "Automatik aktiverad");
   await vacationPage.locator("#vacation-save").click();
   assert.match(await vacationPage.locator("#vacation-error").textContent(), /när du kommer hem/);
   assert.equal(vacationWrites.length, 0);

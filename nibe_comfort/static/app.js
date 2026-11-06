@@ -626,8 +626,8 @@ async function refreshStatus() {
     } : response;
     if (typeof state.enabled === "boolean") {
       const away = state.vacation?.phase === "restoring" || (state.vacation?.phase === "active" && state.vacation.confirmed);
-      $("mode").textContent = away ? "Semesterläge" : state.enabled ? "Automatik aktiverad" : "Övervakning";
-      $("mode").classList.toggle("active", state.enabled && !away);
+      $("mode").textContent = away ? "Semesterläge" : state.outage_since != null ? "Väntar på pumpen" : state.enabled ? "Automatik aktiverad" : "Övervakning";
+      $("mode").classList.toggle("active", state.enabled && !away && state.outage_since == null);
     }
     lastStatus = state;
     renderVacation();
@@ -644,7 +644,7 @@ async function refreshStatus() {
     $("hero-offset").title = state.reading_errors?.current_offset || "";
     $("desired-offset").textContent = displayNumber(state.desired_offset);
     $("next-offset").textContent = displayNumber(state.next_offset);
-    $("status-title").textContent = state.error_message ? "Styrningen är pausad" : state.enabled ? "Värmen följer dina inställningar" : "Se förslaget innan du styr";
+    $("status-title").textContent = state.error_message ? "Styrningen är pausad" : state.outage_since != null ? "Väntar på pumpens värden" : state.enabled ? "Värmen följer dina inställningar" : "Se förslaget innan du styr";
     $("status-message").textContent = state.error_message || state.message;
     if (summaryPlan) renderSummary(summaryPlan);
     else renderLiveAdjustment();
