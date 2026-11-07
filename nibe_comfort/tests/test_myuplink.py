@@ -151,6 +151,9 @@ class MyUplinkTests(unittest.TestCase):
             with self.assertRaises(ControlError) as caught:
                 client.request("/oauth/token", b"secret")
             self.assertNotIn("secret", str(caught.exception))
+            request = client.opener.open.call_args.args[0]
+            self.assertEqual(request.get_header("User-agent"),
+                             "NIBE-Comfort (+https://github.com/jesper1982atea/NIBE-F730)")
         self.assertIsNone(NoRedirects().redirect_request(None, None, 302, "", {}, "https://elsewhere"))
 
     def test_duplicate_or_malformed_rows_rejected(self):

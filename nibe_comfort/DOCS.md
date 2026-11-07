@@ -177,6 +177,12 @@ registreringsvärde; NIBE Comfort använder den inte. Det gör inte tillägget
 till mottagare av HA:s OAuth-inloggning. Vi har inte verifierat vilka
 registreringskrav myUplink ställer på en ny klient för just ditt konto.
 
+Tillägget identifierar sina API-anrop med `User-Agent: NIBE-Comfort`
+(med projektlänk). myUplinks Cloudflare-skydd kan annars neka Pythons
+standardklient med **403 / Error 1010** innan klientuppgifterna kontrolleras.
+Fel vid anläggningsupptäckt returneras som JSON med HTTP 422 så att
+Home Assistants ingress inte ersätter feltexten med en 502-webbsida.
+
 Om tokenhämtning eller larmläsning ger **401/403**, kontrollera client ID,
 client secret, tillåtna tokenflöden, `READSYSTEM WRITESYSTEM` och klientens
 åtkomst till anläggningen. Tillägget byter inte automatiskt till HA:s

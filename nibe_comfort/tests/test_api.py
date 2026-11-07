@@ -134,6 +134,17 @@ class ApiTests(unittest.TestCase):
         self.ha.set_offset.assert_not_called()
         cloud.reset.assert_not_called()
 
+    def test_discovery_error_keeps_json_instead_of_ingress_gateway_page(self):
+        cloud = Mock()
+        cloud.discovery.side_effect = ControlError("myUplink svarade med HTTP 403.")
+        self.server.RequestHandlerClass = handler_for(self.controller, self.token, myuplink=cloud)
+        with self.assertLogs("nibe_comfort", level="WARNING"):
+            status, data = self.request("/api/myuplink/discovery")
+        self.assertEqual(status, 422)
+        self.assertEqual(data["error"], "myUplink svarade med HTTP 403.")
+        cloud.reset.assert_not_called()
+        self.ha.set_offset.assert_not_called()
+
     def test_fireplace_settings_and_read_only_observation_status(self):
         cfg = config(fireplace_enabled=True, fireplace_rooms=["sensor.living"])
         code, saved = self.request("/api/settings", "PUT", cfg)
