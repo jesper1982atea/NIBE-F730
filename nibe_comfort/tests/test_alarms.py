@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from controller import ControlError, Controller, device_peers, pump_alarm
-from insights import Insights
+from insights import Insights, overview
 from test_controller import config, entity, fixtures
 
 
@@ -130,3 +130,61 @@ class AlarmTests(unittest.TestCase):
         self.assertFalse(report["can_pause"])
         self.assertIn("inte en fastställd diagnos", report["explanation"])
         self.assertEqual(len(report["rooms"]), 2)
+
+
+class CodeOnlyAlarmTests(unittest.TestCase):
+    """Models like F370 have no alarm status entity, only the latest alarm number, which stays after the alarm clears."""
+    CODE = "sensor.pump_alarms_45001"
+    MODULE = "sensor.pump_alarms_eb100_ep14_44137"
+
+    def setUp(self):
+        self.now = time.time()
+        self.registry = [{"entity_id": key, "device_id": "pump", "platform": "myuplink"}
+                         for key in ("number.offset", self.CODE, self.MODULE)]
+        self.states = fixtures(self.now) + [entity(self.CODE, "184", self.now), entity(self.MODULE, "51", self.now)]
+        self.cfg = config(enabled=True)
+
+    def alarm(self, registry=None):
+        return pump_alarm(self.states, self.cfg, device_peers(registry or self.registry), self.now)
+
+    def test_latest_code_is_shown_but_never_treated_as_active(self):
+        alarm = self.alarm()
+        self.assertIsNone(alarm["active"])
+        self.assertIsNone(alarm["code"])
+        self.assertEqual(alarm["latest_code"], 184)
+        self.assertIn("184", alarm["error"])
+        self.states[-2]["state"] = "229"
+        self.assertIsNone(self.alarm()["active"])
+
+    def test_code_only_alarm_never_holds_control_or_blocks_test(self):
+        self.states[-2]["state"] = "229"
+        ha = Mock()
+        ha.states.return_value = self.states
+        ha.integration_registry.return_value = self.registry
+        with tempfile.TemporaryDirectory() as path:
+            controller = Controller(ha, path)
+            controller.config = self.cfg
+            controller.tick()
+            self.assertNotIn("Larm 229", controller.snapshot()["message"])
+            controller.start_test()
+
+    def test_sub_module_and_ambiguous_codes(self):
+        self.assertEqual(self.alarm()["latest_code"], 184)
+        duplicate = [*self.registry, {"entity_id": "sensor.pump_alarms_45002", "device_id": "pump", "platform": "myuplink"}]
+        alarm = self.alarm(duplicate)
+        self.assertIsNone(alarm["latest_code"])
+        self.assertIn("entydig", alarm["error"])
+
+    def test_status_entity_still_decides(self):
+        registry = [*self.registry, {"entity_id": ALARM, "device_id": "pump", "platform": "myuplink"}]
+        self.states += [entity(ALARM, "off", self.now)]
+        alarm = self.alarm(registry)
+        self.assertFalse(alarm["active"])
+        self.assertIsNone(alarm["error"])
+
+    def test_overview_shows_latest_code_without_active_state(self):
+        item = next(i for i in overview(self.states, self.registry, self.cfg, self.now)["pump"] if i["key"] == "alarm")
+        self.assertEqual((item["value"], item["active"], item["error"]), ("Senaste larmkod 184", None, None))
+        self.states[-2]["state"] = "0"
+        item = next(i for i in overview(self.states, self.registry, self.cfg, self.now)["pump"] if i["key"] == "alarm")
+        self.assertEqual((item["value"], item["active"]), ("Inget larm registrerat", None))

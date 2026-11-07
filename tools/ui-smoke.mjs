@@ -141,7 +141,7 @@ const server = createServer(async (request, response) => {
       now, error: null, target: settings.target_temperature,
       model: { status: "rough", hours: 159, days: 6.6, changes: 4, needed_hours: 168, needed_changes: 6, lag: 0, skill: 0.21, r2: 0.06,
         facts: { time_constant_hours: 10.2, degrees_per_step: 0.19, outdoor_effect: 0, lag_hours: 0, step_after_3h: 0.05, step_after_6h: 0.08, half_response_hours: 7.1 },
-        message: "Grov uppskattning (6,6 av 7 dygn, 4 av 6 kurvändringar). Förvärmningen använder försiktiga standardvärden (3 timmar innan) tills modellen är säker." },
+        message: "Behöver lite mer underlag (6,6 av 7 dygn, 4 av 6 kurvändringar). Tills dess börjar förvärmningen 3 timmar innan." },
       history: Array.from({ length: 24 }, (_, i) => [now - (24 - i) * hour, 21.7 + Math.sin(i / 4) * 0.3]),
       prediction: Array.from({ length: 25 }, (_, i) => [now + i * hour, 21.9 + (i > 6 && i < 10 ? 0.3 : 0) - (i >= 10 && i < 13 ? 0.2 : 0)]),
       fireplace_periods: [{ start: now - 7200, end: now - 3600 }],
@@ -249,7 +249,7 @@ async function dashboardChecks() {
   assert.match(await page.locator("#hero-offset-base").textContent(), /grundvärde 3/);
   assert.match(await page.locator("#hero-extra").textContent(), /Elpris nu .* SEK\/kWh \((billigt|normalt|dyrt)\)/);
   await page.waitForFunction(() => document.getElementById("hw-status").textContent.startsWith("Uppdaterad"));
-  await page.waitForFunction(() => document.getElementById("learn-status").textContent.startsWith("Grov bild"));
+  await page.waitForFunction(() => document.getElementById("learn-status").textContent.startsWith("Preliminär husmodell"));
   await page.waitForFunction(() => document.getElementById("version").textContent === " · Version 0.2.8");
   assert.equal(await page.locator("#learning-card").evaluate((card) => card.previousElementSibling.querySelector("#plan-changes") !== null), true, "Learning card follows the plan");
   assert.equal(await page.locator("#hot-water-card").evaluate((card) => card.previousElementSibling.id), "fireplace-card");

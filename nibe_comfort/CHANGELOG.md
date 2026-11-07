@@ -11,6 +11,12 @@
   rummen låg i en annan ordning än i rumsväljaren. Sparad ordning behålls nu.
   Samma fel gav "Exempel med osparade värden" i förvärmningen.
 - Pumpens värden visas med decimalkomma som resten av sidan.
+- Pumplarm på modeller utan larmstatusgivare, som F370: senaste larmkod visas
+  (myUplinks parameter-id i entitetsnamnet, `_alarms_45001`, godtas) men
+  räknas inte som aktivt larm, eftersom koden ligger kvar efter att larmet
+  försvunnit. Tillbehörsmodulers larmkoder används inte.
+  Larmvyns driftläge använder samma textstatuskontroll som översikten.
+- Husmodellens status "Grov bild" heter nu "Preliminär" med en kortare förklaring.
 - Nytt utseende: korthuvud med ikon och statusetikett, statusrutor, mätare och
   tidslinjer för semester, kamin, husmodell, pump, rum och elpatron.
 

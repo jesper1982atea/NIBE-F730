@@ -11,7 +11,7 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from controller import ControlError, control_rooms, current_readings, device_peers, fresh_entity, next_step, number, price_contribution, pump_alarm, temperature, text_status
+from controller import ControlError, alarm_code, alarm_sources, control_rooms, current_readings, device_peers, fresh_entity, next_step, number, price_contribution, pump_alarm, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 from energy import POWER_UNITS, consumption_report, discover_meter, meter_error, produced_energy
 from auxiliary import heater_entities, heater_report
@@ -92,6 +92,30 @@ def reading(entity, label, max_age, now, peers=()):
     return result
 
 
+def alarm_reading(pump_states, label, max_age, now, peers):
+    """Pump alarm from a status entity, or from the alarm number when the model has none."""
+    alarms, codes = alarm_sources([s["entity_id"] for s in pump_states])
+    by_id = {s["entity_id"]: s for s in pump_states}
+    if len(alarms) == 1:
+        item = reading(by_id[alarms[0]], label, max_age, now, peers)
+        item["active"] = {"on": True, "off": False}.get(item["value"])
+        item["value"] = {"on": "Larm aktivt", "off": "Inget aktivt larm"}.get(item["value"], item["value"])
+    elif not alarms and len(codes) == 1:
+        item = reading(by_id[codes[0]], label, max_age, now, peers)
+        item["unit"] = ""
+        item["active"] = None
+        if item["value"] is not None:
+            try:
+                code = alarm_code(by_id[codes[0]])
+                item["value"] = f"Senaste larmkod {code}" if code else "Inget larm registrerat"
+            except ControlError as exc:
+                item.update(value=None, error=str(exc))
+    else:
+        item = {"label": label, "value": None, "active": None, "error": "Ingen entydig givare hittades."}
+    item["key"] = "alarm"
+    return item
+
+
 def peers_states(entity, peers):
     states = {p["entity_id"]: p for p in peers}
     states[entity["entity_id"]] = entity
@@ -109,6 +133,9 @@ def overview(states, registry, config, now):
     pump = []
     pump_states = [by_id[e] for e in sorted(pump_ids) if e in by_id]
     for suffix, (key, label) in LABELS.items():
+        if key == "alarm":
+            pump.append(alarm_reading([by_id[e] for e in pump_ids if e in by_id], label, config["max_age_minutes"], now, pump_states))
+            continue
         matches = [by_id[e] for e in pump_ids if e in by_id and e.endswith(suffix)
                    and e.startswith(("sensor.", "binary_sensor."))
                    and (key != "operation" or text_status(by_id[e]))]
@@ -120,11 +147,7 @@ def overview(states, registry, config, now):
         item["key"] = key
         item["active"] = None
         if item["value"] is not None:
-            if key == "alarm":
-                item["active"] = {"on": True, "off": False}.get(item["value"])
-                item["value"] = {"on": "Larm aktivt", "off": "Inget aktivt larm"}.get(item["value"], item["value"])
-            else:
-                item["value"] = TRANSLATIONS.get(item["value"], item["value"])
+            item["value"] = TRANSLATIONS.get(item["value"], item["value"])
         pump.append(item)
     pump_electricity = []
     for eid in sorted(pump_ids):
@@ -803,7 +826,8 @@ class Insights:
                 ("_status", "Driftläge"), ("_current_compressor_frequency", "Kompressorfrekvens"),
                 ("_degree_minutes", "Gradminuter"), ("_supply_line_bt2", "Framledning"),
                 ("_return_line_bt3", "Returledning"), ("_heating_medium_pump_speed_gp1", "Värmebärarpump GP1")):
-            matches = [s for s in pump_states if s["entity_id"].startswith("sensor.") and s["entity_id"].endswith(suffix)]
+            matches = [s for s in pump_states if s["entity_id"].startswith("sensor.") and s["entity_id"].endswith(suffix)
+                       and (suffix != "_status" or text_status(s))]
             if len(matches) == 1:
                 observations.append(reading(matches[0], label, config["max_age_minutes"], now, pump_states))
             else:

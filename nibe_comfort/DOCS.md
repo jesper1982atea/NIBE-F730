@@ -72,7 +72,10 @@ tryck. Inställningarna är utfällda från början tills rum och pumpanslutning
 ### Pumplarm och korta drifttider
 
 **Pumplarm** visar larmstatus och kod från samma HA-enhet och
-integrationsanslutning som din valda kurvförskjutning. Saknade, otillgängliga,
+integrationsanslutning som din valda kurvförskjutning. Modeller utan
+larmstatusgivare (till exempel F370) visar bara senaste larmkod. Den ligger
+kvar efter att larmet försvunnit och räknas därför inte som aktivt larm; se
+pumpens display. Larmkoder från tillbehörsmoduler (t.ex. EB100-EP14) används inte. Saknade, otillgängliga,
 gamla eller tvetydiga givare visas som osäkra; andra pumpars larm används inte.
 Vyn visar också senaste rapporterade driftvärden samt valda rums temperaturer
 och termostatbörvärden. Dessa är inte ögonblicksbilder vid larmets start.
@@ -181,7 +184,7 @@ anpassas till mätvärdena:
 - **Ett steg på kurvan ger** – hur mycket varmare det blir inne på sikt per
   steg förskjutning.
 - **Halva effekten märks efter** – hur trögt huset är.
-- **Status**: *Lär sig* (under 3 dygn eller för lite variation), *Grov bild*
+- **Status**: *Lär sig* (under 3 dygn eller för lite variation), *Preliminär*
   och *Känner huset väl* (minst 7 dygn, 6 kurvändringar och att modellen
   förutsäger 6 timmar framåt bättre än att anta oförändrat).
 

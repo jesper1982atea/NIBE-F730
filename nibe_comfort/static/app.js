@@ -1925,11 +1925,11 @@ async function refreshLearning() {
   try {
     const data = await api("learning");
     const model = data.model;
-    const titles = { learning: "Lär sig fortfarande", rough: "Grov bild av huset", good: "Känner huset väl" };
+    const titles = { learning: "Lär sig fortfarande", rough: "Preliminär husmodell", good: "Känner huset väl" };
     $("learn-status").textContent = data.error || (model ? `${titles[model.status]} · uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE")}` : "Ingen modell ännu.");
     $("learn-message").textContent = [model?.message, data.prediction_note].filter(Boolean).join(" ");
     featureTone("learning-card", "learn-pill", { learning: "blue", rough: "amber", good: "green" }[model?.status] || "muted",
-      { learning: "Lär sig", rough: "Grov bild", good: "Känner huset" }[model?.status] || "Ingen modell");
+      { learning: "Lär sig", rough: "Preliminär", good: "Känner huset" }[model?.status] || "Ingen modell");
     $("learn-meter-text").textContent = model ? `${displayNumber(model.days)} av 7 dygn` : "–";
     $("learn-meter-bar").style.width = `${model ? Math.round(Math.max(0, Math.min(1, model.hours / model.needed_hours)) * 100) : 0}%`;
     $("learn-message").hidden = !$("learn-message").textContent;
