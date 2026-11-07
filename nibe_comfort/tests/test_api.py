@@ -74,6 +74,31 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request("/api/status")[1]["vacation"]["end"], end)
         self.assertEqual(self.request("/api/vacation", "PUT", {"action": "cancel"}), (200, {"vacation": None}))
 
+    def test_alarm_endpoint_requires_fresh_229_and_auth_without_generic_reset(self):
+        from test_alarms import ALARM, CODE, REGISTRY
+        from test_controller import entity
+        self.controller.config = config(room_sensors=["climate.living"], thermostat_control_enabled=True)
+        self.ha.integration_registry.return_value = REGISTRY
+        self.ha.states.side_effect = lambda: fixtures() + [entity(ALARM, "on"), entity(CODE, 229)]
+        code, report = self.request("/api/alarms")
+        self.assertEqual(code, 200)
+        self.assertEqual(report["code"], 229)
+        self.assertFalse(report["reset_supported"])
+        self.assertTrue(report["can_pause"])
+        self.assertEqual(self.request("/api/alarms", "PUT", {"action": "reset"})[0], 400)
+        self.assertEqual(self.request("/api/alarms", "PUT", [1])[0], 400)
+        self.assertEqual(self.request("/api/alarms", "PUT", {"action": "pause_thermostats"}, token=False)[0], 401)
+        self.assertEqual(self.request("/api/alarms", "PUT", {"action": "pause_thermostats"}, content_type="text/plain")[0], 415)
+        with patch("controller.atomic_json", side_effect=OSError("disk full")), self.assertLogs("nibe_comfort", level="ERROR"):
+            self.assertEqual(self.request("/api/alarms", "PUT", {"action": "pause_thermostats"})[0], 500)
+        self.assertTrue(self.controller.config["thermostat_control_enabled"])
+        self.assertEqual(self.request("/api/alarms", "PUT", {"action": "pause_thermostats"})[0], 200)
+        self.assertFalse(self.controller.config["thermostat_control_enabled"])
+        self.ha.states.side_effect = lambda: fixtures() + [entity(ALARM, "on"), entity(CODE, "unavailable")]
+        self.assertEqual(self.request("/api/alarms", "PUT", {"action": "pause_thermostats"})[0], 400)
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
+
     def test_fireplace_settings_and_read_only_observation_status(self):
         cfg = config(fireplace_enabled=True, fireplace_rooms=["sensor.living"])
         code, saved = self.request("/api/settings", "PUT", cfg)

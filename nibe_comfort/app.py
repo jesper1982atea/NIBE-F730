@@ -77,6 +77,8 @@ def handler_for(controller, api_token=None, insights=None):
                     self.respond(200, controller.ha.discover())
                 elif path == "/api/overview":
                     self.respond(200, insights.overview(controller.settings()))
+                elif path == "/api/alarms":
+                    self.respond(200, insights.alarms(controller.settings()))
                 elif path == "/api/hotwater":
                     self.respond(200, insights.hot_water(controller.settings()))
                 elif path == "/api/auxiliary":
@@ -175,6 +177,19 @@ def handler_for(controller, api_token=None, insights=None):
             if not self.authorized():
                 return
             path = urlsplit(self.path).path
+            if path == "/api/alarms":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(length)) if 0 < length <= 1024 else {}
+                    if body != {"action": "pause_thermostats"}:
+                        raise ControlError("Endast pause_thermostats stöds. Larm återställs inte automatiskt.")
+                    self.respond(200, controller.pause_alarm_thermostats())
+                except (ValueError, AttributeError, ControlError) as exc:
+                    self.respond(400, {"error": str(exc) or "Ogiltig begäran."})
+                except (OSError, sqlite3.Error):
+                    LOG.exception("Kunde inte spara larmåtgärden")
+                    self.respond(500, {"error": "Larmåtgärden kunde inte sparas. Kontrollera loggen."})
+                return
             if path == "/api/test":
                 try:
                     length = int(self.headers.get("Content-Length", "0"))

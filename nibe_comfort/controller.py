@@ -447,6 +447,33 @@ def device_peers(registry):
     return {entity_id: sorted(ids) for entity_id, ids in peers.items()}
 
 
+def pump_alarm(entities, config, peers, now):
+    """Only read alarm entities associated with the configured pump."""
+    states = {e["entity_id"]: e for e in entities}
+    ids = set(peers.get(config["offset_entity"], ()))
+    result = {"active": None, "code": None, "error": None, "reported_at": None}
+    alarms = [key for key in ids if key.startswith("binary_sensor.") and key.endswith("_alarm")]
+    codes = [key for key in ids if key.startswith("sensor.") and key.endswith("_alarms")]
+    try:
+        if len(alarms) != 1:
+            raise ControlError("Ingen entydig larmgivare hittades på vald pump.")
+        alarm = fresh_entity(states, alarms[0], config["max_age_minutes"], now, ids)
+        if alarm["state"] not in ("on", "off"):
+            raise ControlError("Pumpens larmstatus kan inte tolkas.")
+        result.update(active=alarm["state"] == "on",
+                      reported_at=alarm.get("last_reported") or alarm.get("last_updated"))
+        if len(codes) == 1:
+            code = number(fresh_entity(states, codes[0], config["max_age_minutes"], now, ids)["state"], "Larmkod")
+            if code != int(code) or not 0 <= code <= 99999:
+                raise ControlError("Pumpens larmkod kan inte tolkas.")
+            result["code"] = int(code) if result["active"] else None
+        elif result["active"]:
+            raise ControlError("Aktivt larm, men ingen entydig kodgivare hittades.")
+    except ControlError as exc:
+        result["error"] = str(exc)
+    return result
+
+
 def temperature(entity):
     attrs = entity.get("attributes", {})
     is_weather = entity["entity_id"].startswith("weather.")
@@ -849,7 +876,24 @@ class Controller:
                            "enabled": config["enabled"]}
             self.events.add("settings_saved", "Inställningar sparade.", request_id=event_id, changes=changes)
 
-    def thermostat_step(self, entities, now, peers, testing):
+    def pause_alarm_thermostats(self):
+        """Pause our limiter only; never reset the pump or open valves."""
+        with self.lock:
+            entities = self.ha.states()
+            peers = self.peers()
+            alarm = pump_alarm(entities, self.config, peers, time.time())
+            if alarm["error"] or alarm["active"] is not True or alarm["code"] != 229:
+                raise ControlError("Åtgärden kräver ett aktuellt larm 229 på vald pump. Uppdatera larmvyn.")
+            if not self.config["thermostat_control_enabled"]:
+                return copy.deepcopy(self.config)
+            config = {**self.config, "thermostat_control_enabled": False}
+            atomic_json(self.path, config)
+            self.config = config
+            self.events.add("settings_saved", "Termostatbegränsning pausad vid larm 229. Befintliga börvärden och ventiler är oförändrade.",
+                            changes={"thermostat_control_enabled": {"from": True, "to": False}})
+            return copy.deepcopy(config)
+
+    def thermostat_step(self, entities, now, peers, testing, alarm_hold=False):
         result = {"enabled": self.config["thermostat_control_enabled"], "rooms": []}
         if not result["enabled"]:
             return result
@@ -896,8 +940,9 @@ class Controller:
                 if setpoint <= target + 1e-6:
                     row["message"] = "Börvärdet är redan vid eller under målet; höjs inte."
                     continue
-                if not self.config["enabled"] or testing:
-                    row["message"] = "Väntar: automatiken är avstängd eller pumptest pågår."
+                if not self.config["enabled"] or testing or alarm_hold:
+                    row["message"] = ("Väntar: pumpen rapporterar larm 229; befintligt börvärde lämnas orört."
+                                      if alarm_hold else "Väntar: automatiken är avstängd eller pumptest pågår.")
                     continue
                 remaining = max(0, 1800 - (now - state.get("attempted_at", 0)))
                 retry = state.get("outcome") in ("failed", "unconfirmed")
@@ -1183,6 +1228,9 @@ class Controller:
     def start_test(self):
         """Move the offset one step for TEST_SECONDS so the user can see the pump react, then restore it."""
         with self.lock:
+            alarm = pump_alarm(self.ha.states(), self.config, self.peers(), time.time())
+            if alarm["active"] is True:
+                raise ControlError("Pumpen har ett aktivt larm. Åtgärda larmet innan du startar ett pumptest.")
             if self.vacation:
                 raise ControlError("Avsluta semesterperioden och invänta återställning innan du startar ett pumptest.")
             if self.test and self.test["phase"] in ("running", "restoring"):
@@ -1294,6 +1342,8 @@ class Controller:
                 self.vacation_step(entities, now)
                 peers = self.peers()
                 readings = current_readings(self.config, entities, now, peers)
+                alarm = pump_alarm(entities, self.config, peers, now)
+                alarm_hold = alarm["active"] is True and alarm["code"] == 229 and not alarm["error"]
                 fireplace = self.fireplace_step(entities, now, peers)
                 if unavailable:
                     # Do not silently drop a missing controlling room during a pump outage.
@@ -1331,6 +1381,8 @@ class Controller:
                 result["preheat"] = preheat
                 result.update(readings)
                 vacation = self.vacation_paused()
+                if alarm_hold and result["writable"]:
+                    result["next_offset"] = result["current_offset"]
                 if vacation and result["writable"]:
                     result["next_offset"] = result["current_offset"]
                 fireplace["contribution"] = result["contributions"]["fireplace"]
@@ -1357,9 +1409,12 @@ class Controller:
                 testing = bool(self.test and self.test["phase"] in ("running", "restoring"))
                 self.status = {**copy.deepcopy(result), "message": "Avläst. Kontrollerar styrning och återläsning.",
                                "control_in_progress": True}
-                result["thermostat_control"] = self.thermostat_step(entities, now, peers, testing or vacation)
+                result["pump_alarm"] = alarm
+                result["thermostat_control"] = self.thermostat_step(entities, now, peers, testing or vacation, alarm_hold=alarm_hold)
                 if testing:
                     result["message"] = "Test av styrningen pågår: automatiken väntar tills testet är klart."
+                elif alarm_hold:
+                    result["message"] = "Larm 229: kurv- och termostatstyrningen väntar. Kontrollera flödet och pumpens larm innan återställning."
                 elif vacation:
                     result["message"] = "Semesterläge: pumpen sköter värmen och automatiken väntar tills perioden är slut."
                 elif self.config["enabled"]:
@@ -1405,7 +1460,7 @@ class Controller:
                             result["wait_seconds"] = math.ceil(self.config["min_interval_minutes"] * 60)
                 if self.pending:
                     result["pending_write"] = copy.deepcopy(self.pending)
-                    if self.pending.get("error"):
+                    if self.pending.get("error") and not alarm_hold:
                         result["message"] = "Tidigare styrförsök misslyckades. Återläser; nytt försök efter minsta ändringsintervall om ändringen fortfarande behövs."
                 self.status = result
             except ControlError as exc:

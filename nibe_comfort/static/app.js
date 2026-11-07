@@ -899,6 +899,7 @@ const valueAt = (points, time) => {
 function renderControlLimit() {
   const limit = lastStatus?.control_limit;
   const limited = limit && !lastStatus.error_message && lastStatus.checked_at
+    && !confirmedShortRuntimeAlarm()
     && Date.now() / 1000 - lastStatus.checked_at <= 180
     && lastStatus.next_offset === lastStatus.current_offset;
   $("adjust-offset-limits").hidden = !limited;
@@ -907,11 +908,19 @@ function renderControlLimit() {
   $("next-change-why").textContent = `Beräknad förskjutning ${displayNumber(limit.requested)}, men din sparade gräns är ${displayNumber(limit.value)}. Automatiken stannar vid gränsen. Du kan ändra tillåtet intervall i inställningarna.`;
 }
 
+function confirmedShortRuntimeAlarm() {
+  const alarm = lastStatus?.pump_alarm;
+  return alarm?.active === true && alarm.code === 229 && !alarm.error;
+}
+
 function renderLiveAdjustment() {
   renderControlLimit();
   if (!lastStatus?.checked_at || Date.now() / 1000 - lastStatus.checked_at > 180) {
     $("next-change").textContent = "Avvaktar";
     $("next-change-why").textContent = "Aktuellt underlag saknas.";
+  } else if (confirmedShortRuntimeAlarm()) {
+    $("next-change").textContent = "Pumplarm 229";
+    $("next-change-why").textContent = "Kurv- och termostatstyrningen väntar tills larmet är åtgärdat. Pumpens skydd återställs inte av appen.";
   } else if (lastStatus.pending_write?.error) {
     $("next-change").textContent = "Återförsök väntar";
     $("next-change-why").textContent = `Återläser först; nytt försök tidigast om ${Math.ceil((lastStatus.wait_seconds || 0) / 60)} min om ändringen fortfarande behövs.`;
@@ -1161,7 +1170,68 @@ function metric(item) {
   return block;
 }
 
+let alarmsBusy = false, alarmActionBusy = false, lastAlarm = null;
+
+async function refreshAlarms() {
+  if (alarmsBusy || alarmActionBusy) return;
+  alarmsBusy = true;
+  $("alarm-pause").disabled = true;
+  try {
+    const data = await api("alarms");
+    lastAlarm = data;
+    $("alarm-status").textContent = data.error
+      ? `Larmstatus är osäker: ${data.error}`
+      : data.active === true ? `Aktivt pumplarm${data.code !== null ? ` ${data.code}` : ""}`
+      : data.active === false ? "Inget aktivt pumplarm rapporterat." : "Larmstatus är okänd.";
+    $("alarm-explanation").textContent = data.explanation;
+    $("alarm-observations").replaceChildren(...data.observations.map(metric));
+    $("alarm-pause").hidden = !data.can_pause;
+    $("alarm-rooms").replaceChildren(...data.rooms.map((room) => {
+      const item = document.createElement("li");
+      item.textContent = `${room.name}: ${displayNumber(room.temperature)} °C · börvärde ${displayNumber(room.setpoint)} °C${room.error ? ` · ${room.error}` : ""}`;
+      return item;
+    }));
+  } catch (error) {
+    lastAlarm = null;
+    $("alarm-pause").hidden = true;
+    $("alarm-rooms").replaceChildren();
+    $("alarm-observations").replaceChildren();
+    $("alarm-explanation").textContent = "";
+    $("alarm-status").textContent = `Kunde inte läsa larm: ${error.message}. Försöker igen automatiskt.`;
+  } finally {
+    alarmsBusy = false;
+    $("alarm-pause").disabled = alarmActionBusy || !lastAlarm?.can_pause;
+  }
+}
+
+async function pauseAlarmThermostats() {
+  if (busy || alarmActionBusy || alarmsBusy || !lastAlarm?.can_pause) return;
+  if (!window.confirm("Pausa appens termostatbegränsning? Detta öppnar inte ventiler, ändrar inga befintliga börvärden och återställer inte pumpens larm.")) return;
+  alarmActionBusy = true;
+  busy = true;
+  $("save").disabled = $("save-near").disabled = $("pause").disabled = $("save-target").disabled = true;
+  $("alarm-pause").disabled = true;
+  try {
+    await api("alarms", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "pause_thermostats" }) });
+    settings.thermostat_control_enabled = false;
+    $("thermostat_control_enabled").checked = false;
+    settingsRevision++;
+    updateSaveState();
+    $("alarm-action-status").textContent = "Termostatbegränsning pausad. Befintliga börvärden är oförändrade; pumpens larm är inte återställt.";
+  } catch (error) {
+    $("alarm-action-status").textContent = `Åtgärden misslyckades: ${error.message}. Kontrollera status innan du försöker igen.`;
+  } finally {
+    alarmActionBusy = false;
+    busy = false;
+    $("save").disabled = $("save-near").disabled = $("pause").disabled = $("save-target").disabled = false;
+    await refreshAlarms();
+    void refreshStatus();
+  }
+}
+
 async function refreshOverview() {
+  void refreshAlarms();
   const provider = settings.price_provider;
   try {
     const data = await api("overview");
@@ -2183,6 +2253,8 @@ async function init() {
   $("fireplace_enabled").addEventListener("change", updateSaveState);
   $("fireplace_rooms").addEventListener("change", updateSaveState);
   $("fireplace_max_age_minutes").addEventListener("input", updateSaveState);
+  $("refresh-alarms").addEventListener("click", () => void refreshAlarms());
+  $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
   $("room_sensors").addEventListener("change", () => {
     renderPriorityPicker(Array.from($("priority_sensors").querySelectorAll("input:checked"), (input) => input.value));
     renderNearestThermostat($("nearest_thermostat").value);
