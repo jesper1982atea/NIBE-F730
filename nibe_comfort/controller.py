@@ -4,6 +4,7 @@ import copy
 import json
 import math
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -388,6 +389,21 @@ def entity_age(entity, now):
         raise ControlError(f"{entity['entity_id']}: tidsstämpel saknas eller är ogiltig.") from exc
 
 
+def text_status(entity):
+    """True for a textual operating-status sensor (Heating, Hot water, ...).
+
+    Several NIBE models also expose a numeric counter whose entity id ends in `_status`
+    (F370: \"status: (50095)\" in minutes). A counter with a unit or a duration class is not a mode."""
+    attrs = entity.get("attributes", {})
+    if attrs.get("unit_of_measurement") or attrs.get("device_class") in ("duration", "timestamp"):
+        return False
+    try:
+        float(entity.get("state"))
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
 def fresh_entity(states, entity_id, max_age, now, peers=()):
     """Return a valid, recently reported entity.
 
@@ -432,28 +448,56 @@ def device_peers(registry):
     return {entity_id: sorted(ids) for entity_id, ids in peers.items()}
 
 
+def entity_base(entity_id):
+    """Entity id without a myUplink parameter id suffix (sensor.x_alarms_45001 -> sensor.x_alarms)."""
+    return re.sub(r"_\d+$", "", entity_id)
+
+
+def alarm_sources(ids):
+    """Alarm status and main alarm code entities among one pump's entities.
+
+    Sub-module codes such as sensor.x_alarms_eb100_ep14_44137 are not the pump's own alarm code.
+    """
+    ids = list(ids)
+    return (sorted(key for key in ids if key.startswith("binary_sensor.") and entity_base(key).endswith("_alarm")),
+            sorted(key for key in ids if key.startswith("sensor.") and entity_base(key).endswith("_alarms")))
+
+
+def alarm_code(entity):
+    code = number(entity["state"], "Larmkod")
+    if code != int(code) or not 0 <= code <= 99999:
+        raise ControlError("Pumpens larmkod kan inte tolkas.")
+    return int(code)
+
+
 def pump_alarm(entities, config, peers, now):
     """Only read alarm entities associated with the configured pump."""
     states = {e["entity_id"]: e for e in entities}
     ids = set(peers.get(config["offset_entity"], ()))
-    result = {"active": None, "code": None, "error": None, "reported_at": None}
-    alarms = [key for key in ids if key.startswith("binary_sensor.") and key.endswith("_alarm")]
-    codes = [key for key in ids if key.startswith("sensor.") and key.endswith("_alarms")]
+    result = {"active": None, "code": None, "latest_code": None, "error": None, "reported_at": None}
+    alarms, codes = alarm_sources(ids)
     try:
-        if len(alarms) != 1:
+        if len(alarms) == 1:
+            alarm = fresh_entity(states, alarms[0], config["max_age_minutes"], now, ids)
+            if alarm["state"] not in ("on", "off"):
+                raise ControlError("Pumpens larmstatus kan inte tolkas.")
+            result.update(active=alarm["state"] == "on",
+                          reported_at=alarm.get("last_reported") or alarm.get("last_updated"))
+            if len(codes) == 1:
+                code = alarm_code(fresh_entity(states, codes[0], config["max_age_minutes"], now, ids))
+                result["code"] = code if result["active"] else None
+            elif result["active"]:
+                raise ControlError("Aktivt larm, men ingen entydig kodgivare hittades.")
+        elif not alarms and len(codes) == 1:
+            # Models without an alarm status entity (e.g. F370) keep the latest alarm number even after it
+            # has cleared, so the number alone cannot prove an active alarm.
+            entity = fresh_entity(states, codes[0], config["max_age_minutes"], now, ids)
+            code = alarm_code(entity)
+            result.update(latest_code=code or None, reported_at=entity.get("last_reported") or entity.get("last_updated"))
+            raise ControlError("Pumpen har ingen larmstatus i myUplink, bara senaste larmkod"
+                               + (f" ({code})" if code else "") + ". Se pumpens display för om larmet är aktivt.")
+        else:
             raise ControlError("Ingen entydig larmgivare hittades på vald pump.")
-        alarm = fresh_entity(states, alarms[0], config["max_age_minutes"], now, ids)
-        if alarm["state"] not in ("on", "off"):
-            raise ControlError("Pumpens larmstatus kan inte tolkas.")
-        result.update(active=alarm["state"] == "on",
-                      reported_at=alarm.get("last_reported") or alarm.get("last_updated"))
-        if len(codes) == 1:
-            code = number(fresh_entity(states, codes[0], config["max_age_minutes"], now, ids)["state"], "Larmkod")
-            if code != int(code) or not 0 <= code <= 99999:
-                raise ControlError("Pumpens larmkod kan inte tolkas.")
-            result["code"] = int(code) if result["active"] else None
-        elif result["active"]:
-            raise ControlError("Aktivt larm, men ingen entydig kodgivare hittades.")
     except ControlError as exc:
         result["error"] = str(exc)
     return result

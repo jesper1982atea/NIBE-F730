@@ -142,7 +142,7 @@ const server = createServer(async (request, response) => {
       now, error: null, target: settings.target_temperature,
       model: { status: "rough", hours: 159, days: 6.6, changes: 4, needed_hours: 168, needed_changes: 6, lag: 0, skill: 0.21, r2: 0.06,
         facts: { time_constant_hours: 10.2, degrees_per_step: 0.19, outdoor_effect: 0, lag_hours: 0, step_after_3h: 0.05, step_after_6h: 0.08, half_response_hours: 7.1 },
-        message: "Grov uppskattning (6,6 av 7 dygn, 4 av 6 kurvändringar). Förvärmningen använder försiktiga standardvärden (3 timmar innan) tills modellen är säker." },
+        message: "Preliminär uppskattning (6,6 av 7 dygn, 4 av 6 kurvändringar). Förvärmningen använder försiktiga standardvärden (3 timmar innan) medan mer underlag samlas." },
       history: Array.from({ length: 24 }, (_, i) => [now - (24 - i) * hour, 21.7 + Math.sin(i / 4) * 0.3]),
       prediction: Array.from({ length: 25 }, (_, i) => [now + i * hour, 21.9 + (i > 6 && i < 10 ? 0.3 : 0) - (i >= 10 && i < 13 ? 0.2 : 0)]),
       fireplace_periods: [{ start: now - 7200, end: now - 3600 }],
@@ -250,7 +250,7 @@ async function dashboardChecks() {
   assert.match(await page.locator("#hero-offset-base").textContent(), /grundvärde 3/);
   assert.match(await page.locator("#hero-extra").textContent(), /Elpris nu .* SEK\/kWh \((billigt|normalt|dyrt)\)/);
   await page.waitForFunction(() => document.getElementById("hw-status").textContent.startsWith("Uppdaterad"));
-  await page.waitForFunction(() => document.getElementById("learn-status").textContent.startsWith("Grov bild"));
+  await page.waitForFunction(() => document.getElementById("learn-status").textContent.startsWith("Preliminär husmodell"));
   await page.waitForFunction(() => document.getElementById("version").textContent === " · Version 0.2.8");
   assert.equal(await page.locator("#learning-card").evaluate((card) => card.previousElementSibling.querySelector("#plan-changes") !== null), true, "Learning card follows the plan");
   assert.equal(await page.locator("#hot-water-card").evaluate((card) => card.previousElementSibling.id), "fireplace-card");
@@ -649,6 +649,14 @@ async function dashboardChecks() {
   await priorityPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await priorityPage.locator("#room-impact-list .room-impact-row").first().waitFor({ state: "attached" });
   assert.equal(await priorityPage.locator("#indoor").textContent(), "23");
+  // The room picker is sorted for display; a saved selection in another order is not an unsaved change.
+  for (const order of [[thirdRoom, thermostat, "sensor.living"], ["sensor.living", thermostat, thirdRoom]]) {
+    priorityConfig = { ...priorityConfig, room_sensors: order };
+    await priorityPage.reload();
+    await priorityPage.locator("#room-impact-list .room-impact-row").first().waitFor({ state: "attached" });
+    await priorityPage.waitForFunction(() => document.getElementById("settings-save-status").textContent !== "");
+    assert.equal(await priorityPage.locator("#settings-save-status").textContent(), "Inga osparade ändringar.", order.join());
+  }
   assert.equal(await priorityPage.locator("#house-indoor").textContent(), "23");
   assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), false);
   await priorityPage.locator("#settings-panel > summary").click();
@@ -1078,6 +1086,7 @@ async function fireplaceChecks() {
   assert.equal(fireWrites, 1, "Rendering suspected extra heat must not save or send new commands");
   assert.equal(await firePage.locator("#fireplace_max_age_minutes").inputValue(), "15");
   assert.match(await firePage.locator("#fireplace-age-help").textContent(), /tystnad.*fel.*osäkrare/);
+  assert.equal(await firePage.locator("#fireplace-age-help").isVisible(), true, "Freshness risks stay visible beside the editable age setting");
   await firePage.locator("#fireplace_max_age_minutes").fill("90");
   assert.match(await firePage.locator("#settings-save-status").textContent(), /Osparade.*Kaminens mätvärdesålder/);
   await firePage.evaluate(() => refreshStatus());
@@ -1281,6 +1290,10 @@ async function alarmChecks() {
   alarmData = { ...alarmData, active: null, code: null, error: "Mätvärdet är för gammalt." };
   await alarmPage.evaluate(() => refreshAlarms());
   assert.match(await alarmPage.locator("#alarm-status").textContent(), /osäker.*gammalt/);
+  alarmData = { ...alarmData, latest_code: 229, error: "Bara senaste larmkod (229), ingen larmstatus." };
+  await alarmPage.evaluate(() => refreshAlarms());
+  assert.match(await alarmPage.locator("#alarm-status").textContent(), /senaste larmkod.*229/);
+  assert.equal(await alarmPage.locator("#alarm-pause").isVisible(), false, "A last-known 229 is never a confirmed active alarm");
   alarmData = { ...alarmData, active: false, error: null };
   await alarmPage.evaluate(() => refreshAlarms());
   assert.match(await alarmPage.locator("#alarm-status").textContent(), /Inget aktivt pumplarm/);
@@ -1539,6 +1552,11 @@ try {
   assert.match(await vacationPage.locator("#vacation-error").textContent(), /när du kommer hem/);
   assert.equal(vacationWrites.length, 0);
   await vacationPage.locator("#vacation-start").fill("2026-12-01T10:00");
+  await vacationPage.locator("#vacation-presets [data-days='7']").click();
+  assert.equal(await vacationPage.locator("#vacation-end").inputValue(), "2026-12-08T10:00");
+  assert.equal(vacationWrites.length, 0, "Vacation presets change the draft only");
+  await vacationPage.evaluate(() => refreshStatus());
+  assert.equal(await vacationPage.locator("#vacation-end").inputValue(), "2026-12-08T10:00", "Polling preserves a preset draft");
   await vacationPage.locator("#vacation-end").fill("2026-12-08T15:00");
   await vacationPage.locator("#vacation-save").click();
   await vacationPage.waitForFunction(() => document.getElementById("vacation-status").textContent.startsWith("Planerad"));

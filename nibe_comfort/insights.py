@@ -11,7 +11,7 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from controller import ControlError, control_rooms, current_readings, device_peers, fresh_entity, next_step, number, price_contribution, pump_alarm, temperature
+from controller import ControlError, alarm_code, alarm_sources, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 from energy import POWER_UNITS, consumption_report, discover_meter, meter_error, produced_energy
 from auxiliary import heater_entities, heater_report
@@ -92,6 +92,32 @@ def reading(entity, label, max_age, now, peers=()):
     return result
 
 
+def alarm_reading(pump_states, label, max_age, now, peers):
+    """Pump alarm from a status entity, or from the alarm number when the model has none."""
+    alarms, codes = alarm_sources([s["entity_id"] for s in pump_states])
+    by_id = {s["entity_id"]: s for s in pump_states}
+    if len(alarms) == 1:
+        item = reading(by_id[alarms[0]], label, max_age, now, peers)
+        item["active"] = {"on": True, "off": False}.get(item["value"])
+        if item["value"] is not None and item["active"] is None:
+            item.update(value=None, error="Pumpens larmstatus kan inte tolkas.")
+        item["value"] = {"on": "Larm aktivt", "off": "Inget aktivt larm"}.get(item["value"], item["value"])
+    elif not alarms and len(codes) == 1:
+        item = reading(by_id[codes[0]], label, max_age, now, peers)
+        item["unit"] = ""
+        item["active"] = None
+        if item["value"] is not None:
+            try:
+                code = alarm_code(by_id[codes[0]])
+                item["value"] = f"Senaste larmkod {code} · aktiv status saknas"
+            except ControlError as exc:
+                item.update(value=None, error=str(exc))
+    else:
+        item = {"label": label, "value": None, "active": None, "error": "Ingen entydig givare hittades."}
+    item["key"] = "alarm"
+    return item
+
+
 def peers_states(entity, peers):
     states = {p["entity_id"]: p for p in peers}
     states[entity["entity_id"]] = entity
@@ -105,12 +131,17 @@ def overview(states, registry, config, now):
     pump_ids = {
         r["entity_id"] for r in registry if selected and selected["device_id"]
         and r.get("platform") == "myuplink" and r["device_id"] == selected["device_id"]
+        and r.get("config_entry_id") == selected.get("config_entry_id")
     }
     pump = []
     pump_states = [by_id[e] for e in sorted(pump_ids) if e in by_id]
     for suffix, (key, label) in LABELS.items():
-        matches = [by_id[e] for e in pump_ids if e in by_id and e.endswith(suffix)
-                   and e.startswith(("sensor.", "binary_sensor."))]
+        if key == "alarm":
+            pump.append(alarm_reading([by_id[e] for e in pump_ids if e in by_id], label, config["max_age_minutes"], now, pump_states))
+            continue
+        matches = [by_id[e] for e in pump_ids if e in by_id and entity_base(e).endswith(suffix)
+                   and e.startswith(("sensor.", "binary_sensor."))
+                   and (key != "operation" or text_status(by_id[e]))]
         if len(matches) != 1:
             pump.append({"key": key, "label": label, "value": None, "error": "Ingen entydig givare hittades."})
             continue
@@ -119,11 +150,7 @@ def overview(states, registry, config, now):
         item["key"] = key
         item["active"] = None
         if item["value"] is not None:
-            if key == "alarm":
-                item["active"] = {"on": True, "off": False}.get(item["value"])
-                item["value"] = {"on": "Larm aktivt", "off": "Inget aktivt larm"}.get(item["value"], item["value"])
-            else:
-                item["value"] = TRANSLATIONS.get(item["value"], item["value"])
+            item["value"] = TRANSLATIONS.get(item["value"], item["value"])
         pump.append(item)
     pump_electricity = []
     for eid in sorted(pump_ids):
@@ -187,14 +214,18 @@ def pump_device_entities(registry, offset_entity):
     selected = next((r for r in registry if r["entity_id"] == offset_entity and r.get("platform") == "myuplink"), None)
     if not selected or not selected.get("device_id"):
         return set()
-    return {r["entity_id"] for r in registry if r.get("platform") == "myuplink" and r.get("device_id") == selected["device_id"]}
+    return {r["entity_id"] for r in registry if r.get("platform") == "myuplink"
+            and r.get("device_id") == selected["device_id"]
+            and r.get("config_entry_id") == selected.get("config_entry_id")}
 
 
-def hot_water_entities(registry, offset_entity):
+def hot_water_entities(registry, offset_entity, states=None):
     ids = pump_device_entities(registry, offset_entity)
+    by_id = {s["entity_id"]: s for s in states or ()}
     found = {}
     for key, (prefix, suffix) in HOT_WATER.items():
-        matches = [e for e in ids if e.startswith(prefix) and e.endswith(suffix)]
+        matches = [e for e in ids if e.startswith(prefix) and entity_base(e).endswith(suffix)
+                   and (key != "status" or e not in by_id or text_status(by_id[e]))]
         if len(matches) == 1:
             found[key] = matches[0]
     return found
@@ -241,7 +272,7 @@ def charge_periods(rows, now):
 
 def hot_water(states, registry, config, groups, now, days=7):
     by_id = {s["entity_id"]: s for s in states}
-    ids = hot_water_entities(registry, config["offset_entity"])
+    ids = hot_water_entities(registry, config["offset_entity"], states)
     start = now - days * 86400
     result = {
         "now": now, "start": start, "days": days, "entities": ids,
@@ -797,10 +828,11 @@ class Insights:
         pump_states = [s for s in states if s["entity_id"] in pump_ids]
         observations = []
         for suffix, label in (
-                ("_status", "Driftläge"), ("_current_compressor_frequency", "Kompressorfrekvens"),
+                ("_status", "Driftläge"), ("_status_compressor", "Kompressor"), ("_current_compressor_frequency", "Kompressorfrekvens"),
                 ("_degree_minutes", "Gradminuter"), ("_supply_line_bt2", "Framledning"),
                 ("_return_line_bt3", "Returledning"), ("_heating_medium_pump_speed_gp1", "Värmebärarpump GP1")):
-            matches = [s for s in pump_states if s["entity_id"].startswith("sensor.") and s["entity_id"].endswith(suffix)]
+            matches = [s for s in pump_states if s["entity_id"].startswith("sensor.") and entity_base(s["entity_id"]).endswith(suffix)
+                       and (suffix != "_status" or text_status(s))]
             if len(matches) == 1:
                 observations.append(reading(matches[0], label, config["max_age_minutes"], now, pump_states))
             else:
@@ -931,7 +963,7 @@ class Insights:
             now = time.time()
             registry = self.registry()
             states = self.ha.states()
-            ids = [e for k, e in hot_water_entities(registry, config["offset_entity"]).items() if k != "demand"]
+            ids = [e for k, e in hot_water_entities(registry, config["offset_entity"], states).items() if k != "demand"]
             groups = {}
             if ids:
                 query = urlencode({

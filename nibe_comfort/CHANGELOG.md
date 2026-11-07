@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## 0.2.44
+
+- Peters förslag integrerat: modernare ljus/mörk design, statusetiketter,
+  mätare och tidslinjer samt semester-snabbval som inte sparar automatiskt.
+- Driftläge skiljs från numeriska räknare på bland annat F370.
+  Samma kontroll används för varmvatten, elpatron och larmvyn.
+- Modeller utan larmstatusgivare visar senaste larmkod som osäker historik,
+  aldrig som bekräftat aktivt larm. Tillbehörsmodulers koder används inte.
+- Larm- och elpatrongivare med avslutande myUplink-parameter-ID hittas.
+  Flera matchningar förblir osäkra och används inte som gissning.
+- Sparad rumsordning bevaras så att oförändrade val inte visas som osparade.
+  Pumpvärden visas med decimalkomma och kompressorstatus visas i larmvyn.
+
 ## 0.2.43
 
 - Hämta anläggningar och enheter direkt i larmvyn med bara myUplink
