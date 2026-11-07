@@ -108,6 +108,11 @@ const server = createServer(async (request, response) => {
   }
   else if (path === "/api/test") data = { now, duration_seconds: 600, test: pumpTest };
   else if (path === "/api/overview") data = overview;
+  else if (path === "/api/alarms") data = {
+    active: true, code: 229, error: null, checked_at: now, rooms: [], observations: [],
+    can_pause: false, reset_supported: false,
+    explanation: "Tre körningar kortare än fem minuter; orsaken är inte fastställd.",
+  };
   else if (path === "/api/plan") data = {
     start: now - 86400, end: now + 36 * 3600, now,
     outdoor: { history: Array.from({ length: 24 }, (_, i) => [now - (24 - i) * 3600, 5 + Math.sin(i / 4) * 3]), forecast: Array.from({ length: 36 }, (_, i) => [now + i * 3600, 4 - i / 6]), error: null },
@@ -1098,8 +1103,97 @@ async function fireplaceChecks() {
   await firePage.waitForLoadState("networkidle");
   await firePage.close();
 }
+async function alarmChecks() {
+  const alarmPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  alarmPage.on("pageerror", (error) => errors.push(error.message));
+  let accept = false;
+  alarmPage.on("dialog", (dialog) => accept ? dialog.accept() : dialog.dismiss());
+  let alarmSettings = { ...defaults, room_sensors: ["sensor.living"], offset_entity: offset,
+    thermostat_control_enabled: true };
+  let alarmWrites = 0, settingsWrites = 0, alarmReads = 0, failAction = false, failRead = false;
+  let alarmData = { active: true, code: 229, error: null, checked_at: now, can_pause: true, reset_supported: false,
+    explanation: "Tre körningar kortare än fem minuter; orsaken är inte fastställd.",
+    rooms: [{ name: "Vardagsrum", temperature: 23, setpoint: 22, error: null }],
+    observations: [{ label: "Driftläge", value: "Hot water", unit: "" }],
+  };
+  await alarmPage.route("**/api/settings", (route) => {
+    if (route.request().method() === "PUT") {
+      settingsWrites++;
+      alarmSettings = route.request().postDataJSON();
+    }
+    return route.fulfill({ json: alarmSettings });
+  });
+  await alarmPage.route("**/api/status", (route) => route.fulfill({ json: {
+    checked_at: Date.now() / 1000, enabled: true, indoor: 22, house_indoor: 22, outdoor: 5,
+    current_offset: 3, next_offset: 3, desired_offset: 4, rooms: [],
+    pump_alarm: alarmData, pending_write: { error: "Tidigare timeout" },
+  } }));
+  await alarmPage.route("**/api/alarms", async (route) => {
+    if (route.request().method() === "PUT") {
+      alarmWrites++;
+      assert.deepEqual(route.request().postDataJSON(), { action: "pause_thermostats" });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      if (failAction) return route.fulfill({ status: 400, json: { error: "Larmet är inte längre bekräftat." } });
+      alarmSettings = { ...alarmSettings, thermostat_control_enabled: false };
+      alarmData = { ...alarmData, can_pause: false };
+      return route.fulfill({ json: alarmSettings });
+    }
+    alarmReads++;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return failRead ? route.fulfill({ status: 502, json: { error: "Home Assistant är otillgänglig." } })
+      : route.fulfill({ json: alarmData });
+  });
+  await alarmPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await alarmPage.waitForFunction(() => document.getElementById("alarm-status").textContent.includes("229"));
+  assert.match(await alarmPage.locator("#alarm-rooms").textContent(), /Vardagsrum: 23.*börvärde 22/);
+  assert.match(await alarmPage.locator("#alarm-observations").textContent(), /Hot water/);
+  assert.equal(await alarmPage.locator("#next-change").textContent(), "Pumplarm 229", "An old pending write must not conceal the alarm hold");
+  await alarmPage.evaluate(() => pauseAlarmThermostats());
+  assert.equal(alarmWrites, 0, "Cancelling confirmation cannot persist changes");
+  await alarmPage.locator("#target_temperature").fill("24");
+  const readsBefore = alarmReads;
+  await alarmPage.evaluate(() => Promise.all([refreshAlarms(), refreshAlarms(), refreshAlarms()]));
+  assert.equal(alarmReads, readsBefore + 1, "Concurrent alarm refreshes share the in-flight read");
+  accept = true;
+  failAction = true;
+  await alarmPage.evaluate(() => pauseAlarmThermostats());
+  assert.match(await alarmPage.locator("#alarm-action-status").textContent(), /misslyckades.*inte längre bekräftat/);
+  assert.equal(alarmSettings.thermostat_control_enabled, true, "Failed actions cannot claim a saved pause");
+  failAction = false;
+  await alarmPage.evaluate(() => Promise.all([pauseAlarmThermostats(), pauseAlarmThermostats(), save(readSettings())]));
+  assert.equal(alarmWrites, 2, "Only one successful pause follows the failed attempt");
+  assert.equal(settingsWrites, 0, "A concurrent settings save cannot silently re-enable the limiter");
+  assert.equal(alarmSettings.thermostat_control_enabled, false);
+  assert.equal(await alarmPage.locator("#thermostat_control_enabled").isChecked(), false);
+  assert.equal(await alarmPage.locator("#target_temperature").inputValue(), "24", "Unrelated unsaved temperature drafts survive the action");
+  assert.match(await alarmPage.locator("#alarm-action-status").textContent(), /pausad.*inte återställt/);
+  assert.equal(await alarmPage.locator("#alarm-pause").isVisible(), false);
+  alarmData = { ...alarmData, code: 123 };
+  await alarmPage.evaluate(() => refreshAlarms());
+  assert.match(await alarmPage.locator("#alarm-status").textContent(), /123/);
+  assert.equal(await alarmPage.locator("#alarm-pause").isVisible(), false);
+  failRead = true;
+  await alarmPage.evaluate(() => refreshAlarms());
+  assert.match(await alarmPage.locator("#alarm-status").textContent(), /Kunde inte läsa larm/);
+  assert.equal(await alarmPage.locator("#alarm-rooms li").count(), 0, "Failed reads clear stale room evidence");
+  failRead = false;
+  alarmData = { ...alarmData, active: null, code: null, error: "Mätvärdet är för gammalt." };
+  await alarmPage.evaluate(() => refreshAlarms());
+  assert.match(await alarmPage.locator("#alarm-status").textContent(), /osäker.*gammalt/);
+  alarmData = { ...alarmData, active: false, error: null };
+  await alarmPage.evaluate(() => refreshAlarms());
+  assert.match(await alarmPage.locator("#alarm-status").textContent(), /Inget aktivt pumplarm/);
+  for (const width of [320, 390]) {
+    await alarmPage.setViewportSize({ width, height: 844 });
+    assert.equal(await alarmPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `Alarm card fits ${width}px`);
+  }
+  await alarmPage.waitForLoadState("networkidle");
+  await alarmPage.close();
+}
+
 try {
   if (!process.env.ENERGY_ONLY) await dashboardChecks();
+  await alarmChecks();
   await fireplaceChecks();
   const energyPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   energyPage.on("pageerror", (error) => errors.push(error.message));
@@ -1381,7 +1475,7 @@ try {
   assert.equal(await vacationPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await vacationPage.close();
   assert.deepEqual(errors, []);
-  console.log(process.env.ENERGY_ONLY ? "Energy, auxiliary, fireplace and vacation UI passed: limits, context, costs, dates, drafts, errors, recovery and mobile layout."
+  console.log(process.env.ENERGY_ONLY ? "Alarm, energy, auxiliary, fireplace and vacation UI passed: limits, actions, context, costs, dates, drafts, errors, recovery and mobile layout."
     : "Dashboard UI passed: climate picker, active settings preserved, Tibber discovery, real SVG graphs, forecast, alarms, electricity labels, audit events, errors and mobile layout.");
 } finally {
   await browser.close();

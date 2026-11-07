@@ -11,7 +11,7 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from controller import ControlError, control_rooms, device_peers, fresh_entity, next_step, number, price_contribution, temperature
+from controller import ControlError, control_rooms, current_readings, device_peers, fresh_entity, next_step, number, price_contribution, pump_alarm, temperature
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 from energy import POWER_UNITS, consumption_report, discover_meter, meter_error, produced_energy
 from auxiliary import heater_entities, heater_report
@@ -786,6 +786,40 @@ class Insights:
     def overview(self, config):
         key = ("overview", config["offset_entity"], config["price_entity"], config["price_provider"], config["max_age_minutes"])
         return self.cached(key, 60, lambda: overview(self.ha.states(), self.registry(), config, time.time()))
+
+    def alarms(self, config):
+        states = self.ha.states()
+        now = time.time()
+        peers = device_peers(self.registry())
+        alarm = pump_alarm(states, config, peers, now)
+        readings = current_readings(config, states, now, peers)
+        pump_ids = set(peers.get(config["offset_entity"], ()))
+        pump_states = [s for s in states if s["entity_id"] in pump_ids]
+        observations = []
+        for suffix, label in (
+                ("_status", "Driftläge"), ("_current_compressor_frequency", "Kompressorfrekvens"),
+                ("_degree_minutes", "Gradminuter"), ("_supply_line_bt2", "Framledning"),
+                ("_return_line_bt3", "Returledning"), ("_heating_medium_pump_speed_gp1", "Värmebärarpump GP1")):
+            matches = [s for s in pump_states if s["entity_id"].startswith("sensor.") and s["entity_id"].endswith(suffix)]
+            if len(matches) == 1:
+                observations.append(reading(matches[0], label, config["max_age_minutes"], now, pump_states))
+            else:
+                observations.append({"label": label, "value": None, "error": "Ingen entydig givare hittades."})
+        rooms = [{"entity_id": r["entity_id"], "name": r["name"], "temperature": r["temperature"],
+                  "setpoint": r["setpoint"], "error": r["error"] or r["thermostat_error"]}
+                 for r in readings["rooms"]]
+        alarm.update(
+            checked_at=now, rooms=rooms, observations=observations,
+            thermostat_control_enabled=config["thermostat_control_enabled"],
+            can_pause=alarm["active"] is True and alarm["code"] == 229 and not alarm["error"]
+                      and config["thermostat_control_enabled"],
+            reset_supported=False,
+            explanation=("229 betyder att kompressorn blockerats efter tre körningar kortare än fem minuter i rad. "
+                         "Lågt flöde eller låg värmeöverföring är möjliga orsaker, inte en fastställd diagnos."
+                         if alarm["active"] is True and alarm["code"] == 229 else
+                         "Inget aktuellt larm 229 är bekräftat. Följ pumpens instruktion för andra larm."),
+        )
+        return alarm
 
     def energy(self, config):
         key = ("energy", config["offset_entity"], config["energy_entity"], config["price_entity"], config["price_provider"],

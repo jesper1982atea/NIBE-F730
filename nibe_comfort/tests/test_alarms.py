@@ -1,0 +1,132 @@
+import json
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import Mock, call, patch
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from controller import ControlError, Controller, device_peers, pump_alarm
+from insights import Insights
+from test_controller import config, entity, fixtures
+
+
+ALARM = "binary_sensor.pump_alarm"
+CODE = "sensor.pump_alarms"
+REGISTRY = [{"entity_id": key, "device_id": "pump", "platform": "myuplink"}
+            for key in ("number.offset", ALARM, CODE)]
+
+
+class AlarmTests(unittest.TestCase):
+    def setUp(self):
+        self.now = time.time()
+        self.states = fixtures(self.now) + [entity(ALARM, "on", self.now), entity(CODE, 229, self.now)]
+        self.cfg = config(enabled=True, target_temperature=23)
+        self.peers = device_peers(REGISTRY)
+        self.ha = Mock()
+        self.ha.states.return_value = self.states
+        self.ha.integration_registry.return_value = REGISTRY
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.controller = Controller(self.ha, self.temp.name)
+        self.controller.config = self.cfg
+
+    def test_code_and_active_status_require_selected_device_and_fresh_values(self):
+        alarm = pump_alarm(self.states, self.cfg, self.peers, self.now)
+        self.assertTrue(alarm["active"])
+        self.assertEqual(alarm["code"], 229)
+        self.assertIsNone(alarm["error"])
+        self.assertIsNotNone(pump_alarm(self.states, config(offset_entity="number.other"), self.peers, self.now)["error"])
+        for invalid in ("unknown", "unavailable", "invalid"):
+            self.states[-1]["state"] = invalid
+            self.assertIsNotNone(pump_alarm(self.states, self.cfg, self.peers, self.now)["error"])
+        stale = pump_alarm(self.states, self.cfg, self.peers, self.now + 86400)
+        self.assertIsNotNone(stale["error"])
+
+    def test_unknown_code_is_not_229_and_cleared_alarm_does_not_keep_old_code(self):
+        self.states[-1]["state"] = "999"
+        self.assertEqual(pump_alarm(self.states, self.cfg, self.peers, self.now)["code"], 999)
+        self.states[-2]["state"] = "off"
+        alarm = pump_alarm(self.states, self.cfg, self.peers, self.now)
+        self.assertFalse(alarm["active"])
+        self.assertIsNone(alarm["code"])
+
+    def test_limiter_pause_persists_only_flag_and_never_resets_or_opens_valves(self):
+        self.controller.config = {**self.cfg, "thermostat_control_enabled": True}
+        before = self.controller.config.copy()
+        saved = self.controller.pause_alarm_thermostats()
+        self.assertEqual(saved, {**before, "thermostat_control_enabled": False})
+        self.assertEqual(json.loads(self.controller.path.read_text()), saved)
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
+        self.ha.set_select.assert_not_called()
+        self.assertEqual(self.controller.pause_alarm_thermostats(), saved)
+
+    def test_invalid_alarm_cannot_apply_action(self):
+        for state in ("999", "unknown", "unavailable"):
+            self.states[-1]["state"] = state
+            with self.assertRaises(ControlError):
+                self.controller.pause_alarm_thermostats()
+        self.assertFalse(self.controller.path.exists())
+
+    def test_foreign_devices_entries_and_ambiguous_codes_cannot_authorize_pause(self):
+        for extra in ({"device_id": "other"}, {"config_entry_id": "other"}):
+            registry = [r if r["entity_id"] != CODE else {**r, **extra} for r in REGISTRY]
+            alarm = pump_alarm(self.states, self.cfg, device_peers(registry), self.now)
+            self.assertIsNotNone(alarm["error"])
+        registry = [*REGISTRY, {"entity_id": "sensor.duplicate_alarms", "device_id": "pump", "platform": "myuplink"}]
+        self.assertIsNotNone(pump_alarm(self.states, self.cfg, device_peers(registry), self.now)["error"])
+
+    def test_failed_persistence_does_not_claim_pause(self):
+        self.controller.config = {**self.cfg, "thermostat_control_enabled": True}
+        with patch("controller.atomic_json", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.controller.pause_alarm_thermostats()
+        self.assertTrue(self.controller.config["thermostat_control_enabled"])
+
+    def test_alarm_holds_automatic_writes_and_blocks_manual_test(self):
+        self.controller.tick()
+        self.assertEqual(self.controller.snapshot()["next_offset"], 0)
+        self.assertIn("Larm 229", self.controller.snapshot()["message"])
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_thermostat.assert_not_called()
+        with self.assertRaisesRegex(ControlError, "aktivt larm"):
+            self.controller.start_test()
+        self.states[-2]["state"] = "off"
+        self.controller.tick()
+        self.ha.set_offset.assert_called_once()
+
+    def test_hold_really_stops_enabled_limiter_and_preserves_pending_error_message(self):
+        self.states.append(entity("climate.living", "heat", self.now, current_temperature=23,
+                                  temperature=25, min_temp=5, max_temp=30, target_temp_step=0.5,
+                                  supported_features=1, temperature_unit="°C"))
+        self.controller.config = config(enabled=True, room_sensors=["climate.living"],
+                                        thermostat_control_enabled=True, nearest_thermostat="climate.living")
+        self.controller.pending = {"request_id": 1, "timestamp": self.now, "entity_id": "number.offset",
+                                   "value": 1, "error": "Previous timeout"}
+        self.controller.tick()
+        self.assertIn("Larm 229", self.controller.snapshot()["message"])
+        self.assertIn("larm 229", self.controller.snapshot()["thermostat_control"]["rooms"][0]["message"])
+        self.ha.set_thermostat.assert_not_called()
+        self.states[-3]["state"] = "off"
+        self.controller.tick()
+        self.ha.set_thermostat.assert_called_once_with("climate.living", self.controller.config["target_temperature"])
+
+    def test_existing_test_can_restore_despite_new_alarm(self):
+        self.states[-2]["state"] = "off"
+        self.controller.start_test()
+        self.states[-2]["state"] = "on"
+        next(s for s in self.states if s["entity_id"] == "number.offset")["state"] = "1"
+        self.controller.test["restore_at"] = 0
+        self.controller.tick()
+        self.assertEqual(self.ha.set_offset.call_args_list, [call("number.offset", 1), call("number.offset", 0)])
+        self.assertEqual(self.controller.test["phase"], "restoring")
+
+    def test_report_has_no_reset_or_asserted_valve_position(self):
+        report = Insights(self.ha).alarms(self.cfg)
+        self.assertEqual(report["code"], 229)
+        self.assertFalse(report["reset_supported"])
+        self.assertFalse(report["can_pause"])
+        self.assertIn("inte en fastställd diagnos", report["explanation"])
+        self.assertEqual(len(report["rooms"]), 2)

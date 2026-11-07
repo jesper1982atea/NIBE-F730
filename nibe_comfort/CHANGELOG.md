@@ -1,5 +1,16 @@
 # Ändringslogg
 
+## 0.2.40
+
+- Ny larmvy för den valda pumpen visar aktuell larmkod, driftvärden,
+  rumstemperaturer och börvärden med tydliga osäkerheter och NIBEs åtgärdsråd.
+- Vid bekräftat larm 229 avvaktar automatiska kurv- och termostatändringar.
+  Pumptest kan inte startas med bekräftat aktivt larm. Återställning av ett
+  redan startat test eller avslutad semesterperiod behålls.
+- Termostatbegränsningen kan pausas från larmvyn efter bekräftelse, utan att
+  ändra befintliga börvärden eller öppna ventiler. Pumpens larm kvitteras
+  inte: ingen verifierad återställningstjänst finns i anslutningen.
+
 ## 0.2.39
 
 - Ny inställning **Högsta ålder på kaminens rumsvärden**
