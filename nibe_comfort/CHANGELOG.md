@@ -1,6 +1,6 @@
 # Ändringslogg
 
-## Ej släppt
+## 0.2.41
 
 - Driftläge hämtas bara från en textstatus (t.ex. Heating, Hot water). Vissa
   modeller, som F370, har en räknare med samma namnslut (`_status`, i minuter);
