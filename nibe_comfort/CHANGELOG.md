@@ -15,6 +15,9 @@
   (myUplinks parameter-id i entitetsnamnet, `_alarms_45001`, godtas) men
   räknas inte som aktivt larm, eftersom koden ligger kvar efter att larmet
   försvunnit. Tillbehörsmodulers larmkoder används inte.
+- Elpatronens effektgivare hittas även när myUplink lagt till parameter-id i
+  entitetsnamnet (`_power_internal_add_heat_43084`, t.ex. F370).
+- Larmvyn visar kompressorns status.
   Larmvyns driftläge använder samma textstatuskontroll som översikten.
 - Husmodellens status "Grov bild" heter nu "Preliminär" med en kortare förklaring.
 - Nytt utseende: korthuvud med ikon och statusetikett, statusrutor, mätare och

@@ -448,16 +448,19 @@ def device_peers(registry):
     return {entity_id: sorted(ids) for entity_id, ids in peers.items()}
 
 
+def entity_base(entity_id):
+    """Entity id without a myUplink parameter id suffix (sensor.x_alarms_45001 -> sensor.x_alarms)."""
+    return re.sub(r"_\d+$", "", entity_id)
+
+
 def alarm_sources(ids):
     """Alarm status and main alarm code entities among one pump's entities.
 
-    myUplink may append the parameter id (sensor.x_alarms_45001). Sub-module codes
-    such as sensor.x_alarms_eb100_ep14_44137 are not the pump's own alarm code.
+    Sub-module codes such as sensor.x_alarms_eb100_ep14_44137 are not the pump's own alarm code.
     """
     ids = list(ids)
-    base = lambda key: re.sub(r"_\d+$", "", key)
-    return (sorted(key for key in ids if key.startswith("binary_sensor.") and base(key).endswith("_alarm")),
-            sorted(key for key in ids if key.startswith("sensor.") and base(key).endswith("_alarms")))
+    return (sorted(key for key in ids if key.startswith("binary_sensor.") and entity_base(key).endswith("_alarm")),
+            sorted(key for key in ids if key.startswith("sensor.") and entity_base(key).endswith("_alarms")))
 
 
 def alarm_code(entity):

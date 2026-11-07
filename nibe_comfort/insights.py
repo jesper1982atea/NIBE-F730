@@ -823,7 +823,7 @@ class Insights:
         pump_states = [s for s in states if s["entity_id"] in pump_ids]
         observations = []
         for suffix, label in (
-                ("_status", "Driftläge"), ("_current_compressor_frequency", "Kompressorfrekvens"),
+                ("_status", "Driftläge"), ("_status_compressor", "Kompressor"), ("_current_compressor_frequency", "Kompressorfrekvens"),
                 ("_degree_minutes", "Gradminuter"), ("_supply_line_bt2", "Framledning"),
                 ("_return_line_bt3", "Returledning"), ("_heating_medium_pump_speed_gp1", "Värmebärarpump GP1")):
             matches = [s for s in pump_states if s["entity_id"].startswith("sensor.") and s["entity_id"].endswith(suffix)

@@ -3,7 +3,7 @@
 import math
 from bisect import bisect_right
 
-from controller import ControlError, text_status
+from controller import ControlError, entity_base, text_status
 from energy import POWER_UNITS, consumption_report, price_intervals, samples, timestamp, usage_intervals
 
 
@@ -19,7 +19,7 @@ def heater_entities(states, pump_ids):
     if not pump_ids:
         raise ControlError("Välj en myUplink-pump för att följa elpatronen.")
     selected = [s for s in states if s["entity_id"] in pump_ids]
-    candidates = [s for s in selected if s["entity_id"].endswith("_power_internal_add_heat")]
+    candidates = [s for s in selected if entity_base(s["entity_id"]).endswith("_power_internal_add_heat")]
     if not candidates:
         candidates = [s for s in selected if s["entity_id"].endswith("_int_elec_add_heat")
                       and s["attributes"].get("unit_of_measurement") in POWER_UNITS]

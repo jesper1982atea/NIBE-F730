@@ -187,6 +187,16 @@ class HeaterReportTests(unittest.TestCase):
             discover([*states, duplicate], reg)
 
 
+    def test_parameter_id_suffix_is_accepted(self):
+        suffixed = "sensor.pump_power_internal_add_heat_43084"
+        rows = [{**r, "entity_id": suffixed} for r in heater_rows()[-1:]]
+        reg = [r if r["entity_id"] != POWER else {**r, "entity_id": suffixed} for r in registry()]
+        self.assertEqual(discover(rows, reg)[0]["entity_id"], suffixed)
+        other = "sensor.pump_power_internal_add_heat_eb100"
+        reg = reg + [{"entity_id": other, "platform": "myuplink", "device_id": "pump"}]
+        self.assertEqual(discover(rows + [{**rows[0], "entity_id": other}], reg)[0]["entity_id"], suffixed)
+
+
 class HeaterIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.ha = Mock()
