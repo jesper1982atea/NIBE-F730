@@ -149,7 +149,8 @@ class MyUplink:
             return {"system_id": system_id, "device_id": device_id}
 
     def request(self, path, data=None, token=None):
-        headers = {"Accept": "application/json", "Accept-Language": "sv-SE"}
+        headers = {"Accept": "application/json", "Accept-Language": "sv-SE",
+                   "User-Agent": "NIBE-Comfort (+https://github.com/jesper1982atea/NIBE-F730)"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         if data is not None:

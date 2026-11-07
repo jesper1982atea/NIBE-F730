@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 0.2.45
+
+- myUplink-anrop identifieras med NIBE Comforts User-Agent för att undvika
+  Cloudflare Error 1010 mot standardklienter.
+- Fel vid anläggningsupptäckt returneras som JSON/422 i stället för en
+  ingress-genererad 502-webbsida.
+
 ## 0.2.44
 
 - Peters förslag integrerat: modernare ljus/mörk design, statusetiketter,

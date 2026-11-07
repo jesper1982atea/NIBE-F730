@@ -175,7 +175,11 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                 else:
                     self.respond(404, {"error": "Sökvägen finns inte."})
             except ControlError as exc:
-                self.respond(502, {"error": str(exc)})
+                if path == "/api/myuplink/discovery":
+                    LOG.warning("myUplink-upptäckt misslyckades: %s", exc)
+                    self.respond(422, {"error": str(exc)})
+                else:
+                    self.respond(502, {"error": str(exc)})
             except (OSError, sqlite3.Error):
                 LOG.exception("Kunde inte läsa tilläggets data")
                 self.respond(500, {"error": "Kunde inte läsa tilläggets data. Kontrollera logg och lagringsutrymme."})
