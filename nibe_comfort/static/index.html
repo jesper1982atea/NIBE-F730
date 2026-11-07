@@ -271,15 +271,20 @@
       <p>Vid larm 229: kontrollera enligt NIBE att värmesystemet har tillräckligt flöde och är urluftat. Kontrollera även pumpens driftläge vid larmet — varmvatten kan kräva annan felsökning än rumsvärme. Vid återkommande larm, kontakta installatör eller NIBE-service. Appen kan inte garantera att larmet inte återkommer.</p>
       <p>Home Assistant-anslutningen erbjuder ingen kvittering. Den separata myUplink-anslutningen nedan kan begära manuell kvittering av larm 229 när API:t ger ett verifierat numeriskt larm-ID. UUID spärras eftersom dokumentationen anger heltal för reset. Appen gissar aldrig att larmkod 229 är ett reset-ID.</p>
       <h3>Direktanslutning till myUplink</h3>
-      <p class="hint">Valfritt: ange client ID, client secret, system-ID och device-ID under tilläggets Konfiguration och starta om tillägget. Anslutningen gäller dessa uttryckligen valda moln-ID:n, inte automatiskt pumpvalet ovan. Hemligheten visas aldrig i webbsidan. Läs- och skrivbehörighet krävs.</p>
+      <p class="hint">Ange bara client ID och client secret under tilläggets Konfiguration och starta om tillägget. Hämta sedan anläggningar nedan och spara rätt pumpval. System-/device-ID behöver inte letas upp manuellt. Anslutningen är separat från HA-pumpvalet. Hemligheten visas aldrig i webbsidan.</p>
+      <button type="button" id="discover-cloud-devices" class="secondary">Hämta mina anläggningar och pumpar</button>
+      <p id="cloud-discovery-status" role="status"></p>
+      <label for="cloud-device-choice">Anläggning och enhet från myUplink</label>
+      <select id="cloud-device-choice" disabled><option value="">Hämta anläggningar först</option></select>
+      <button type="button" id="save-cloud-device" disabled>Spara pumpval för larm</button>
       <details id="myuplink-setup-guide">
         <summary>Konfigurationsguide: callback-URL och befintlig HA-applikation</summary>
         <p><strong>Ingen ny callback-server behövs.</strong> Direktanslutningen använder client credentials, inte webbinloggning. Den använder ingen callback-URL och har ingen egen OAuth callback-sökväg.</p>
         <ol>
           <li>Öppna <a href="https://dev.myuplink.com/apps" target="_blank" rel="noopener noreferrer">myUplink Developer → Applications</a>. Du kan prova Client ID och Client Secret från din befintliga Home Assistant-applikation om klienten tillåter client credentials och READSYSTEM/WRITESYSTEM. Det är inte verifierat för din klient.</li>
           <li>Låt HA-applikationens callback vara oförändrad. Standard är <code>https://my.home-assistant.io/redirect/oauth</code>. Utan My Home Assistant: <code>&lt;HOME_ASSISTANT_URL&gt;/auth/external/callback</code>. Dessa adresser hör till HA, inte NIBE Comfort. Rotera inte hemligheten eller radera klienten för att testa.</li>
-          <li>I <a href="https://api.myuplink.com/swagger/index.html" target="_blank" rel="noopener noreferrer">myUplinks officiella Swagger</a>, välj Authorize med dina klientuppgifter och READSYSTEM WRITESYSTEM. Läs GET /v2/systems/me och GET /v2/systems/{systemId} för rätt anläggnings UUID och pumpens device-ID. Använd endast läsanrop, inte reset.</li>
-          <li>Fyll i myuplink_client_id, myuplink_client_secret, myuplink_system_id och myuplink_device_id under tilläggets Konfiguration. Spara och starta om bara NIBE Comfort. Använd inte HA-entitets-ID eller larmkod som moln-ID.</li>
+          <li>Fyll i myuplink_client_id och myuplink_client_secret under tilläggets Konfiguration. Lämna myuplink_system_id och myuplink_device_id tomma. Spara och starta om bara NIBE Comfort.</li>
+          <li>Tryck Hämta mina anläggningar och pumpar ovan. Appen hämtar ID:n via API:t. En enda enhet visas direkt; flera kräver ditt val. Kontrollera anläggning, enhet och ID:n och tryck Spara pumpval för larm. Hämtning väljer eller sparar aldrig en pump åt dig. Developer-portalen visar klientuppgifter, inte nödvändigtvis pump-ID:n.</li>
           <li>Kontrollera system/device i larmlistan nedan. Konfigurering och uppdatering kvitterar inga larm. UUID-larm kan fortfarande ha spärrad kvittering.</li>
         </ol>
         <p class="hint">En separat myUplink-applikation ger bättre isolering från HA. Kräver registreringen en callback kan HA-adressen ovan användas som registreringsvärde; tillägget använder den inte. Vid 401/403: kontrollera klientuppgifter, tillåtna tokenflöden, behörigheter och åtkomst till anläggningen. Fungerande HA-inloggning garanterar inte att client credentials fungerar. Vi återanvänder inte HA:s access-/refresh-token.</p>

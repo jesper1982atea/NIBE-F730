@@ -1036,6 +1036,66 @@ function metric(item) {
 
 let alarmsBusy = false, alarmActionBusy = false, lastAlarm = null;
 let cloudAlarmsBusy = false, cloudResetBusy = false, cloudAlarmReport = null;
+let cloudDiscoveryBusy = false, cloudChoices = [];
+
+async function discoverCloudDevices() {
+  if (cloudDiscoveryBusy || cloudResetBusy) return;
+  cloudDiscoveryBusy = true;
+  $("discover-cloud-devices").disabled = $("save-cloud-device").disabled = true;
+  $("cloud-device-choice").disabled = true;
+  try {
+    const data = await api("myuplink/discovery");
+    cloudChoices = data.choices;
+    const select = $("cloud-device-choice");
+    select.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Välj rätt anläggning och enhet";
+    select.append(placeholder);
+    cloudChoices.forEach((choice, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = `${choice.system_name} · ${choice.device_name} · ${choice.system_id} / ${choice.device_id}`;
+      select.append(option);
+    });
+    const savedIndex = cloudChoices.findIndex((c) => c.system_id === data.system_id && c.device_id === data.device_id);
+    select.value = savedIndex >= 0 ? String(savedIndex) : cloudChoices.length === 1 && !data.system_id && !data.device_id ? "0" : "";
+    select.disabled = !cloudChoices.length || data.manual_selection;
+    $("save-cloud-device").disabled = select.disabled || !select.value;
+    $("cloud-discovery-status").textContent = !data.credentials_configured
+      ? "Ange client ID och client secret i tilläggets Konfiguration först."
+      : data.manual_selection ? "Manuella ID:n används. Töm system-ID/device-ID i tilläggskonfigurationen och starta om om du vill spara pumpval här."
+      : `${cloudChoices.length} enheter hittades. ${savedIndex >= 0 ? "Sparat pumpval visas." : data.system_id ? "Sparat pumpval saknas i listan och har inte ändrats." : "Kontrollera valet och spara; inget pumpval ändras av hämtningen."}`;
+  } catch (error) {
+    cloudChoices = [];
+    $("cloud-device-choice").replaceChildren();
+    $("cloud-discovery-status").textContent = `Kunde inte hämta anläggningar: ${error.message}`;
+  } finally {
+    cloudDiscoveryBusy = false;
+    $("discover-cloud-devices").disabled = false;
+  }
+}
+
+async function saveCloudDevice() {
+  if (cloudDiscoveryBusy || cloudResetBusy || cloudAlarmsBusy || $("save-cloud-device").disabled) return;
+  const choice = cloudChoices[Number($("cloud-device-choice").value)];
+  if (!choice || !window.confirm(`Spara ${choice.system_name} / ${choice.device_name} (${choice.system_id} / ${choice.device_id}) för molnlarmläsning? Detta ändrar inte HA-pumpvalet och kvitterar inga larm.`)) return;
+  cloudDiscoveryBusy = true;
+  $("save-cloud-device").disabled = $("discover-cloud-devices").disabled = true;
+  try {
+    await api("myuplink/discovery", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ system_id: choice.system_id, device_id: choice.device_id }) });
+    cloudAlarmReport = null;
+    $("cloud-alarms").replaceChildren();
+    $("cloud-discovery-status").textContent = "Pumpvalet är sparat och gäller även efter omstart. Inget larm har kvitterats.";
+    await refreshCloudAlarms();
+  } catch (error) {
+    $("cloud-discovery-status").textContent = `Pumpvalet kunde inte bekräftas: ${error.message}. Hämta anläggningar igen och kontrollera det sparade valet.`;
+  } finally {
+    cloudDiscoveryBusy = false;
+    $("discover-cloud-devices").disabled = false;
+  }
+}
 
 async function refreshCloudAlarms() {
   if (cloudAlarmsBusy || cloudResetBusy) return;
@@ -1075,13 +1135,14 @@ async function refreshCloudAlarms() {
 }
 
 async function resetCloudAlarm(id) {
-  if (cloudResetBusy || cloudAlarmsBusy || !cloudAlarmReport?.alarms.some((alarm) => alarm.id === id && alarm.can_reset)) return;
+  if (cloudResetBusy || cloudAlarmsBusy || cloudDiscoveryBusy || !cloudAlarmReport?.alarms.some((alarm) => alarm.id === id && alarm.can_reset)) return;
   if (!window.confirm(`Begär manuell kvittering av larm 229 för myUplink-enhet ${cloudAlarmReport.device_id} i system ${cloudAlarmReport.system_id}?\n\nBekräfta att du kontrollerat och åtgärdat orsaken enligt NIBE. Kompressorn kan starta igen. Kvitteringen löser inte flödes- eller hårdvarufel.`)) return;
   cloudResetBusy = true;
   $("cloud-alarms").querySelectorAll("button").forEach((button) => { button.disabled = true; });
   try {
     const result = await api("myuplink/alarms", { method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "reset", id, confirmed: true }) });
+      body: JSON.stringify({ action: "reset", id, confirmed: true,
+        system_id: cloudAlarmReport.system_id, device_id: cloudAlarmReport.device_id }) });
     $("cloud-alarm-action").textContent = result.message;
   } catch (error) {
     $("cloud-alarm-action").textContent = `Kvitteringen kunde inte bekräftas: ${error.message}`;
@@ -2148,6 +2209,11 @@ async function init() {
   $("fireplace_max_age_minutes").addEventListener("input", updateSaveState);
   $("refresh-alarms").addEventListener("click", () => { void refreshAlarms(); void refreshCloudAlarms(); });
   $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
+  $("discover-cloud-devices").addEventListener("click", () => void discoverCloudDevices());
+  $("save-cloud-device").addEventListener("click", () => void saveCloudDevice());
+  $("cloud-device-choice").addEventListener("change", () => {
+    $("save-cloud-device").disabled = cloudDiscoveryBusy || !$("cloud-device-choice").value;
+  });
   $("room_sensors").addEventListener("change", () => {
     renderPriorityPicker(Array.from($("priority_sensors").querySelectorAll("input:checked"), (input) => input.value));
     renderNearestThermostat($("nearest_thermostat").value);

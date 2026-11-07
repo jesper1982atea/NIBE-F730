@@ -84,6 +84,8 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                     self.respond(200, insights.alarms(controller.settings()))
                 elif path == "/api/myuplink/alarms":
                     self.respond(200, myuplink.report())
+                elif path == "/api/myuplink/discovery":
+                    self.respond(200, myuplink.discovery())
                 elif path == "/api/hotwater":
                     self.respond(200, insights.hot_water(controller.settings()))
                 elif path == "/api/auxiliary":
@@ -182,14 +184,29 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
             if not self.authorized():
                 return
             path = urlsplit(self.path).path
+            if path == "/api/myuplink/discovery":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(length)) if 0 < length <= 1024 else {}
+                    if not isinstance(body, dict) or set(body) != {"system_id", "device_id"}:
+                        raise ControlError("Ange system_id och device_id från upptäckten.")
+                    self.respond(200, myuplink.select_device(body["system_id"], body["device_id"], controller.events))
+                except (ValueError, ControlError) as exc:
+                    self.respond(400, {"error": str(exc) or "Ogiltigt pumpval."})
+                except (OSError, sqlite3.Error):
+                    LOG.exception("Kunde inte spara myUplink-pumpval")
+                    self.respond(500, {"error": "Pumpvalet kunde inte sparas eller loggas. Uppdatera vyn och kontrollera valet."})
+                return
             if path == "/api/myuplink/alarms":
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                     body = json.loads(self.rfile.read(length)) if 0 < length <= 1024 else {}
-                    if (not isinstance(body, dict) or set(body) != {"action", "id", "confirmed"}
-                            or body["action"] != "reset" or body["confirmed"] is not True):
-                        raise ControlError("Manuell kvittering kräver action=reset, larm-ID och confirmed=true.")
-                    self.respond(200, myuplink.reset(body["id"], controller.events))
+                    if (not isinstance(body, dict) or set(body) != {"action", "id", "confirmed", "system_id", "device_id"}
+                            or body["action"] != "reset" or body["confirmed"] is not True
+                            or not isinstance(body["system_id"], str) or not body["system_id"]
+                            or not isinstance(body["device_id"], str) or not body["device_id"]):
+                        raise ControlError("Manuell kvittering kräver action=reset, larm-ID, system_id, device_id och confirmed=true.")
+                    self.respond(200, myuplink.reset(body["id"], controller.events, body["system_id"], body["device_id"]))
                 except (ValueError, ControlError) as exc:
                     self.respond(400, {"error": str(exc) or "Ogiltig begäran."})
                 except (OSError, sqlite3.Error):
@@ -297,7 +314,7 @@ def main():
             stop.wait(60)
 
     insights = Insights(controller.ha, controller.data_dir)
-    myuplink = MyUplink(options)
+    myuplink = MyUplink(options, controller.data_dir)
     servers = [ThreadingHTTPServer(("0.0.0.0", 8098), handler_for(controller, insights=insights, myuplink=myuplink))]
     if local_token:
         servers.append(ThreadingHTTPServer(("0.0.0.0", 8099), handler_for(controller, local_token, insights, myuplink)))

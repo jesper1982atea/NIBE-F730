@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## 0.2.43
+
+- Hämta anläggningar och enheter direkt i larmvyn med bara myUplink
+  client ID och client secret. System-ID och device-ID behöver inte
+  letas upp i developer-portalen eller Swagger.
+- Välj och spara molnpump efter bekräftelse. Upptäckten ändrar aldrig
+  sparat pumpval; nya val kontrolleras på nytt och består efter omstart
+  för samma klientuppgifter. Manuella ID:n behålls.
+- Guiden för konfigurering uppdaterad. Upptäckt och pumpval skickar
+  ingen kvittering och ändrar inte Home Assistants pumpstyrning.
+- Kvitteringsbegäran binds till anläggning och enhet som användaren
+  bekräftat. Ett ändrat molnpumpval i en annan flik spärrar gamla begäranden.
+
 ## 0.2.42
 
 - Ny utfällbar konfigurationsguide i myUplink-larmvyn för client ID,
