@@ -69,6 +69,43 @@ varmvatten, temperaturhistorik och pumpens drift.
 tryck. Inställningarna är utfällda från början tills rum och pumpanslutning
 är valda.
 
+### Pumplarm och korta drifttider
+
+**Pumplarm** visar larmstatus och kod från samma HA-enhet och
+integrationsanslutning som din valda kurvförskjutning. Saknade, otillgängliga,
+gamla eller tvetydiga givare visas som osäkra; andra pumpars larm används inte.
+Vyn visar också senaste rapporterade driftvärden samt valda rums temperaturer
+och termostatbörvärden. Dessa är inte ögonblicksbilder vid larmets start.
+
+NIBEs **larm 229** blockerar kompressorn efter tre körningar kortare än fem
+minuter i rad. Kontrollera värmeupptagning, öppna termostater och eventuell
+luft enligt [NIBEs råd för korta drifttider](https://www.nibe.eu/sv-se/support/vanliga-fragor/faq-items/min-produkt-larmar-for-korta-drifttider-vad-ska-jag-gora).
+Även varmvattenkörning och dess inställningar kan behöva undersökas.
+Rumstemperatur över börvärdet eller hög cirkulationspumphastighet bevisar
+inte ventilposition eller tillräckligt flöde. Gles myUplink-historik kan
+missa korta körningar och räcker inte alltid för att fastställa orsaken.
+Återkommande larm kräver installatör/service; appen kan inte garantera att
+larmet inte återkommer.
+
+Vid ett aktuellt, entydigt bekräftat larm 229 väntar nya automatiska
+kurvförskjutningar och termostatbegränsningar. När giltiga rapporter visar
+att larmet är borta kan kurvstyrningen fortsätta. Redan påbörjad
+teståterställning och återställning efter semesterperiod tillåts fortfarande.
+Andra larm beskrivs utan att behandlas som larm 229; ett nytt pumptest
+kan inte startas när pumpen rapporterar aktivt larm.
+
+**Pausa termostatbegränsning** sparar endast avstängning av appens begränsare,
+efter ditt samtycke och en ny kontroll av larm 229. Den ändrar inga befintliga
+börvärden, öppnar inga ventiler och kvitterar inte pumpen. Pausen består efter
+omstart; återaktivera medvetet under Inställningar. Övriga osparade
+formulärändringar bevaras.
+
+**Ingen fjärrkvittering erbjuds.** Någon verifierad återställningstjänst eller
+datapunkt finns inte i den undersökta Home Assistant-anslutningen. Åtgärda
+orsaken och följ pumpens instruktion för manuell kvittering på displayen
+eller i myUplink. Appen gissar inte datapunkter och återställer aldrig ett
+kompressorskydd automatiskt.
+
 ### Prioritera ett eller två rum
 
 Under **Inställningar** väljer du först **Rumsgivare** för de rum du vill
@@ -942,6 +979,8 @@ Token ger behörighet att både läsa och ändra alla styrinställningar.
 | GET | `/api/entities` | Valbara HA-entiteter med namn, värde och enhet |
 | GET | `/api/discovery` | Entydigt identifierad myUplink-pump och utegivare, utan att ändra inställningar |
 | GET | `/api/overview` | Pumpdrift, larm och åtskilda pump-/huselmätvärden |
+| GET | `/api/alarms` | Vald pumps aktuella larmkod, driftvärden, rum och tillgänglig pausåtgärd |
+| PUT | `/api/alarms` | `{"action":"pause_thermostats"}` pausar endast appens termostatbegränsning vid aktuellt larm 229; ingen kvittering |
 | GET | `/api/energy` | Senaste 24 avslutade timmarnas pumpel, beräknad kostnad, datatäckning och styrmarkeringar (endast läsning) |
 | GET | `/api/auxiliary` | Elpatronens aktuella effekt, observerade körperioder, drifttid, uppskattad el/kostnad och samtidiga driftobservationer (endast läsning) |
 | GET | `/api/history` | Senaste dygnets temperaturhistorik för sparade givare |

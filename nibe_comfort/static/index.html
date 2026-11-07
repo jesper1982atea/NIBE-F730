@@ -24,6 +24,7 @@
       <a href="#temperature-section">Rum och historik</a>
       <a href="#energy-section">El och kostnad</a>
       <a href="#auxiliary-section">Elpatron</a>
+      <a href="#alarm-card">Larm</a>
       <a href="#vacation-card">Semester</a>
       <a href="#fireplace-card">Braskamin</a>
       <a href="#settings-panel">Inställningar</a>
@@ -255,6 +256,21 @@
       <p id="electricity-note" class="hint"></p>
       <p class="hint">Värden rapporterade via Home Assistant. Saknade eller gamla uppgifter visas inte som noll eller ”av”.</p>
       </details>
+    </section>
+
+    <section class="card dashboard" id="alarm-card">
+      <div class="section-heading"><h2>Larm och åtgärder</h2><button type="button" id="refresh-alarms" class="secondary">Uppdatera larm</button></div>
+      <p id="alarm-status" role="status">Hämtar larm…</p>
+      <p id="alarm-explanation"></p>
+      <p id="alarm-action-status" role="status"></p>
+      <div id="alarm-observations" class="live-grid"></div>
+      <button type="button" id="alarm-pause" hidden>Pausa appens termostatbegränsning</button>
+      <ul id="alarm-rooms"></ul>
+      <p class="hint">Temperatur vid eller över börvärdet kan innebära minskat värmebehov, men bevisar inte att ventilen är stängd eller att flödet är tillräckligt. En paus öppnar inte ventiler och ändrar inte befintliga börvärden. Återaktivering görs medvetet under Inställningar.</p>
+      <p class="hint">Driftvärdena är senaste rapporter, inte värden vid larmets start. Gles myUplink-historik kan missa korta kompressorkörningar. Cirkulationspumpens hastighet bevisar inte faktiskt flöde; vattenvolym, luft och ventiler måste kontrolleras på anläggningen.</p>
+      <p>Vid larm 229: kontrollera enligt NIBE att värmesystemet har tillräckligt flöde och är urluftat. Kontrollera även pumpens driftläge vid larmet — varmvatten kan kräva annan felsökning än rumsvärme. Vid återkommande larm, kontakta installatör eller NIBE-service. Appen kan inte garantera att larmet inte återkommer.</p>
+      <p>Återställning stöds inte via den verifierade Home Assistant-anslutningen. Kontrollera orsaken och kvittera manuellt i pumpen eller myUplink enligt pumpens instruktion. Appen använder inga gissade datapunkter och återställer aldrig larm automatiskt.</p>
+      <a href="https://www.nibe.eu/sv-se/support/vanliga-fragor/faq-items/min-produkt-larmar-for-korta-drifttider-vad-ska-jag-gora" target="_blank" rel="noopener noreferrer">NIBE:s råd om korta drifttider</a>
     </section>
 
     <section class="card dashboard" id="energy-section">
