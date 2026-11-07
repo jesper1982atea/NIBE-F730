@@ -1,5 +1,16 @@
 # Ändringslogg
 
+## 0.2.42
+
+- Ny utfällbar konfigurationsguide i myUplink-larmvyn för client ID,
+  client secret, system-ID och device-ID.
+- Förklarar skillnaden mellan Home Assistants callback-inloggning och
+  tilläggets client credentials-flöde, som inte använder någon callback.
+  Befintliga HA-klientuppgifter kan provas utan att ändra callback;
+  tokenflöde och behörigheter måste verifieras separat.
+- Användarguiden beskriver läsanrop för att hitta rätt moln-ID:n och
+  felsökning av 401/403. Ingen ändring av pumpstyrning eller kvittering.
+
 ## 0.2.41
 
 - Valfri direktanslutning till myUplinks publika API visar aktiva larm för

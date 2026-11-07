@@ -123,6 +123,60 @@ System-ID och device-ID hämtas från dina system i API:t:
 som verifierats tillhöra rätt anläggning; namn eller larmkod är inte ID.
 Publicera aldrig client secret i GitHub eller ändringsloggen.
 
+#### Snabbguide: befintlig HA-applikation och callback-URL
+
+**Du behöver ingen ny callback-server för NIBE Comfort 0.2.41.**
+Direktanslutningen använder `client_credentials`: tillägget hämtar sin egen
+token med client ID och client secret. Den öppnar inget inloggningsfönster,
+skickar ingen `redirect_uri` och har ingen OAuth callback-sökväg.
+Home Assistants myUplink-integration använder däremot ett separat
+inloggningsflöde med callback.
+
+1. Öppna [Applications på myUplink Developer](https://dev.myuplink.com/apps)
+   med kontot som har tillgång till din pump. Öppna den applikation du redan
+   registrerat för Home Assistant. Du kan prova dess **Client ID** och
+   **Client Secret** även här, förutsatt att myUplink tillåter
+   `client_credentials` och nödvändiga behörigheter för den klienten.
+   Detta är inte verifierat för din befintliga klient; fungerande
+   HA-inloggning bevisar inte att detta andra tokenflöde fungerar.
+2. **Låt HA-applikationens callback-URL vara oförändrad.** Den vanliga
+   adressen enligt [Home Assistants guide](https://www.home-assistant.io/integrations/myuplink/)
+   är `https://my.home-assistant.io/redirect/oauth`. Utan My Home Assistant
+   används i stället `<HOME_ASSISTANT_URL>/auth/external/callback`, med
+   samma HA-adress som vid inloggningen. Adresserna tillhör HA, inte tillägget.
+   Ändra inte callback, rotera inte hemligheten och radera inte klienten
+   för att testa NIBE Comfort; det kan störa HA:s nästa inloggning.
+3. Ange uppgifterna i **NIBE Comfort → Konfiguration**:
+   `myuplink_client_id`, `myuplink_client_secret`, `myuplink_system_id`
+   och `myuplink_device_id`. System-ID är anläggningens UUID; device-ID
+   är pumpens ID inom den anläggningen. Varken ett HA-entitets-ID,
+   pumpnamnet eller larmkod 229 är rätt ersättning.
+4. Hitta ID:n i myUplinks [officiella Swagger-gränssnitt](https://api.myuplink.com/swagger/index.html):
+   använd **Authorize** med klientuppgifterna och `READSYSTEM WRITESYSTEM`,
+   läs **GET /v2/systems/me** och därefter
+   **GET /v2/systems/{systemId}**. Matcha rätt anläggning och pump i
+   svaren. Använd endast läsanrop vid konfigureringen, inte reset.
+   Swagger har ett eget testgränssnitt; använd inte dess exempelklient.
+5. Spara tilläggskonfigurationen, starta om **bara NIBE Comfort** och öppna
+   **Larm och åtgärder → Direktanslutning till myUplink**. Kontrollera att
+   visat system/device är rätt. Detta läser larm; ingen kvittering skickas
+   bara för att du konfigurerar eller uppdaterar vyn.
+
+**Separat applikation är enklare att hålla isolerad** om du inte vill dela
+klientuppgifter eller API-begränsningar med HA. Om registreringsformuläret
+kräver callback kan du använda den HA-callback som dokumenteras ovan som
+registreringsvärde; NIBE Comfort använder den inte. Det gör inte tillägget
+till mottagare av HA:s OAuth-inloggning. Vi har inte verifierat vilka
+registreringskrav myUplink ställer på en ny klient för just ditt konto.
+
+Om tokenhämtning eller larmläsning ger **401/403**, kontrollera client ID,
+client secret, tillåtna tokenflöden, `READSYSTEM WRITESYSTEM` och klientens
+åtkomst till anläggningen. Tillägget byter inte automatiskt till HA:s
+inloggningsflöde och kopierar inte dess access-/refresh-token.
+En separat registrering garanterar inte att en saknad behörighet löses.
+Även med fungerande anslutning kan UUID-formatet på larmet spärra kvittering
+enligt kompatibilitetsgränsen nedan.
+
 Alla fyra fält är frivilliga när funktionen är avstängd men måste fyllas i
 för att använda den. Hemligheten skickas bara till myUplinks fasta HTTPS-adress,
 exponeras inte i tilläggets REST-svar eller frontend och token hålls i minnet.

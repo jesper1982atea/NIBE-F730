@@ -1124,6 +1124,10 @@ async function cloudAlarmChecks() {
   });
   await cloudPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await cloudPage.waitForFunction(() => document.getElementById("cloud-alarm-status").textContent.includes("inte konfigurerat"));
+  await cloudPage.locator("#myuplink-setup-guide summary").click();
+  assert.match(await cloudPage.locator("#myuplink-setup-guide").textContent(), /Ingen ny callback-server.*client credentials/s);
+  assert.match(await cloudPage.locator("#myuplink-setup-guide").textContent(), /https:\/\/my\.home-assistant\.io\/redirect\/oauth/);
+  assert.match(await cloudPage.locator("#myuplink-setup-guide").textContent(), /Låt HA-applikationens callback vara oförändrad/);
   assert.equal(await cloudPage.locator("#cloud-alarms button").count(), 0);
   report = { configured: true, system_id: "chosen-system", device_id: "chosen-device", checked_at: now,
     alarms: [{ id: "a2f23e7c-839e-4f16-85f6-55a0e6555906", code: 229, status: "Active", title: "Korta drifttider",
