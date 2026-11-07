@@ -1035,6 +1035,62 @@ function metric(item) {
 }
 
 let alarmsBusy = false, alarmActionBusy = false, lastAlarm = null;
+let cloudAlarmsBusy = false, cloudResetBusy = false, cloudAlarmReport = null;
+
+async function refreshCloudAlarms() {
+  if (cloudAlarmsBusy || cloudResetBusy) return;
+  cloudAlarmsBusy = true;
+  $("cloud-alarms").querySelectorAll("button").forEach((button) => { button.disabled = true; });
+  try {
+    const data = await api("myuplink/alarms");
+    cloudAlarmReport = data;
+    $("cloud-alarm-status").textContent = data.configured
+      ? `Direkt myUplink · system ${data.system_id} · device ${data.device_id}. ${data.alarms.length} larm för denna enhet. Lästa ${new Date(data.checked_at * 1000).toLocaleTimeString("sv-SE")}; läsningen kan återanvändas i en minut. Detta pumpval är separat från HA-valet.`
+      : "Direkt myUplink är inte konfigurerat. Fyll i anslutningsuppgifterna under tilläggets Konfiguration.";
+    $("cloud-alarms").replaceChildren(...data.alarms.map((alarm) => {
+      const row = document.createElement("li");
+      const title = document.createElement("p");
+      title.textContent = `${alarm.title} · kod ${alarm.code} · ${alarm.status} · ID ${alarm.id}`;
+      row.append(title);
+      if (alarm.can_reset) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Kvittera larm 229";
+        button.addEventListener("click", () => void resetCloudAlarm(alarm.id));
+        row.append(button);
+      } else {
+        const reason = document.createElement("p");
+        reason.textContent = alarm.blocked_reason;
+        row.append(reason);
+      }
+      return row;
+    }));
+  } catch (error) {
+    cloudAlarmReport = null;
+    $("cloud-alarms").replaceChildren();
+    $("cloud-alarm-status").textContent = `Kunde inte läsa myUplink-larm: ${error.message}`;
+  } finally {
+    cloudAlarmsBusy = false;
+  }
+}
+
+async function resetCloudAlarm(id) {
+  if (cloudResetBusy || cloudAlarmsBusy || !cloudAlarmReport?.alarms.some((alarm) => alarm.id === id && alarm.can_reset)) return;
+  if (!window.confirm(`Begär manuell kvittering av larm 229 för myUplink-enhet ${cloudAlarmReport.device_id} i system ${cloudAlarmReport.system_id}?\n\nBekräfta att du kontrollerat och åtgärdat orsaken enligt NIBE. Kompressorn kan starta igen. Kvitteringen löser inte flödes- eller hårdvarufel.`)) return;
+  cloudResetBusy = true;
+  $("cloud-alarms").querySelectorAll("button").forEach((button) => { button.disabled = true; });
+  try {
+    const result = await api("myuplink/alarms", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reset", id, confirmed: true }) });
+    $("cloud-alarm-action").textContent = result.message;
+  } catch (error) {
+    $("cloud-alarm-action").textContent = `Kvitteringen kunde inte bekräftas: ${error.message}`;
+  } finally {
+    cloudResetBusy = false;
+    await refreshCloudAlarms();
+    void refreshAlarms();
+  }
+}
 
 async function refreshAlarms() {
   if (alarmsBusy || alarmActionBusy) return;
@@ -1096,6 +1152,7 @@ async function pauseAlarmThermostats() {
 
 async function refreshOverview() {
   void refreshAlarms();
+  void refreshCloudAlarms();
   const provider = settings.price_provider;
   try {
     const data = await api("overview");
@@ -2089,7 +2146,7 @@ async function init() {
   $("fireplace_enabled").addEventListener("change", updateSaveState);
   $("fireplace_rooms").addEventListener("change", updateSaveState);
   $("fireplace_max_age_minutes").addEventListener("input", updateSaveState);
-  $("refresh-alarms").addEventListener("click", () => void refreshAlarms());
+  $("refresh-alarms").addEventListener("click", () => { void refreshAlarms(); void refreshCloudAlarms(); });
   $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
   $("room_sensors").addEventListener("change", () => {
     renderPriorityPicker(Array.from($("priority_sensors").querySelectorAll("input:checked"), (input) => input.value));
