@@ -244,8 +244,8 @@ def learn(indoor, outdoor, offset, now):
             missing.append(f"{changes} av {GOOD_CHANGES} kurvändringar")
         if model["skill"] is None or model["skill"] < GOOD_SKILL:
             missing.append("träffsäkerheten är ännu för låg")
-        result["message"] = ("Grov uppskattning (" + ", ".join(missing) + "). Förvärmningen använder försiktiga "
-                             f"standardvärden ({DEFAULT_LEAD} timmar innan) tills modellen är säker.")
+        result["message"] = ("Preliminär uppskattning (" + ", ".join(missing) + "). Förvärmningen använder försiktiga "
+                             f"standardvärden ({DEFAULT_LEAD} timmar innan) medan mer underlag samlas.")
     return result
 
 

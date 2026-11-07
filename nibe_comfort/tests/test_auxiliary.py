@@ -161,6 +161,12 @@ class HeaterReportTests(unittest.TestCase):
         self.assertEqual(data["runs"][0]["context"]["operation"]["value"], "Hot water")
         self.assertIsNone(data["runs"][1]["context"]["operation"], "Too old to explain a later run")
 
+    def test_numeric_status_counter_is_not_operation_context(self):
+        states = heater_rows()[:1] + [row(MODE, "15001.0", START, unit_of_measurement="min", device_class="duration")]
+        power, contexts = discover(states)
+        self.assertEqual(power["entity_id"], POWER)
+        self.assertNotIn("operation", contexts)
+
     def test_discovery_only_uses_same_pump_power_not_total_or_energy(self):
         states = heater_rows()[:1] + [row(MODE, "Heating", START)]
         power, contexts = discover(states)
@@ -178,6 +184,25 @@ class HeaterReportTests(unittest.TestCase):
         duplicate = {**states[0], "entity_id": "sensor.other_power_internal_add_heat"}
         reg = registry() + [{"entity_id": duplicate["entity_id"], "platform": "myuplink", "device_id": "pump"}]
         with self.assertRaisesRegex(ControlError, "Ingen entydig"):
+            discover([*states, duplicate], reg)
+
+
+    def test_parameter_id_suffix_is_accepted(self):
+        suffixed = "sensor.pump_power_internal_add_heat_43084"
+        rows = [{**r, "entity_id": suffixed} for r in heater_rows()[-1:]]
+        reg = [r if r["entity_id"] != POWER else {**r, "entity_id": suffixed} for r in registry()]
+        self.assertEqual(discover(rows, reg)[0]["entity_id"], suffixed)
+        other = "sensor.pump_power_internal_add_heat_eb100"
+        reg = reg + [{"entity_id": other, "platform": "myuplink", "device_id": "pump"}]
+        self.assertEqual(discover(rows + [{**rows[0], "entity_id": other}], reg)[0]["entity_id"], suffixed)
+
+    def test_suffixed_context_is_text_only_and_duplicate_power_is_not_guessed(self):
+        states = heater_rows()[:1] + [row(MODE + "_50095", "Hot water", START)]
+        reg = registry() + [{"entity_id": MODE + "_50095", "platform": "myuplink", "device_id": "pump"}]
+        self.assertEqual(discover(states, reg)[1]["operation"]["entity_id"], MODE + "_50095")
+        duplicate = {**states[0], "entity_id": POWER + "_43084"}
+        reg.append({"entity_id": duplicate["entity_id"], "platform": "myuplink", "device_id": "pump"})
+        with self.assertRaises(ControlError):
             discover([*states, duplicate], reg)
 
 
