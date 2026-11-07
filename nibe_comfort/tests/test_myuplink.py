@@ -99,6 +99,11 @@ class MyUplinkTests(unittest.TestCase):
             self.client.lock.release()
         self.client.request.assert_not_called()
 
+    def test_changed_selection_rejects_old_tab_reset_even_with_same_alarm_id(self):
+        with self.assertRaisesRegex(ControlError, "har ändrats"):
+            self.client.reset("12345", self.events, SYSTEM, "old-device")
+        self.client.request.assert_not_called()
+
     def test_timeout_does_not_retry_or_claim_success(self):
         def response(path, data=None, token=None):
             if path.endswith("/reset"):
@@ -173,3 +178,77 @@ class MyUplinkTests(unittest.TestCase):
         with self.assertRaises(ControlError):
             self.client.reset("12345", self.events)
         self.assertFalse(any(c.args[0].endswith("/reset") for c in self.client.request.call_args_list))
+
+    def setup_discovery(self, systems):
+        self.client.system_id = self.client.device_id = ""
+        self.client.manual_selection = False
+        self.client.selection_path = Path(self.temp.name) / "myuplink-selection.json"
+        def response(path, data=None, token=None):
+            if path == "/oauth/token":
+                return {"access_token": "token", "expires_in": 3600}
+            return {"systems": systems, "numItems": len(systems)}
+        self.client.request.side_effect = response
+
+    def test_discovery_only_needs_credentials_and_requires_explicit_persisted_choice(self):
+        systems = [{"systemId": SYSTEM, "name": "Hemma", "devices": [
+            {"id": "selected-device", "deviceType": "F730"}]}]
+        self.setup_discovery(systems)
+        report = self.client.discovery()
+        self.assertEqual(report["choices"][0]["device_name"], "F730")
+        self.assertEqual(report["system_id"], "")
+        self.assertFalse(self.client.selection_path.exists())
+        self.assertFalse(self.client.report()["configured"])
+        self.client.select_device(SYSTEM, "selected-device", self.events)
+        opts = {"myuplink_client_id": "test-client", "myuplink_client_secret": "test-secret"}
+        restored = MyUplink(opts, self.temp.name)
+        self.assertEqual(restored.device_id, "selected-device")
+        self.assertTrue(restored.configured())
+        self.assertFalse(MyUplink({**opts, "myuplink_client_secret": "changed"}, self.temp.name).configured())
+        self.assertNotIn("test-secret", self.client.selection_path.read_text())
+
+    def test_discovery_multiple_devices_does_not_change_saved_choice(self):
+        self.setup_discovery([{"systemId": SYSTEM, "devices": [{"id": "a"}, {"id": "b"}]}])
+        self.assertEqual(len(self.client.discovery()["choices"]), 2)
+        with self.assertRaises(ControlError):
+            self.client.select_device(SYSTEM, "foreign", self.events)
+        self.assertFalse(self.client.selection_path.exists())
+        self.assertEqual(self.client.device_id, "")
+
+    def test_manual_options_cannot_be_silently_overwritten(self):
+        self.setup_discovery([{"systemId": SYSTEM, "devices": [{"id": "a"}]}])
+        self.client.manual_selection = True
+        with self.assertRaisesRegex(ControlError, "Töm manuellt"):
+            self.client.select_device(SYSTEM, "a", self.events)
+        self.assertFalse(self.client.selection_path.exists())
+
+    def test_discovery_invalid_ids_duplicates_empty_results_and_transport_failure(self):
+        for systems in ([{"systemId": "invalid", "devices": []}],
+                        [{"systemId": SYSTEM, "devices": [{"id": "x"}, {"id": "x"}]}],
+                        [{"systemId": SYSTEM, "devices": []}, {"systemId": SYSTEM, "devices": []}]):
+            self.setup_discovery(systems)
+            self.client.discovery_cache = None
+            with self.assertRaises(ControlError):
+                self.client.discovery()
+        self.setup_discovery([])
+        self.assertEqual(self.client.discovery()["choices"], [])
+        self.client.discovery_cache = None
+        self.client.request.side_effect = ControlError("HTTP 403")
+        with self.assertRaises(ControlError):
+            self.client.discovery()
+        self.assertIsNone(self.client.discovery_cache)
+
+    def test_discovery_falls_back_to_system_details_and_persistence_error_is_not_saved(self):
+        self.setup_discovery([{"systemId": SYSTEM}])
+        def response(path, data=None, token=None):
+            if path == "/oauth/token":
+                return {"access_token": "token", "expires_in": 3600}
+            if path.startswith("/v2/systems/me"):
+                return {"systems": [{"systemId": SYSTEM}], "numItems": 1}
+            return {"systemId": SYSTEM, "devices": [{"id": "selected-device", "product": {"name": "F730"}}]}
+        self.client.request.side_effect = response
+        self.assertEqual(self.client.discovery()["choices"][0]["device_name"], "F730")
+        from unittest.mock import patch
+        with patch("myuplink.atomic_json", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.client.select_device(SYSTEM, "selected-device", self.events)
+        self.assertEqual(self.client.device_id, "")

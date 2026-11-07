@@ -108,15 +108,31 @@ class ApiTests(unittest.TestCase):
         for body in ({}, {"action": "reset", "id": "123"},
                      {"action": "reset", "id": "123", "confirmed": 1}, []):
             self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body)[0], 400)
-        body = {"action": "reset", "id": "123", "confirmed": True}
+        body = {"action": "reset", "id": "123", "confirmed": True, "system_id": "system", "device_id": "device"}
         self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body, token=False)[0], 401)
         self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body, content_type="text/plain")[0], 415)
         cloud.reset.assert_not_called()
         self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body)[0], 200)
-        cloud.reset.assert_called_once_with("123", self.controller.events)
+        cloud.reset.assert_called_once_with("123", self.controller.events, "system", "device")
         cloud.reset.side_effect = ControlError("Inte verifierat ID")
         self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body)[0], 400)
         self.ha.set_offset.assert_not_called()
+
+    def test_myuplink_discovery_auth_validation_and_explicit_save(self):
+        cloud = Mock()
+        cloud.discovery.return_value = {"credentials_configured": True, "choices": []}
+        cloud.select_device.return_value = {"system_id": "system", "device_id": "device"}
+        self.server.RequestHandlerClass = handler_for(self.controller, self.token, myuplink=cloud)
+        self.assertTrue(self.request("/api/myuplink/discovery")[1]["credentials_configured"])
+        body = {"system_id": "system", "device_id": "device"}
+        self.assertEqual(self.request("/api/myuplink/discovery", "PUT", body, token=False)[0], 401)
+        self.assertEqual(self.request("/api/myuplink/discovery", "PUT", body, content_type="text/plain")[0], 415)
+        self.assertEqual(self.request("/api/myuplink/discovery", "PUT", {})[0], 400)
+        cloud.select_device.assert_not_called()
+        self.assertEqual(self.request("/api/myuplink/discovery", "PUT", body)[0], 200)
+        cloud.select_device.assert_called_once_with("system", "device", self.controller.events)
+        self.ha.set_offset.assert_not_called()
+        cloud.reset.assert_not_called()
 
     def test_fireplace_settings_and_read_only_observation_status(self):
         cfg = config(fireplace_enabled=True, fireplace_rooms=["sensor.living"])

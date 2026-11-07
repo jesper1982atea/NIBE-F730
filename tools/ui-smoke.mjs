@@ -1110,10 +1110,22 @@ async function cloudAlarmChecks() {
   let accept = false, failRead = false, failReset = false, resetWrites = 0, reads = 0;
   cloudPage.on("dialog", (dialog) => accept ? dialog.accept() : dialog.dismiss());
   let report = { configured: false, alarms: [], checked_at: now };
+  let discovery = { credentials_configured: true, choices: [], system_id: "", device_id: "" };
+  let selectionWrites = 0, discoveryFail = false;
+  await cloudPage.route("**/api/myuplink/discovery", (route) => {
+    if (route.request().method() === "PUT") {
+      selectionWrites++;
+      const selected = route.request().postDataJSON();
+      discovery = { ...discovery, ...selected };
+      return route.fulfill({ json: selected });
+    }
+    return discoveryFail ? route.fulfill({ status: 400, json: { error: "HTTP 403" } }) : route.fulfill({ json: discovery });
+  });
   await cloudPage.route("**/api/myuplink/alarms", async (route) => {
     if (route.request().method() === "PUT") {
       resetWrites++;
-      assert.deepEqual(route.request().postDataJSON(), { action: "reset", id: "12345", confirmed: true });
+      assert.deepEqual(route.request().postDataJSON(), { action: "reset", id: "12345", confirmed: true,
+        system_id: "chosen-system", device_id: "chosen-device" });
       await new Promise((resolve) => setTimeout(resolve, 100));
       return failReset ? route.fulfill({ status: 400, json: { error: "timeout; kan ha skickats" } })
         : route.fulfill({ json: { message: "Begäran accepterad. Pumpens larm är inte bekräftat släckt.", confirmed_cleared: false } });
@@ -1129,6 +1141,30 @@ async function cloudAlarmChecks() {
   assert.match(await cloudPage.locator("#myuplink-setup-guide").textContent(), /https:\/\/my\.home-assistant\.io\/redirect\/oauth/);
   assert.match(await cloudPage.locator("#myuplink-setup-guide").textContent(), /Låt HA-applikationens callback vara oförändrad/);
   assert.equal(await cloudPage.locator("#cloud-alarms button").count(), 0);
+  discovery.choices = [{ system_id: "system-a", device_id: "device-a", system_name: "Hemma", device_name: "F730" }];
+  await cloudPage.locator("#discover-cloud-devices").click();
+  await cloudPage.waitForFunction(() => document.getElementById("cloud-device-choice").value === "0");
+  assert.equal(selectionWrites, 0, "A unique device is shown but never silently saved");
+  await cloudPage.locator("#save-cloud-device").click();
+  assert.equal(selectionWrites, 0, "Cancelling device choice cannot save it");
+  accept = true;
+  await cloudPage.evaluate(() => saveCloudDevice());
+  assert.equal(selectionWrites, 1);
+  assert.match(await cloudPage.locator("#cloud-discovery-status").textContent(), /sparat.*omstart.*Inget larm/);
+  accept = false;
+  discovery.choices = [...discovery.choices, { system_id: "system-b", device_id: "device-b", system_name: "Stuga", device_name: "F750" }];
+  await cloudPage.evaluate(() => discoverCloudDevices());
+  assert.equal(await cloudPage.locator("#cloud-device-choice").inputValue(), "0", "Saved device remains selected with multiple choices");
+  discovery.system_id = "gone";
+  discovery.device_id = "gone";
+  await cloudPage.evaluate(() => discoverCloudDevices());
+  assert.equal(await cloudPage.locator("#cloud-device-choice").inputValue(), "", "Missing saved device is never replaced");
+  assert.match(await cloudPage.locator("#cloud-discovery-status").textContent(), /saknas.*inte ändrats/);
+  discoveryFail = true;
+  await cloudPage.evaluate(() => discoverCloudDevices());
+  assert.equal(await cloudPage.locator("#save-cloud-device").isDisabled(), true);
+  assert.match(await cloudPage.locator("#cloud-discovery-status").textContent(), /403/);
+  assert.equal(resetWrites, 0);
   report = { configured: true, system_id: "chosen-system", device_id: "chosen-device", checked_at: now,
     alarms: [{ id: "a2f23e7c-839e-4f16-85f6-55a0e6555906", code: 229, status: "Active", title: "Korta drifttider",
       can_reset: false, blocked_reason: "UUID kan inte användas; reset kräver heltal." }] };

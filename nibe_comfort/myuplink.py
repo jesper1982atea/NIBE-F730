@@ -1,6 +1,7 @@
 """Opt-in public myUplink alarm API; never infer reset IDs from alarm codes."""
 
 import json
+import hashlib
 import re
 import threading
 import time
@@ -8,8 +9,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import UUID
+from pathlib import Path
 
-from controller import ControlError
+from controller import ControlError, atomic_json
 
 
 class NoRedirects(HTTPRedirectHandler):
@@ -18,28 +20,133 @@ class NoRedirects(HTTPRedirectHandler):
 
 
 class MyUplink:
-    def __init__(self, options):
+    def __init__(self, options, data_dir=None):
         self.client_id = options.get("myuplink_client_id", "")
         self.client_secret = options.get("myuplink_client_secret", "")
         self.system_id = options.get("myuplink_system_id", "")
         self.device_id = options.get("myuplink_device_id", "")
+        self.manual_selection = bool(self.system_id or self.device_id)
+        self.selection_path = Path(data_dir) / "myuplink-selection.json" if data_dir else None
+        self.identity = hashlib.sha256(json.dumps([self.client_id, self.client_secret]).encode()).hexdigest()
+        if self.selection_path and self.selection_path.exists() and not self.system_id and not self.device_id:
+            saved = json.loads(self.selection_path.read_text())
+            if not isinstance(saved, dict):
+                raise ControlError("Ogiltigt sparat myUplink-pumpval.")
+            if saved.get("identity") == self.identity:
+                self.system_id = saved.get("system_id", "")
+                self.device_id = saved.get("device_id", "")
         self.lock = threading.Lock()
         self.token = None
         self.expires = 0
         self.cached = None
+        self.discovery_cache = None
         self.opener = build_opener(NoRedirects())
 
-    def configured(self):
-        values = (self.client_id, self.client_secret, self.system_id, self.device_id)
+    def credentials_configured(self):
+        values = (self.client_id, self.client_secret)
         if not any(values):
+            if self.system_id or self.device_id:
+                raise ControlError("Ange myUplink client ID och client secret för sparat pumpval.")
             return False
         if not all(isinstance(v, str) and v.strip() for v in values):
-            raise ControlError("Fyll i myUplink client ID, client secret, system-ID och device-ID i tilläggets konfiguration.")
+            raise ControlError("Fyll i myUplink client ID och client secret i tilläggets konfiguration.")
+        return True
+
+    def configured(self):
+        if not self.credentials_configured():
+            return False
+        if not self.system_id and not self.device_id:
+            return False
+        if not all(isinstance(v, str) and v.strip() for v in (self.system_id, self.device_id)):
+            raise ControlError("Välj anläggning och pump i appen, eller ange både system-ID och device-ID.")
         try:
             self.system_id = str(UUID(self.system_id))
         except ValueError as exc:
             raise ControlError("myUplink system-ID måste vara ett UUID.") from exc
         return True
+
+    def discover_devices(self):
+        token = self.access_token()
+        choices = []
+        seen = set()
+        count = 0
+        for page in range(1, 11):
+            result = self.request(f"/v2/systems/me?page={page}&itemsPerPage=100", token=token)
+            if (not isinstance(result, dict) or type(result.get("numItems")) is not int
+                    or not 0 <= result["numItems"] <= 1000):
+                raise ControlError("myUplink lämnade en ogiltig anläggningslista.")
+            systems = result.get("systems")
+            if systems is None and result["numItems"] == 0:
+                systems = []
+            if not isinstance(systems, list) or len(systems) > 100:
+                raise ControlError("myUplink lämnade en ogiltig anläggningslista.")
+            for system in systems:
+                if not isinstance(system, dict) or not isinstance(system.get("systemId"), str):
+                    raise ControlError("myUplink lämnade ett ogiltigt system-ID.")
+                try:
+                    system_id = str(UUID(system["systemId"]))
+                except ValueError as exc:
+                    raise ControlError("myUplink lämnade ett ogiltigt system-ID.") from exc
+                if system_id in seen:
+                    raise ControlError("myUplink lämnade dubbla anläggningar.")
+                seen.add(system_id)
+                devices = system.get("devices")
+                if devices is None:
+                    details = self.request(f"/v2/systems/{system_id}", token=token)
+                    if not isinstance(details, dict) or details.get("systemId") != system["systemId"]:
+                        raise ControlError("myUplink lämnade fel anläggningsdetaljer.")
+                    devices = details.get("devices")
+                if not isinstance(devices, list) or len(devices) > 100:
+                    raise ControlError("myUplink lämnade en ogiltig enhetslista.")
+                ids = set()
+                for device in devices:
+                    if (not isinstance(device, dict) or not isinstance(device.get("id"), str)
+                            or not device["id"].strip() or device["id"] in ids):
+                        raise ControlError("myUplink lämnade ett ogiltigt eller dubbelt device-ID.")
+                    ids.add(device["id"])
+                    product = device.get("product")
+                    name = product.get("name") if isinstance(product, dict) else None
+                    choices.append({"system_id": system_id, "device_id": device["id"],
+                                    "system_name": system.get("name") if isinstance(system.get("name"), str) else system_id,
+                                    "device_name": name if isinstance(name, str) else
+                                    device["deviceType"] if isinstance(device.get("deviceType"), str) and device["deviceType"] else device["id"]})
+                    if len(choices) > 1000:
+                        raise ControlError("För många myUplink-enheter; upptäckten stoppades.")
+            count += len(systems)
+            if count == result["numItems"]:
+                return choices
+            if not systems or count > result["numItems"]:
+                raise ControlError("myUplink-anläggningslistan är ofullständig.")
+        raise ControlError("myUplink-anläggningslistan är för stor.")
+
+    def discovery(self):
+        with self.lock:
+            if not self.credentials_configured():
+                return {"credentials_configured": False, "choices": [], "checked_at": None}
+            if not self.discovery_cache or time.time() - self.discovery_cache["checked_at"] >= 300:
+                self.discovery_cache = None
+                choices = self.discover_devices()
+                self.discovery_cache = {"credentials_configured": True, "choices": choices, "checked_at": time.time()}
+            return {**self.discovery_cache, "system_id": self.system_id, "device_id": self.device_id,
+                    "manual_selection": self.manual_selection}
+
+    def select_device(self, system_id, device_id, events):
+        with self.lock:
+            if not self.credentials_configured():
+                raise ControlError("Ange client ID och client secret först.")
+            if not self.selection_path:
+                raise ControlError("Beständig lagring för pumpval saknas.")
+            if self.manual_selection:
+                raise ControlError("Töm manuellt system-ID och device-ID i tilläggets konfiguration och starta om innan du sparar ett pumpval i appen.")
+            choices = self.discover_devices()
+            if not any(c["system_id"] == system_id and c["device_id"] == device_id for c in choices):
+                raise ControlError("Pumpvalet finns inte i den aktuella myUplink-anläggningslistan.")
+            atomic_json(self.selection_path, {"identity": self.identity, "system_id": system_id, "device_id": device_id})
+            self.system_id, self.device_id = system_id, device_id
+            self.cached = self.discovery_cache = None
+            events.add("myuplink_device_selected", "Användaren valde molnanläggning och enhet för larmläsning.",
+                       system_id=system_id, device_id=device_id)
+            return {"system_id": system_id, "device_id": device_id}
 
     def request(self, path, data=None, token=None):
         headers = {"Accept": "application/json", "Accept-Language": "sv-SE"}
@@ -127,7 +234,7 @@ class MyUplink:
                            "alarms": alarms, "checked_at": time.time()}
             return self.cached
 
-    def reset(self, identifier, events):
+    def reset(self, identifier, events, expected_system=None, expected_device=None):
         if not isinstance(identifier, str) or not re.fullmatch(r"[1-9][0-9]{0,9}", identifier):
             raise ControlError("Kvittering kräver ett verifierat numeriskt larm-ID; UUID och larmkod godtas inte.")
         if not self.lock.acquire(blocking=False):
@@ -135,6 +242,9 @@ class MyUplink:
         try:
             if not self.configured():
                 raise ControlError("myUplink-anslutningen är inte konfigurerad.")
+            if ((expected_system is not None and expected_system != self.system_id)
+                    or (expected_device is not None and expected_device != self.device_id)):
+                raise ControlError("Molnpumpvalet har ändrats. Uppdatera larmvyn innan kvittering.")
             if any(e["kind"] == "alarm_reset_attempt"
                    and e["details"].get("system_id") == self.system_id
                    and e["details"].get("notification_id") == identifier

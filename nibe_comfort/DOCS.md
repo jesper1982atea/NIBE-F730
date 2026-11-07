@@ -114,9 +114,12 @@ dokumenterar `GET /v2/systems/{systemId}/notifications/active` och
 Till skillnad från HA-integrationen kan tillägget använda dessa direkt.
 
 Registrera en egen applikation på [myUplink Developer](https://dev.myuplink.com/).
-Under **tilläggets Konfiguration** (inte webbgränssnittets vanliga
-styrinställningar) anger du `myuplink_client_id`, `myuplink_client_secret`,
-`myuplink_system_id` och `myuplink_device_id`. Starta sedan om tillägget.
+Under **tilläggets Konfiguration** anger du bara `myuplink_client_id` och
+`myuplink_client_secret`. Lämna `myuplink_system_id` och `myuplink_device_id`
+tomma och starta om tillägget. Tryck **Hämta mina anläggningar och pumpar**
+i larmvyn, kontrollera rätt anläggning/enhet och tryck **Spara pumpval för larm**.
+ID:n hämtas via API:t; developer-portalen visar klientuppgifter och behöver
+inte visa anläggningens eller pumpens ID.
 Anslutningen använder OAuth client credentials med `READSYSTEM WRITESYSTEM`.
 System-ID och device-ID hämtas från dina system i API:t:
 `GET /v2/systems/me` och `GET /v2/systems/{systemId}`. Använd endast ID:n
@@ -146,12 +149,14 @@ inloggningsflöde med callback.
    samma HA-adress som vid inloggningen. Adresserna tillhör HA, inte tillägget.
    Ändra inte callback, rotera inte hemligheten och radera inte klienten
    för att testa NIBE Comfort; det kan störa HA:s nästa inloggning.
-3. Ange uppgifterna i **NIBE Comfort → Konfiguration**:
-   `myuplink_client_id`, `myuplink_client_secret`, `myuplink_system_id`
-   och `myuplink_device_id`. System-ID är anläggningens UUID; device-ID
-   är pumpens ID inom den anläggningen. Varken ett HA-entitets-ID,
-   pumpnamnet eller larmkod 229 är rätt ersättning.
-4. Hitta ID:n i myUplinks [officiella Swagger-gränssnitt](https://api.myuplink.com/swagger/index.html):
+3. Ange **Client ID och Client Secret** i tilläggskonfigurationen.
+   Lämna system-ID/device-ID tomma. Spara och starta om bara NIBE Comfort.
+   Tryck **Hämta mina anläggningar och pumpar**, välj rätt enhet och
+   **Spara pumpval för larm** efter bekräftelse. En enda enhet visas
+   förvald, men sparas aldrig utan ditt samtycke. Flera enheter kräver
+   ett val. Hämtning ändrar inte befintligt pumpval. Pumpvalet sparas
+   beständigt och återanvänds endast med samma klientuppgifter.
+4. Alternativ för manuell kontroll: hitta ID:n i myUplinks [officiella Swagger-gränssnitt](https://api.myuplink.com/swagger/index.html):
    använd **Authorize** med klientuppgifterna och `READSYSTEM WRITESYSTEM`,
    läs **GET /v2/systems/me** och därefter
    **GET /v2/systems/{systemId}**. Matcha rätt anläggning och pump i
@@ -177,8 +182,14 @@ En separat registrering garanterar inte att en saknad behörighet löses.
 Även med fungerande anslutning kan UUID-formatet på larmet spärra kvittering
 enligt kompatibilitetsgränsen nedan.
 
-Alla fyra fält är frivilliga när funktionen är avstängd men måste fyllas i
-för att använda den. Hemligheten skickas bara till myUplinks fasta HTTPS-adress,
+Alla fyra fält är frivilliga när funktionen är avstängd. Client ID och secret
+räcker för upptäckten; larmläsning kräver ett sparat pumpval. Manuella ID:n
+i tilläggskonfigurationen behålls och spärrar sparning av ett annat val i appen:
+töm båda ID-fälten och starta om för att använda appens pumpval. Ett sparat
+val som försvinner ur upptäckten ersätts inte med någon annan enhet.
+Upptäckten är endast läsning, återanvänds högst fem minuter och verifieras
+på nytt innan ett val sparas. Den påverkar inte HA-styrning eller larmkvittering.
+Hemligheten skickas bara till myUplinks fasta HTTPS-adress,
 exponeras inte i tilläggets REST-svar eller frontend och token hålls i minnet.
 HTTP 401/403 visas som behörighetsfel utan automatiskt skrivförsök.
 Denna molnanslutning följer **uttryckligen konfigurerade ID:n**, inte automatiskt
@@ -1079,7 +1090,9 @@ Token ger behörighet att både läsa och ändra alla styrinställningar.
 | GET | `/api/alarms` | Vald pumps aktuella larmkod, driftvärden, rum och tillgänglig pausåtgärd |
 | PUT | `/api/alarms` | `{"action":"pause_thermostats"}` pausar endast appens termostatbegränsning vid aktuellt larm 229; ingen kvittering |
 | GET | `/api/myuplink/alarms` | Direkt myUplink: aktiva larm för konfigurerad molnenhet, utan hemligheter |
-| PUT | `/api/myuplink/alarms` | `{"action":"reset","id":"12345","confirmed":true}` begär kvittering endast av nytt verifierat aktivt larm 229 med numeriskt ID; inget automatiskt återförsök |
+| GET | `/api/myuplink/discovery` | Hämta anläggningar/enheter med endast client ID och secret; inget pumpval sparas |
+| PUT | `/api/myuplink/discovery` | `{"system_id":"…","device_id":"…"}` verifierar och sparar ett uttryckligt molnpumpval; inga larm kvitteras |
+| PUT | `/api/myuplink/alarms` | `{"action":"reset","id":"12345","confirmed":true,"system_id":"…","device_id":"…"}` kräver samma aktuella molnpumpval och aktivt larm 229 med numeriskt ID; inget automatiskt återförsök |
 | GET | `/api/energy` | Senaste 24 avslutade timmarnas pumpel, beräknad kostnad, datatäckning och styrmarkeringar (endast läsning) |
 | GET | `/api/auxiliary` | Elpatronens aktuella effekt, observerade körperioder, drifttid, uppskattad el/kostnad och samtidiga driftobservationer (endast läsning) |
 | GET | `/api/history` | Senaste dygnets temperaturhistorik för sparade givare |
