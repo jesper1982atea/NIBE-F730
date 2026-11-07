@@ -100,11 +100,54 @@ börvärden, öppnar inga ventiler och kvitterar inte pumpen. Pausen består eft
 omstart; återaktivera medvetet under Inställningar. Övriga osparade
 formulärändringar bevaras.
 
-**Ingen fjärrkvittering erbjuds.** Någon verifierad återställningstjänst eller
-datapunkt finns inte i den undersökta Home Assistant-anslutningen. Åtgärda
-orsaken och följ pumpens instruktion för manuell kvittering på displayen
-eller i myUplink. Appen gissar inte datapunkter och återställer aldrig ett
-kompressorskydd automatiskt.
+**Home Assistant-anslutningen erbjuder ingen fjärrkvittering.** Version
+0.2.41 lägger till en separat, valfri myUplink-anslutning enligt nedan.
+Åtgärda orsaken och följ NIBEs instruktioner före manuell kvittering.
+Appen gissar inte datapunkter och återställer aldrig ett kompressorskydd
+automatiskt.
+
+### Direkt myUplink: larmlista och begränsad manuell kvittering
+
+Det [publika myUplink-API:t](https://api.myuplink.com/swagger/index.html)
+dokumenterar `GET /v2/systems/{systemId}/notifications/active` och
+`POST /v2/systems/{systemId}/notifications/{notificationId}/reset`.
+Till skillnad från HA-integrationen kan tillägget använda dessa direkt.
+
+Registrera en egen applikation på [myUplink Developer](https://dev.myuplink.com/).
+Under **tilläggets Konfiguration** (inte webbgränssnittets vanliga
+styrinställningar) anger du `myuplink_client_id`, `myuplink_client_secret`,
+`myuplink_system_id` och `myuplink_device_id`. Starta sedan om tillägget.
+Anslutningen använder OAuth client credentials med `READSYSTEM WRITESYSTEM`.
+System-ID och device-ID hämtas från dina system i API:t:
+`GET /v2/systems/me` och `GET /v2/systems/{systemId}`. Använd endast ID:n
+som verifierats tillhöra rätt anläggning; namn eller larmkod är inte ID.
+Publicera aldrig client secret i GitHub eller ändringsloggen.
+
+Alla fyra fält är frivilliga när funktionen är avstängd men måste fyllas i
+för att använda den. Hemligheten skickas bara till myUplinks fasta HTTPS-adress,
+exponeras inte i tilläggets REST-svar eller frontend och token hålls i minnet.
+HTTP 401/403 visas som behörighetsfel utan automatiskt skrivförsök.
+Denna molnanslutning följer **uttryckligen konfigurerade ID:n**, inte automatiskt
+den pump du valt för HA-styrningen. System och device visas bredvid
+molnlarmlistan och i kvitteringens bekräftelse.
+
+**Viktig kompatibilitetsgräns:** den aktuella OpenAPI-specifikationen anger
+UUID för larmlistans `id`, men heltal för reset-anropets `notificationId`.
+Tillägget kan läsa UUID-larm, men spärrar kvittering av dem med en förklaring.
+Det ersätter aldrig UUID med `alarmNumber` (exempelvis 229). Numeriskt ID
+måste faktiskt finnas i ett aktivt larm från den valda enheten. Endast
+aktivt larm 229 stöds för kvittering här. Det finns inget verifierat
+live-test av kvittering på användarens F730; funktionen kan därför vara
+begränsad till larmläsning tills myUplink klargjort ID-formatet.
+
+Knappen kräver ditt samtycke efter att orsaken åtgärdats; kompressorn kan
+starta igen. Servern kontrollerar larmet på nytt, loggar försöket och skickar
+exakt en begäran utan automatiska återförsök. Två minuter mellan försök
+gäller även efter omstart. Timeout kan innebära att pumpen ändå mottagit
+begäran. Även HTTP 200 kräver lyckad enhetsstatus i svaret och visas bara
+som **accepterad begäran**, aldrig som bevis för släckt pumplarm.
+Uppdatera larmvyn och kontrollera pumpens/myUplinks faktiska status; ett
+tomt molnsvar bevisar inte att felet på anläggningen är åtgärdat.
 
 ### Prioritera ett eller två rum
 
@@ -981,6 +1024,8 @@ Token ger behörighet att både läsa och ändra alla styrinställningar.
 | GET | `/api/overview` | Pumpdrift, larm och åtskilda pump-/huselmätvärden |
 | GET | `/api/alarms` | Vald pumps aktuella larmkod, driftvärden, rum och tillgänglig pausåtgärd |
 | PUT | `/api/alarms` | `{"action":"pause_thermostats"}` pausar endast appens termostatbegränsning vid aktuellt larm 229; ingen kvittering |
+| GET | `/api/myuplink/alarms` | Direkt myUplink: aktiva larm för konfigurerad molnenhet, utan hemligheter |
+| PUT | `/api/myuplink/alarms` | `{"action":"reset","id":"12345","confirmed":true}` begär kvittering endast av nytt verifierat aktivt larm 229 med numeriskt ID; inget automatiskt återförsök |
 | GET | `/api/energy` | Senaste 24 avslutade timmarnas pumpel, beräknad kostnad, datatäckning och styrmarkeringar (endast läsning) |
 | GET | `/api/auxiliary` | Elpatronens aktuella effekt, observerade körperioder, drifttid, uppskattad el/kostnad och samtidiga driftobservationer (endast läsning) |
 | GET | `/api/history` | Senaste dygnets temperaturhistorik för sparade givare |

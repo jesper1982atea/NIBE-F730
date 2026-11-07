@@ -269,7 +269,12 @@
       <p class="hint">Temperatur vid eller över börvärdet kan innebära minskat värmebehov, men bevisar inte att ventilen är stängd eller att flödet är tillräckligt. En paus öppnar inte ventiler och ändrar inte befintliga börvärden. Återaktivering görs medvetet under Inställningar.</p>
       <p class="hint">Driftvärdena är senaste rapporter, inte värden vid larmets start. Gles myUplink-historik kan missa korta kompressorkörningar. Cirkulationspumpens hastighet bevisar inte faktiskt flöde; vattenvolym, luft och ventiler måste kontrolleras på anläggningen.</p>
       <p>Vid larm 229: kontrollera enligt NIBE att värmesystemet har tillräckligt flöde och är urluftat. Kontrollera även pumpens driftläge vid larmet — varmvatten kan kräva annan felsökning än rumsvärme. Vid återkommande larm, kontakta installatör eller NIBE-service. Appen kan inte garantera att larmet inte återkommer.</p>
-      <p>Återställning stöds inte via den verifierade Home Assistant-anslutningen. Kontrollera orsaken och kvittera manuellt i pumpen eller myUplink enligt pumpens instruktion. Appen använder inga gissade datapunkter och återställer aldrig larm automatiskt.</p>
+      <p>Home Assistant-anslutningen erbjuder ingen kvittering. Den separata myUplink-anslutningen nedan kan begära manuell kvittering av larm 229 när API:t ger ett verifierat numeriskt larm-ID. UUID spärras eftersom dokumentationen anger heltal för reset. Appen gissar aldrig att larmkod 229 är ett reset-ID.</p>
+      <h3>Direktanslutning till myUplink</h3>
+      <p class="hint">Valfritt: ange client ID, client secret, system-ID och device-ID under tilläggets Konfiguration och starta om tillägget. Anslutningen gäller dessa uttryckligen valda moln-ID:n, inte automatiskt pumpvalet ovan. Hemligheten visas aldrig i webbsidan. Läs- och skrivbehörighet krävs.</p>
+      <p id="cloud-alarm-status" role="status">Hämtar direktanslutningens status…</p>
+      <p id="cloud-alarm-action" role="status"></p>
+      <ul id="cloud-alarms"></ul>
       <a href="https://www.nibe.eu/sv-se/support/vanliga-fragor/faq-items/min-produkt-larmar-for-korta-drifttider-vad-ska-jag-gora" target="_blank" rel="noopener noreferrer">NIBE:s råd om korta drifttider</a>
     </section>
 

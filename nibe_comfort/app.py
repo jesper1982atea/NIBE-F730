@@ -14,12 +14,15 @@ from urllib.parse import parse_qs, urlsplit
 from controller import ControlError, Controller, HomeAssistant, temperature
 from insights import Insights, control_history
 from energy import change_comparisons, meter_error
+from myuplink import MyUplink
 
 LOG = logging.getLogger("nibe_comfort")
 STATIC = Path(__file__).parent / "static"
 
 
-def handler_for(controller, api_token=None, insights=None):
+def handler_for(controller, api_token=None, insights=None, myuplink=None):
+    if myuplink is None:
+        myuplink = MyUplink({})
     if insights is None:
         insights = Insights(controller.ha, getattr(controller, "data_dir", None))
     insights.fireplace_provider = controller.fireplace_observations
@@ -79,6 +82,8 @@ def handler_for(controller, api_token=None, insights=None):
                     self.respond(200, insights.overview(controller.settings()))
                 elif path == "/api/alarms":
                     self.respond(200, insights.alarms(controller.settings()))
+                elif path == "/api/myuplink/alarms":
+                    self.respond(200, myuplink.report())
                 elif path == "/api/hotwater":
                     self.respond(200, insights.hot_water(controller.settings()))
                 elif path == "/api/auxiliary":
@@ -177,6 +182,20 @@ def handler_for(controller, api_token=None, insights=None):
             if not self.authorized():
                 return
             path = urlsplit(self.path).path
+            if path == "/api/myuplink/alarms":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(length)) if 0 < length <= 1024 else {}
+                    if (not isinstance(body, dict) or set(body) != {"action", "id", "confirmed"}
+                            or body["action"] != "reset" or body["confirmed"] is not True):
+                        raise ControlError("Manuell kvittering kräver action=reset, larm-ID och confirmed=true.")
+                    self.respond(200, myuplink.reset(body["id"], controller.events))
+                except (ValueError, ControlError) as exc:
+                    self.respond(400, {"error": str(exc) or "Ogiltig begäran."})
+                except (OSError, sqlite3.Error):
+                    LOG.exception("Kunde inte logga myUplink-kvittering")
+                    self.respond(500, {"error": "Kvitteringen kunde inte loggas. Begäran kan ha skickats; kontrollera pumpen innan ett nytt försök."})
+                return
             if path == "/api/alarms":
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
@@ -278,9 +297,10 @@ def main():
             stop.wait(60)
 
     insights = Insights(controller.ha, controller.data_dir)
-    servers = [ThreadingHTTPServer(("0.0.0.0", 8098), handler_for(controller, insights=insights))]
+    myuplink = MyUplink(options)
+    servers = [ThreadingHTTPServer(("0.0.0.0", 8098), handler_for(controller, insights=insights, myuplink=myuplink))]
     if local_token:
-        servers.append(ThreadingHTTPServer(("0.0.0.0", 8099), handler_for(controller, local_token, insights)))
+        servers.append(ThreadingHTTPServer(("0.0.0.0", 8099), handler_for(controller, local_token, insights, myuplink)))
     for server in servers:
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()

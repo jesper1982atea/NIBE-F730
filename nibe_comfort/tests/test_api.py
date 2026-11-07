@@ -99,6 +99,25 @@ class ApiTests(unittest.TestCase):
         self.ha.set_offset.assert_not_called()
         self.ha.set_thermostat.assert_not_called()
 
+    def test_direct_myuplink_endpoint_auth_confirmation_and_no_secrets(self):
+        cloud = Mock()
+        cloud.report.return_value = {"configured": False, "alarms": [], "checked_at": None}
+        cloud.reset.return_value = {"message": "Begäran skickad", "confirmed_cleared": False}
+        self.server.RequestHandlerClass = handler_for(self.controller, self.token, myuplink=cloud)
+        self.assertEqual(self.request("/api/myuplink/alarms")[1]["configured"], False)
+        for body in ({}, {"action": "reset", "id": "123"},
+                     {"action": "reset", "id": "123", "confirmed": 1}, []):
+            self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body)[0], 400)
+        body = {"action": "reset", "id": "123", "confirmed": True}
+        self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body, token=False)[0], 401)
+        self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body, content_type="text/plain")[0], 415)
+        cloud.reset.assert_not_called()
+        self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body)[0], 200)
+        cloud.reset.assert_called_once_with("123", self.controller.events)
+        cloud.reset.side_effect = ControlError("Inte verifierat ID")
+        self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body)[0], 400)
+        self.ha.set_offset.assert_not_called()
+
     def test_fireplace_settings_and_read_only_observation_status(self):
         cfg = config(fireplace_enabled=True, fireplace_rooms=["sensor.living"])
         code, saved = self.request("/api/settings", "PUT", cfg)

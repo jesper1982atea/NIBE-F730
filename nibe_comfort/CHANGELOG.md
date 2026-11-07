@@ -1,5 +1,19 @@
 # Ändringslogg
 
+## 0.2.41
+
+- Valfri direktanslutning till myUplinks publika API visar aktiva larm för
+  uttryckligen konfigurerat system-ID och device-ID. Client ID och client
+  secret anges i tilläggets konfiguration, aldrig i webbsidan.
+- Manuell kvittering av aktivt larm 229 erbjuds endast om API:t lämnar ett
+  entydigt numeriskt larm-ID som matchar det dokumenterade reset-anropet.
+  UUID spärras: API-dokumentationens larmlista anger UUID medan reset anger
+  heltal. Larmkod används aldrig som ersättning och kompatibilitet med
+  användarens F730 är ännu inte verifierad.
+- Kvittering kräver samtycke, ny kontroll av larmet och loggning före anrop.
+  Samtidiga anrop och nya försök inom två minuter spärras. Inga automatiska
+  återförsök görs; ett accepterat molnanrop visas inte som ett släckt pumplarm.
+
 ## 0.2.40
 
 - Ny larmvy för den valda pumpen visar aktuell larmkod, driftvärden,

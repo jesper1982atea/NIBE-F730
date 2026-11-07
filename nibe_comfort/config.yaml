@@ -1,5 +1,5 @@
 name: NIBE Comfort
-version: "0.2.40"
+version: "0.2.41"
 slug: nibe_comfort
 stage: experimental
 description: Enkel temperaturstyrning med rumsgivare, väder och elpris via myUplink
@@ -21,5 +21,13 @@ ports_description:
   8099/tcp: Valfritt lokalt REST API (kräver api_token och aktiverad port)
 options:
   api_token: ""
+  myuplink_client_id: ""
+  myuplink_client_secret: ""
+  myuplink_system_id: ""
+  myuplink_device_id: ""
 schema:
   api_token: password
+  myuplink_client_id: str?
+  myuplink_client_secret: password?
+  myuplink_system_id: str?
+  myuplink_device_id: str?

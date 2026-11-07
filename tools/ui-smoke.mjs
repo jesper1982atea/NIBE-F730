@@ -113,6 +113,7 @@ const server = createServer(async (request, response) => {
     can_pause: false, reset_supported: false,
     explanation: "Tre körningar kortare än fem minuter; orsaken är inte fastställd.",
   };
+  else if (path === "/api/myuplink/alarms") data = { configured: false, alarms: [], checked_at: null };
   else if (path === "/api/plan") data = {
     start: now - 86400, end: now + 36 * 3600, now,
     outdoor: { history: Array.from({ length: 24 }, (_, i) => [now - (24 - i) * 3600, 5 + Math.sin(i / 4) * 3]), forecast: Array.from({ length: 36 }, (_, i) => [now + i * 3600, 4 - i / 6]), error: null },
@@ -1103,6 +1104,66 @@ async function fireplaceChecks() {
   await firePage.waitForLoadState("networkidle");
   await firePage.close();
 }
+async function cloudAlarmChecks() {
+  const cloudPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  cloudPage.on("pageerror", (error) => errors.push(error.message));
+  let accept = false, failRead = false, failReset = false, resetWrites = 0, reads = 0;
+  cloudPage.on("dialog", (dialog) => accept ? dialog.accept() : dialog.dismiss());
+  let report = { configured: false, alarms: [], checked_at: now };
+  await cloudPage.route("**/api/myuplink/alarms", async (route) => {
+    if (route.request().method() === "PUT") {
+      resetWrites++;
+      assert.deepEqual(route.request().postDataJSON(), { action: "reset", id: "12345", confirmed: true });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return failReset ? route.fulfill({ status: 400, json: { error: "timeout; kan ha skickats" } })
+        : route.fulfill({ json: { message: "Begäran accepterad. Pumpens larm är inte bekräftat släckt.", confirmed_cleared: false } });
+    }
+    reads++;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return failRead ? route.fulfill({ status: 400, json: { error: "myUplink HTTP 403" } }) : route.fulfill({ json: report });
+  });
+  await cloudPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await cloudPage.waitForFunction(() => document.getElementById("cloud-alarm-status").textContent.includes("inte konfigurerat"));
+  assert.equal(await cloudPage.locator("#cloud-alarms button").count(), 0);
+  report = { configured: true, system_id: "chosen-system", device_id: "chosen-device", checked_at: now,
+    alarms: [{ id: "a2f23e7c-839e-4f16-85f6-55a0e6555906", code: 229, status: "Active", title: "Korta drifttider",
+      can_reset: false, blocked_reason: "UUID kan inte användas; reset kräver heltal." }] };
+  await cloudPage.evaluate(() => refreshCloudAlarms());
+  assert.match(await cloudPage.locator("#cloud-alarms").textContent(), /UUID.*heltal/);
+  assert.equal(await cloudPage.locator("#cloud-alarms button").count(), 0, "UUID cannot be guessed as a numeric reset ID");
+  assert.match(await cloudPage.locator("#cloud-alarm-status").textContent(), /chosen-system.*chosen-device.*separat/);
+  report.alarms = [{ id: "12345", code: 229, status: "Active", title: "Korta drifttider", can_reset: true }];
+  await cloudPage.evaluate(() => refreshCloudAlarms());
+  await cloudPage.evaluate(() => resetCloudAlarm("12345"));
+  assert.equal(resetWrites, 0, "Cancellation cannot send a reset");
+  accept = true;
+  failReset = true;
+  await cloudPage.evaluate(() => Promise.all([resetCloudAlarm("12345"), resetCloudAlarm("12345")]));
+  assert.equal(resetWrites, 1, "Concurrent clicks cannot duplicate a reset");
+  assert.match(await cloudPage.locator("#cloud-alarm-action").textContent(), /inte bekräftas.*timeout/);
+  await cloudPage.evaluate(() => refreshCloudAlarms());
+  assert.equal(resetWrites, 1, "Refresh never retries a reset");
+  failReset = false;
+  await cloudPage.evaluate(() => resetCloudAlarm("12345"));
+  assert.match(await cloudPage.locator("#cloud-alarm-action").textContent(), /inte bekräftat släckt/);
+  const before = reads;
+  await cloudPage.evaluate(() => Promise.all([refreshCloudAlarms(), refreshCloudAlarms()]));
+  assert.equal(reads, before + 1);
+  failRead = true;
+  await cloudPage.evaluate(() => refreshCloudAlarms());
+  assert.match(await cloudPage.locator("#cloud-alarm-status").textContent(), /403/);
+  assert.equal(await cloudPage.locator("#cloud-alarms button").count(), 0, "Read failures remove stale reset actions");
+  failRead = false;
+  report.alarms = [];
+  await cloudPage.evaluate(() => refreshCloudAlarms());
+  assert.match(await cloudPage.locator("#cloud-alarm-status").textContent(), /0 larm/);
+  assert.match(await cloudPage.locator("#cloud-alarm-action").textContent(), /inte bekräftat släckt/, "An empty cloud list is not proof of physical alarm clearance");
+  await cloudPage.setViewportSize({ width: 320, height: 844 });
+  assert.equal(await cloudPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await cloudPage.waitForLoadState("networkidle");
+  await cloudPage.close();
+}
+
 async function alarmChecks() {
   const alarmPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   alarmPage.on("pageerror", (error) => errors.push(error.message));
@@ -1194,6 +1255,7 @@ async function alarmChecks() {
 try {
   if (!process.env.ENERGY_ONLY) await dashboardChecks();
   await alarmChecks();
+  await cloudAlarmChecks();
   await fireplaceChecks();
   const energyPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   energyPage.on("pageerror", (error) => errors.push(error.message));
