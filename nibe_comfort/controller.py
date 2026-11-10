@@ -827,7 +827,7 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
     if price_rule:
         price_adjustment = price_contribution(config, price, error, rank)
     fireplace_adjustment = fireplace_contribution(config, indoor_now, fireplace_active)
-    base_correction = round(base_correction, 3) if config["auto_base_enabled"] else 0.0
+    base_correction = round(base_correction, 3) + 0.0 if config["auto_base_enabled"] else 0.0
     desired = (config["base_offset"] + base_correction + room_adjustment + weather_adjustment
                + price_adjustment + fireplace_adjustment)
     requested = desired
@@ -1171,7 +1171,7 @@ class Controller:
             if now - self.base_saved_at >= AUTO_BASE_SAVE_SECONDS:
                 atomic_json(self.base_path, self.base_correction)
                 self.base_saved_at = now
-        return {"enabled": self.config["auto_base_enabled"], "value": round(value, 3), "limit": limit}
+        return {"enabled": self.config["auto_base_enabled"], "value": round(value, 3) + 0.0, "limit": limit}
 
     def warnings(self, result):
         """Things worth knowing that do not stop control."""
