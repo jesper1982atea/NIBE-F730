@@ -184,7 +184,8 @@ class CodeOnlyAlarmTests(unittest.TestCase):
 
     def test_overview_shows_latest_code_without_active_state(self):
         item = next(i for i in overview(self.states, self.registry, self.cfg, self.now)["pump"] if i["key"] == "alarm")
-        self.assertEqual((item["value"], item["active"], item["error"]), ("Senaste larmkod 184 · aktiv status saknas", None, None))
+        self.assertRegex(item["value"], r"^Senaste larmkod 184 \(åtminstone sedan \d+ \w+\) · aktiv status saknas$")
+        self.assertEqual((item["active"], item["error"]), (None, None))
         self.states[-2]["state"] = "0"
         item = next(i for i in overview(self.states, self.registry, self.cfg, self.now)["pump"] if i["key"] == "alarm")
         self.assertEqual((item["value"], item["active"]), ("Senaste larmkod 0 · aktiv status saknas", None))

@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import math
 import os
 import re
@@ -49,6 +50,15 @@ DEFAULTS = {
     "max_age_minutes": 180.0,
     "preheat_enabled": False,
     "preheat_degrees": 0.5,
+    "skip_silent_rooms": False,
+    "price_mode": "absolute",
+    "price_low_percent": 25.0,
+    "price_high_percent": 75.0,
+    "auto_base_enabled": False,
+    "auto_base_limit": 2.0,
+    "publish_sensors": False,
+    "pause_notify_minutes": 60.0,
+    "notify_service": "",
 }
 LIMITS = {
     "target_temperature": (10, 30),
@@ -68,6 +78,10 @@ LIMITS = {
     "max_age_minutes": (5, 1440),
     "fireplace_max_age_minutes": (5, 1440),
     "preheat_degrees": (0.1, 1.5),
+    "price_low_percent": (0, 100),
+    "price_high_percent": (0, 100),
+    "auto_base_limit": (0.5, 5),
+    "pause_notify_minutes": (0, 1440),
 }
 
 
@@ -87,6 +101,18 @@ VACATION_MODE = "vacation"
 VACATION_MODE_SUFFIX = "_smart_home_mode"
 VACATION_RETRY_SECONDS = 300
 VACATION_MAX_SECONDS = 366 * 86400
+# Automatic base correction: one curve step per degree of lasting deviation and day. Small
+# deviations are ignored so sensor noise does not walk the correction.
+AUTO_BASE_RATE = 1 / 86400
+AUTO_BASE_NOISE = 0.1
+AUTO_BASE_MAX_GAP = 600
+AUTO_BASE_SAVE_SECONDS = 600
+PAUSE_NOTIFICATION_ID = "nibe_comfort_paus"
+SENSOR_PREFIX = "sensor.nibe_comfort_"
+MONTHS = ("jan", "feb", "mars", "apr", "maj", "juni", "juli", "aug", "sep", "okt", "nov", "dec")
+
+
+LOG = logging.getLogger("nibe_comfort")
 
 
 class ControlError(Exception):
@@ -111,7 +137,10 @@ def validate(config):
     result = copy.deepcopy(config)
     if result["price_provider"] not in ("tibber", "nordpool"):
         raise ControlError("Välj Tibber eller Nord Pool som elpriskälla.")
-    for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled"):
+    if result["price_mode"] not in ("absolute", "relative"):
+        raise ControlError("Prisnivån måste följa fasta gränser eller dygnets egna priser.")
+    for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled",
+                "auto_base_enabled", "publish_sensors", "skip_silent_rooms"):
         if type(result[key]) is not bool:
             raise ControlError(f"{key} måste vara boolesk.")
     for key, (low, high) in LIMITS.items():
@@ -155,6 +184,7 @@ def validate(config):
         ("price_entity", ("sensor.",)),
         ("energy_entity", ("sensor.",)),
         ("forecast_entity", ("weather.",)),
+        ("notify_service", ("notify.",)),
     ):
         value = result[key]
         if not isinstance(value, str) or (value and not value.startswith(prefixes)):
@@ -163,6 +193,8 @@ def validate(config):
         raise ControlError("Basförskjutningen måste ligga inom säkerhetsgränserna.")
     if result["price_low"] >= result["price_high"]:
         raise ControlError("Lågprisgränsen måste vara lägre än högprisgränsen.")
+    if result["price_low_percent"] >= result["price_high_percent"]:
+        raise ControlError("Andelen billiga timmar måste vara lägre än gränsen för dyra.")
     if result["weather_gain"] and not result["outdoor_entity"]:
         raise ControlError("Välj utomhusgivare för väderpåverkan.")
     if (result["cheap_boost"] or result["expensive_reduction"]) and not result["price_entity"]:
@@ -463,6 +495,19 @@ def alarm_sources(ids):
             sorted(key for key in ids if key.startswith("sensor.") and entity_base(key).endswith("_alarms")))
 
 
+def short_date(stamp):
+    moment = datetime.fromtimestamp(stamp)
+    return f"{moment.day} {MONTHS[moment.month - 1]}"
+
+
+def changed_at(entity):
+    """When the value last changed as a timestamp. Home Assistant resets this at restart, so it is a lower bound."""
+    try:
+        return datetime.fromisoformat(entity.get("last_changed") or entity.get("last_updated")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
 def alarm_code(entity):
     code = number(entity["state"], "Larmkod")
     if code != int(code) or not 0 <= code <= 99999:
@@ -474,7 +519,7 @@ def pump_alarm(entities, config, peers, now):
     """Only read alarm entities associated with the configured pump."""
     states = {e["entity_id"]: e for e in entities}
     ids = set(peers.get(config["offset_entity"], ()))
-    result = {"active": None, "code": None, "latest_code": None, "error": None, "reported_at": None}
+    result = {"active": None, "code": None, "latest_code": None, "since": None, "error": None, "reported_at": None}
     alarms, codes = alarm_sources(ids)
     try:
         if len(alarms) == 1:
@@ -493,9 +538,12 @@ def pump_alarm(entities, config, peers, now):
             # has cleared, so the number alone cannot prove an active alarm.
             entity = fresh_entity(states, codes[0], config["max_age_minutes"], now, ids)
             code = alarm_code(entity)
-            result.update(latest_code=code or None, reported_at=entity.get("last_reported") or entity.get("last_updated"))
+            since = changed_at(entity) if code else None
+            result.update(latest_code=code or None, since=since,
+                          reported_at=entity.get("last_reported") or entity.get("last_updated"))
             raise ControlError("Pumpen har ingen larmstatus i myUplink, bara senaste larmkod"
-                               + (f" ({code})" if code else "") + ". Se pumpens display för om larmet är aktivt.")
+                               + (f" ({code}{f', oförändrad åtminstone sedan {short_date(since)}' if since else ''})" if code else "")
+                               + ". Se pumpens display för om larmet är aktivt.")
         else:
             raise ControlError("Ingen entydig larmgivare hittades på vald pump.")
     except ControlError as exc:
@@ -531,12 +579,54 @@ def next_step(config, current, desired, minimum, step):
     return round(minimum + max(first, min(last, nearest)) * step, 6)
 
 
-def price_contribution(config, price, error):
+def series_rank(points, stamp, price):
+    """Place of a price among the same day's prices: 0 = cheapest, 1 = most expensive."""
+    day = datetime.fromtimestamp(stamp).date()
+    values = [value for start, value in points if datetime.fromtimestamp(start).date() == day]
+    if len(values) < 2:
+        return None
+    return sum(value < price for value in values) / (len(values) - 1)
+
+
+def price_rank(entity, now):
+    """Today's rank of the current price from the price sensor itself (Tibber or Nord Pool attributes)."""
+    attrs = entity.get("attributes", {})
+    price = number(entity["state"], "Elpris")
+    ranking = attrs.get("intraday_price_ranking")
+    if isinstance(ranking, (int, float)) and not isinstance(ranking, bool) and 0 <= ranking <= 1:
+        return float(ranking)
+    points = []
+    for row in attrs.get("raw_today") or []:
+        try:
+            start = datetime.fromisoformat(str(row["start"])).timestamp()
+            points.append((start, number(row["value"], "Elpris")))
+        except (KeyError, TypeError, ValueError, ControlError):
+            continue
+    if not points:
+        values = [value for value in attrs.get("today") or [] if isinstance(value, (int, float)) and not isinstance(value, bool)]
+        if len(values) >= 2:
+            return sum(value < price for value in values) / (len(values) - 1)
+        return None
+    return series_rank(points, now, price)
+
+
+def price_level(config, price, rank=None):
+    """'cheap', 'expensive' or None. Relative mode compares with the day's own prices."""
+    if config["price_mode"] == "relative":
+        if rank is None:
+            return None
+        return "cheap" if rank * 100 <= config["price_low_percent"] + 1e-9 else \
+            "expensive" if rank * 100 >= config["price_high_percent"] - 1e-9 else None
+    return "cheap" if price <= config["price_low"] else "expensive" if price >= config["price_high"] else None
+
+
+def price_contribution(config, price, error, rank=None):
     """Offset change from a price level; never worsens an existing comfort deficit/excess."""
     adjustment = 0
-    if price <= config["price_low"]:
+    level = price_level(config, price, rank)
+    if level == "cheap":
         adjustment = config["cheap_boost"]
-    elif price >= config["price_high"]:
+    elif level == "expensive":
         adjustment = -config["expensive_reduction"]
     if error > config["deadband"]:
         adjustment = max(0, adjustment)
@@ -580,14 +670,51 @@ def thermostat_state(config, states, key, now, peers):
     return current, setpoint, round(target, 6)
 
 
-def indoor_temperature(config, get):
+def read_rooms(keys, get):
+    values, skipped = {}, []
+    for key in keys:
+        try:
+            value = temperature(get(key))
+            if not 5 <= value <= 40:
+                raise ControlError(f"{key}: orimlig inomhustemperatur (utanför 5–40 °C).")
+            values[key] = value
+        except ControlError as exc:
+            skipped.append({"entity_id": key, "error": str(exc)})
+    return values, skipped
+
+
+def indoor_reading(config, get):
+    """Mean of the controlling rooms.
+
+    By default every controlling room must report, so a missing cold or warm room never skews
+    the mean. With skip_silent_rooms, battery sensors that stay silent for hours are skipped
+    while another controlling room still reports; when every prioritised room is silent, the
+    other selected rooms are used instead. Control then pauses only when no selected room reports.
+    """
     selected = control_rooms(config)
     if not selected:
         raise ControlError("Välj minst en rumsgivare.")
-    rooms = [temperature(get(key)) for key in selected]
-    if any(not 5 <= value <= 40 for value in rooms):
-        raise ControlError("En rumsgivare visar en orimlig inomhustemperatur (utanför 5–40 °C).")
-    return sum(rooms) / len(rooms)
+    if not config["skip_silent_rooms"]:
+        rooms = [temperature(get(key)) for key in selected]
+        if any(not 5 <= value <= 40 for value in rooms):
+            raise ControlError("En rumsgivare visar en orimlig inomhustemperatur (utanför 5–40 °C).")
+        return {"value": sum(rooms) / len(rooms), "rooms": list(selected), "skipped": [], "fallback": False}
+    values, skipped = read_rooms(selected, get)
+    fallback = False
+    if not values and config["priority_sensors"]:
+        others = [key for key in config["room_sensors"] if key not in selected]
+        values, more = read_rooms(others, get)
+        skipped += more
+        fallback = bool(values)
+    if not values:
+        if len(skipped) == 1:
+            raise ControlError(skipped[0]["error"])
+        raise ControlError("Ingen rumsgivare har ett aktuellt värde: " + " ".join(room["error"] for room in skipped))
+    return {"value": sum(values.values()) / len(values), "rooms": list(values), "skipped": skipped, "fallback": fallback}
+
+
+def indoor_temperature(config, get):
+    return indoor_reading(config, get)["value"]
 
 
 def current_readings(config, entities, now, peers):
@@ -656,16 +783,19 @@ def smoothed_indoor(samples, now):
     return sum(values) / len(values) if values else None
 
 
-def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False, indoor_samples=()):
+def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False, indoor_samples=(),
+             base_correction=0.0):
     """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule.
 
     indoor_samples: earlier (time, value) control averages; the room rule then uses their mean
     together with the current reading instead of the current reading alone.
+    base_correction: learned long-term addition to the base offset (automatic base correction).
     """
     states = {entity["entity_id"]: entity for entity in entities}
     peers = peers or {}
     get = lambda key: fresh_entity(states, key, config["max_age_minutes"], now, peers.get(key, ()))
-    indoor_now = indoor_temperature(config, get)
+    reading = indoor_reading(config, get)
+    indoor_now = reading["value"]
     indoor = smoothed_indoor([*indoor_samples, (now, indoor_now)], now)
     target_shift = max(-config["preheat_degrees"], min(config["preheat_degrees"], target_shift)) if config["preheat_enabled"] else 0.0
     error = config["target_temperature"] + target_shift - indoor
@@ -675,24 +805,43 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
     if config["weather_gain"]:
         outdoor = temperature(get(config["outdoor_entity"]))
         weather_adjustment = (config["weather_reference"] - outdoor) * config["weather_gain"]
-    price = None
+    price = rank = None
     price_unit = ""
+    price_error = None
     price_adjustment = 0
-    if config["cheap_boost"] or config["expensive_reduction"]:
-        price_entity = get(config["price_entity"])
-        price = number(price_entity["state"], "Elpris")
-        price_unit = price_entity.get("attributes", {}).get("unit_of_measurement", "")
-        price_adjustment = price_contribution(config, price, error)
+    price_rule = bool(config["cheap_boost"] or config["expensive_reduction"])
+    if config["price_entity"]:
+        # The price is shown even when it does not steer; only the price rule needs a valid one.
+        try:
+            price_entity = get(config["price_entity"])
+            price = number(price_entity["state"], "Elpris")
+            price_unit = price_entity.get("attributes", {}).get("unit_of_measurement", "")
+            if config["price_mode"] == "relative":
+                rank = price_rank(price_entity, now)
+                if rank is None:
+                    price_error = "Prisgivaren saknar dygnets priser; den relativa prisregeln gör inget just nu."
+        except ControlError as exc:
+            if price_rule:
+                raise
+            price_error = str(exc)
+    if price_rule:
+        price_adjustment = price_contribution(config, price, error, rank)
     fireplace_adjustment = fireplace_contribution(config, indoor_now, fireplace_active)
-    desired = config["base_offset"] + room_adjustment + weather_adjustment + price_adjustment + fireplace_adjustment
+    base_correction = round(base_correction, 3) if config["auto_base_enabled"] else 0.0
+    desired = (config["base_offset"] + base_correction + room_adjustment + weather_adjustment
+               + price_adjustment + fireplace_adjustment)
     requested = desired
     desired = max(config["min_offset"], min(config["max_offset"], desired))
     result = {
         "indoor": round(indoor, 2), "indoor_smoothed": round(indoor, 2), "indoor_now": indoor_now,
         "outdoor": outdoor, "price": price,
-        "price_unit": price_unit, "error": round(error, 2), "target_shift": round(target_shift, 2),
+        "price_unit": price_unit, "price_rank": None if rank is None else round(rank, 3),
+        "price_level": price_level(config, price, rank) if price is not None else None,
+        "price_error": price_error, "error": round(error, 2), "target_shift": round(target_shift, 2),
+        "indoor_rooms": reading["rooms"], "skipped_rooms": reading["skipped"], "indoor_fallback": reading["fallback"],
         "contributions": {"room": round(room_adjustment, 2), "weather": round(weather_adjustment, 2),
-                          "price": price_adjustment, "fireplace": fireplace_adjustment},
+                          "price": price_adjustment, "fireplace": fireplace_adjustment,
+                          "base_correction": base_correction},
         "desired_offset": round(desired, 3), "current_offset": None,
         "next_offset": None, "writable": False,
         "control_limit": (
@@ -724,6 +873,78 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
     result.update(current_offset=current, next_offset=next_value, writable=True,
                   offset_limits={"min": minimum, "max": maximum, "step": step})
     return result
+
+
+FIREPLACE_LABELS = {"idle": "Ingen", "learning": "Lär sig", "active": "Eldar", "cooldown": "Avsvalnar"}
+PRICE_LABELS = {"cheap": "Billigt", "expensive": "Dyrt"}
+
+
+def control_state(status, config):
+    """One word for what the control is doing right now."""
+    vacation = status.get("vacation") or {}
+    if not config["enabled"]:
+        return "Övervakning"
+    if status.get("error_message"):
+        return "Pausad"
+    if vacation.get("phase") in ("active", "restoring"):
+        return "Semester"
+    if status.get("outage_since") is not None:
+        return "Väntar på pumpen"
+    kind = (status.get("preheat") or {}).get("kind")
+    if kind == "preheat":
+        return "Förvärmer"
+    if kind == "coast":
+        return "Sparar"
+    if (status.get("fireplace") or {}).get("phase") == "active":
+        return "Kamin"
+    return "Styr"
+
+
+def sensor_states(status, config):
+    """Status sensors for Home Assistant as (entity_id, state, attributes).
+
+    They go through Home Assistant's state API, so they are recreated by the next control
+    round after a Home Assistant restart and have no entity registry entry.
+    """
+    def value(number_value):
+        return "unknown" if number_value is None else number_value
+
+    fireplace = status.get("fireplace") or {}
+    preheat = status.get("preheat") or {}
+    base = status.get("base_correction") or {}
+    target = None
+    if status.get("target_shift") is not None and not status.get("error_message"):
+        target = round(config["target_temperature"] + status["target_shift"], 2)
+    temperature_attrs = {"unit_of_measurement": "°C", "device_class": "temperature", "state_class": "measurement"}
+    sensors = [
+        ("status", control_state(status, config), {
+            "friendly_name": "NIBE Comfort status", "icon": "mdi:heat-pump",
+            "message": status.get("error_message") or status.get("message"),
+            "warnings": status.get("warnings") or [], "contributions": status.get("contributions"),
+            "preheat_until": preheat.get("until"), "checked_at": status.get("checked_at"),
+        }),
+        ("innetemp", value(None if status.get("error_message") else status.get("indoor_smoothed")),
+         {"friendly_name": "NIBE Comfort innetemp", **temperature_attrs}),
+        ("mal", value(target), {"friendly_name": "NIBE Comfort mål", **temperature_attrs}),
+        ("onskad_forskjutning", value(status.get("desired_offset")),
+         {"friendly_name": "NIBE Comfort önskad förskjutning", "icon": "mdi:plus-minus-variant", "state_class": "measurement"}),
+        ("nasta_forskjutning", value(status.get("next_offset")),
+         {"friendly_name": "NIBE Comfort nästa förskjutning", "icon": "mdi:arrow-right-bold"}),
+        ("kamin", FIREPLACE_LABELS.get(fireplace.get("phase"), fireplace.get("phase") or "unknown"), {
+            "friendly_name": "NIBE Comfort kamin", "icon": "mdi:fireplace",
+            "message": fireplace.get("message"), "learned": fireplace.get("learned"),
+        }),
+        ("elprisniva", PRICE_LABELS.get(status.get("price_level"), "Normalt" if status.get("price") is not None else "unknown"), {
+            "friendly_name": "NIBE Comfort elprisnivå", "icon": "mdi:cash-clock",
+            "price": status.get("price"), "rank": status.get("price_rank"), "mode": config["price_mode"],
+        }),
+    ]
+    if config["auto_base_enabled"]:
+        sensors.append(("baskorrigering", value(base.get("value")), {
+            "friendly_name": "NIBE Comfort baskorrigering", "icon": "mdi:tune-vertical", "state_class": "measurement",
+            "limit": base.get("limit"),
+        }))
+    return [(SENSOR_PREFIX + key, state, attrs) for key, state, attrs in sensors]
 
 
 class EventLog:
@@ -799,6 +1020,9 @@ class Controller:
                 saved.setdefault("fireplace_max_age_minutes", 15.0)
                 saved.setdefault("price_provider", "tibber")
                 saved.setdefault("energy_entity", "")
+                for key in ("skip_silent_rooms", "price_mode", "price_low_percent", "price_high_percent", "auto_base_enabled",
+                            "auto_base_limit", "publish_sensors", "pause_notify_minutes", "notify_service"):
+                    saved.setdefault(key, DEFAULTS[key])
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
         self.pending = None
@@ -848,6 +1072,20 @@ class Controller:
                     raise ControlError("Ogiltig tid för senaste termostatförsök.")
         self.vacation_path = Path(data_dir) / "vacation-state.json"
         self.vacation = validate_vacation(json.loads(self.vacation_path.read_text())) if self.vacation_path.exists() else None
+        self.base_path = Path(data_dir) / "base-correction.json"
+        self.base_correction = {"value": 0.0, "updated_at": None}
+        if self.base_path.exists():
+            try:
+                saved_base = json.loads(self.base_path.read_text())
+                self.base_correction = {"value": number(saved_base["value"], "Sparad baskorrigering"),
+                                        "updated_at": saved_base.get("updated_at")}
+            except (ValueError, TypeError, KeyError, ControlError):
+                LOG.warning("Sparad baskorrigering kunde inte läsas; börjar om från 0.")
+        self.base_saved_at = 0.0
+        self.base_seen_at = None
+        self.paused_since = None
+        self.pause_notified = False
+        self.report_error = None
 
     def peers(self):
         """Same-device entities per entity, refreshed every 5 minutes."""
@@ -900,10 +1138,104 @@ class Controller:
             changes = {key: {"from": self.config[key], "to": value} for key, value in config.items() if value != self.config[key]}
             event_id = self.events.add("settings_attempt", "Begäran att spara inställningar.", changes=changes)
             atomic_json(self.path, config)
+            if config["base_offset"] != self.config["base_offset"] and self.base_correction["value"]:
+                self.reset_base_correction("Grundvärdet ändrades för hand; den automatiska baskorrigeringen börjar om från 0.")
             self.config = config
             self.status = {"message": "Inställningar sparade. Väntar på ny avläsning.", "error_message": None,
                            "enabled": config["enabled"]}
             self.events.add("settings_saved", "Inställningar sparade.", request_id=event_id, changes=changes)
+
+    def reset_base_correction(self, message):
+        previous = self.base_correction["value"]
+        self.base_correction = {"value": 0.0, "updated_at": time.time()}
+        atomic_json(self.base_path, self.base_correction)
+        self.events.add("base_correction_reset", message, previous=round(previous, 3))
+
+    def base_step(self, result, now, eligible):
+        """Integrate a lasting room deviation into the base offset.
+
+        The room rule alone leaves a steady deviation (whole pump steps, tolerance band). This
+        slowly moves the base instead, at most auto_base_limit steps either way. It stands still
+        during pre-heating, fireplace heat, tests, vacation, alarms and at the safety limits.
+        """
+        previous, self.base_seen_at = self.base_seen_at, now
+        limit = self.config["auto_base_limit"]
+        value = max(-limit, min(limit, self.base_correction["value"]))
+        if self.config["auto_base_enabled"] and eligible and previous is not None:
+            error = result["error"]
+            limit_hit = bool(result["control_limit"]) and ((result["control_limit"]["direction"] == "upper") == (error > 0))
+            if abs(error) >= AUTO_BASE_NOISE and not limit_hit:
+                value = max(-limit, min(limit, value + error * min(now - previous, AUTO_BASE_MAX_GAP) * AUTO_BASE_RATE))
+        if abs(value - self.base_correction["value"]) > 1e-9:
+            self.base_correction = {"value": value, "updated_at": now}
+            if now - self.base_saved_at >= AUTO_BASE_SAVE_SECONDS:
+                atomic_json(self.base_path, self.base_correction)
+                self.base_saved_at = now
+        return {"enabled": self.config["auto_base_enabled"], "value": round(value, 3), "limit": limit}
+
+    def warnings(self, result):
+        """Things worth knowing that do not stop control."""
+        names = {room["entity_id"]: room.get("name") or room["entity_id"] for room in result.get("rooms") or []}
+        notes = [f"{names.get(room['entity_id'], room['entity_id'])} hoppas över: {room['error']}"
+                 for room in result.get("skipped_rooms") or []]
+        if result.get("indoor_fallback"):
+            notes.append("Alla prioriterade rumsgivare är tysta; styr tillfälligt på dina övriga valda rum.")
+        if not self.config["thermostat_control_enabled"]:
+            controlling = control_rooms(self.config)
+            for key in self.config["room_sensors"]:
+                if key.startswith("climate."):
+                    notes.append(f"{names.get(key, key)} är en termostat som mäter nära elementet och kan visa för varmt; "
+                                 + ("den styr värmen." if key in controlling else "den räknas in i husets snitt."))
+        if result.get("price_error") and (self.config["cheap_boost"] or self.config["expensive_reduction"]):
+            notes.append(result["price_error"])
+        return notes
+
+    def tick(self):
+        try:
+            self.control_tick()
+        finally:
+            self.report(time.time())
+
+    def report(self, now):
+        """Tell Home Assistant about long pauses and publish status sensors. Never affects control."""
+        with self.lock:
+            status = self.snapshot()
+            config = copy.deepcopy(self.config)
+        error = status.get("error_message") if config["enabled"] else None
+        try:
+            if error:
+                if self.paused_since is None:
+                    self.paused_since = now
+                minutes = config["pause_notify_minutes"]
+                if minutes and not self.pause_notified and now - self.paused_since >= minutes * 60:
+                    message = (f"Styrningen har varit pausad i {round((now - self.paused_since) / 60)} minuter: {error} "
+                               "Pumpen behåller sin nuvarande kurvförskjutning.")
+                    self.notify("NIBE Comfort pausad", message, config, create=True)
+                    self.pause_notified = True
+                    self.events.add("pause_notified", "Avisering skickad om lång paus.", error=error)
+            else:
+                if self.pause_notified:
+                    self.notify("NIBE Comfort igång igen", "Giltiga mätvärden igen; styrningen fortsätter.", config, create=False)
+                self.paused_since = None
+                self.pause_notified = False
+            if config["publish_sensors"]:
+                for entity_id, state, attrs in sensor_states(status, config):
+                    self.ha.request(f"/states/{entity_id}", {"state": state, "attributes": attrs})
+            self.report_error = None
+        except Exception as exc:  # reporting is optional; control has already finished this round
+            if str(exc) != self.report_error:
+                LOG.warning("Kunde inte rapportera till Home Assistant: %s", exc)
+                self.report_error = str(exc)
+
+    def notify(self, title, message, config, create):
+        if create:
+            self.ha.request("/services/persistent_notification/create",
+                            {"notification_id": PAUSE_NOTIFICATION_ID, "title": title, "message": message})
+        else:
+            self.ha.request("/services/persistent_notification/dismiss", {"notification_id": PAUSE_NOTIFICATION_ID})
+        if config["notify_service"]:
+            domain, service = config["notify_service"].split(".", 1)
+            self.ha.request(f"/services/{domain}/{service}", {"title": title, "message": message})
 
     def pause_alarm_thermostats(self):
         """Pause our limiter only; never reset the pump or open valves."""
@@ -1354,7 +1686,7 @@ class Controller:
                             request_id=test["request_id"], observed=current)
             self.save_test()
 
-    def tick(self):
+    def control_tick(self):
         schedule = self.preheat_schedule()
         with self.lock:
             now = time.time()
@@ -1405,11 +1737,17 @@ class Controller:
                     self.indoor_rooms, self.indoor_samples = rooms, []
                 self.indoor_samples = [(t, v) for t, v in self.indoor_samples if now - SMOOTHING_SECONDS < t < now]
                 result = evaluate(self.config, entities, now, peers, preheat["shift"],
-                                  fireplace_active=fireplace["phase"] == "active", indoor_samples=self.indoor_samples)
+                                  fireplace_active=fireplace["phase"] == "active", indoor_samples=self.indoor_samples,
+                                  base_correction=self.base_correction["value"])
                 self.indoor_samples.append((now, result.pop("indoor_now")))
                 result["preheat"] = preheat
                 result.update(readings)
                 vacation = self.vacation_paused()
+                testing_now = bool(self.test and self.test["phase"] in ("running", "restoring"))
+                result["base_correction"] = self.base_step(
+                    result, now, self.config["enabled"] and result["writable"] and not (testing_now or vacation or alarm_hold)
+                    and not preheat["kind"] and fireplace["phase"] != "active" and not result["indoor_fallback"])
+                result["warnings"] = self.warnings(result)
                 if alarm_hold and result["writable"]:
                     result["next_offset"] = result["current_offset"]
                 if vacation and result["writable"]:

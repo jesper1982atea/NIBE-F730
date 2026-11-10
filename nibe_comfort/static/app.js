@@ -8,6 +8,7 @@ const advanced = [
   ["max_step", "Maximal ändring per gång", 0.1, 2, 0.1, "Måste vara minst entitetens steglängd."],
   ["min_interval_minutes", "Minst mellan ändringar · minuter", 10, 1440, 1, "Räknas från senaste sparade styrförsök, även efter timeout. Omstart börjar inte om väntetiden."],
   ["max_age_minutes", "Högsta ålder på mätvärden · minuter", 5, 1440, 1, "För gamla eller saknade värden pausar automatiken."],
+  ["auto_base_limit", "Automatisk baskorrigering högst · steg", 0.5, 5, 0.5, "Hur långt grundvärdet får flyttas automatiskt åt vardera hållet."],
 ];
 let settings;
 let entities = [];
@@ -232,6 +233,8 @@ function renderSettings(formSettings = settings, preserveView = false) {
   selectOptions("forecast_entity", (entity) => entity.entity_id.startsWith("weather."), formSettings.forecast_entity);
   selectOptions("energy_entity", (entity) => entity.energy_meter_error === null, formSettings.energy_entity);
   $("price_provider").value = formSettings.price_provider;
+  $("price_mode").value = formSettings.price_mode;
+  renderPriceMode();
   const rooms = entities.filter((entity) => isTemperature(entity) || entity.entity_id.startsWith("climate."));
   for (const id of formSettings.room_sensors) {
     if (!rooms.some((entity) => entity.entity_id === id)) rooms.push({ entity_id: id, name: id, state: "saknas", unit: "" });
@@ -307,6 +310,26 @@ async function findPump() {
   } catch (error) {
     discoveryError = `Kunde inte upptäcka NIBE automatiskt: ${error.message}. Du kan välja anslutningen manuellt.`;
   }
+}
+
+function renderPriceMode() {
+  const relative = $("price_mode").value === "relative";
+  $("price-relative-fields").hidden = $("price-relative-help").hidden = !relative;
+  for (const id of ["price_low", "price_high"]) $(id).closest("div").hidden = relative;
+}
+
+function renderStatusExtras(state) {
+  const warnings = state.warnings || [];
+  $("status-warnings").replaceChildren(...warnings.map((text) => {
+    const item = document.createElement("li");
+    item.textContent = text;
+    return item;
+  }));
+  $("status-warnings").hidden = !warnings.length;
+  const base = state.base_correction;
+  $("auto-base-status").textContent = base?.enabled
+    ? `Just nu ${base.value > 0 ? "+" : ""}${displayNumber(base.value)} steg av högst ±${displayNumber(base.limit)}.`
+    : base && base.value ? `Avstängd. Sparad korrigering ${displayNumber(base.value)} steg används inte.` : "";
 }
 
 function readSettings() {
@@ -771,7 +794,10 @@ async function refreshStatus() {
     renderIndoorDiff();
     $("current-offset").textContent = displayNumber(state.current_offset);
     $("hero-offset").textContent = displayNumber(state.current_offset);
-    $("hero-offset-base").textContent = typeof settings?.base_offset === "number" ? ` · grundvärde ${displayNumber(settings.base_offset)}` : "";
+    const correction = state.base_correction?.enabled && state.base_correction.value ? state.base_correction.value : 0;
+    $("hero-offset-base").textContent = typeof settings?.base_offset === "number"
+      ? ` · grundvärde ${displayNumber(settings.base_offset)}${correction ? ` ${correction > 0 ? "+" : "−"} ${displayNumber(Math.abs(correction))} auto` : ""}` : "";
+    renderStatusExtras(state);
     $("outdoor-now").textContent = displayNumber(state.outdoor);
     $("outdoor-now").title = state.reading_errors?.outdoor || "";
     $("indoor").title = state.reading_errors?.indoor || "";
@@ -793,7 +819,7 @@ async function refreshStatus() {
       const shift = state.target_shift ? `${state.target_shift > 0 ? "Förvärmer före dyrt elpris" : "Dyrt elpris"}: målet är tillfälligt ${displayNumber(settings.target_temperature + state.target_shift)} °C. ` : "";
       const note = state.preheat?.note ? `${state.preheat.note} ` : "";
       const smoothed = typeof state.indoor_smoothed === "number" ? `Rumsregeln använder timmedel ${displayNumber(state.indoor_smoothed)} °C; aktuell temperatur visas ovan. ` : "";
-      $("explanation").textContent = `${shift}${note}${smoothed}Bas + rum (${displayNumber(c.room)}) + väder (${displayNumber(c.weather)}) + elpris (${displayNumber(c.price)}) + kamin (${displayNumber(c.fireplace ?? 0)}) → begränsat mål ${displayNumber(state.desired_offset)}. Nästa steg anpassas till pumpens steglängd och dina gränser.`;
+      $("explanation").textContent = `${shift}${note}${smoothed}Bas${c.base_correction ? ` + auto (${displayNumber(c.base_correction)})` : ""} + rum (${displayNumber(c.room)}) + väder (${displayNumber(c.weather)}) + elpris (${displayNumber(c.price)}) + kamin (${displayNumber(c.fireplace ?? 0)}) → begränsat mål ${displayNumber(state.desired_offset)}. Nästa steg anpassas till pumpens steglängd och dina gränser.`;
     } else {
       $("explanation").textContent = "Inget aktuellt förslag. Kontrollera inställningarna och statusmeddelandet.";
     }
@@ -2117,6 +2143,10 @@ const fieldLabels = {
   max_offset: "Högsta förskjutning", weather_gain: "Väderpåverkan", room_gain: "Rumspåverkan",
   price_low: "Lågprisgräns", price_high: "Högprisgräns", cheap_boost: "Höjning vid lågt pris",
   expensive_reduction: "Sänkning vid högt pris", deadband: "Toleransband",
+  skip_silent_rooms: "Styr vidare vid tyst givare", price_mode: "Prisnivå", price_low_percent: "Billigt (andel av dygnet)",
+  price_high_percent: "Dyrt (andel av dygnet)", auto_base_enabled: "Automatisk baskorrigering",
+  auto_base_limit: "Gräns för baskorrigering", publish_sensors: "Sensorer i Home Assistant",
+  pause_notify_minutes: "Meddela vid paus efter", notify_service: "Notify-tjänst",
   min_interval_minutes: "Minsta ändringsintervall", max_step: "Största steg", max_age_minutes: "Högsta mätvärdesålder",
   preheat_enabled: "Förvärmning", preheat_degrees: "Förvärmning · grader",
 };
@@ -2407,6 +2437,7 @@ async function init() {
   $("outdoor_entity").addEventListener("change", entityHints);
   $("price_entity").addEventListener("change", entityHints);
   $("price_provider").addEventListener("change", changePriceProvider);
+  $("price_mode").addEventListener("change", renderPriceMode);
   $("refresh-history").addEventListener("click", () => void refreshHistory());
   $("refresh-energy").addEventListener("click", () => void refreshEnergy());
   $("refresh-auxiliary").addEventListener("click", () => void refreshAuxiliary());

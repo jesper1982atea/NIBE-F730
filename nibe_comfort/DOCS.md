@@ -1018,6 +1018,38 @@ Framtida priser används bara av
 förvärmningen (se *Ditt hus lär sig och förvärmning*). Varmvattenstyrning och
 faktisk besparingsberäkning ingår inte.
 
+## Nytt i 0.2.46
+
+**Styr vidare när en rumsgivare är tyst** (Vilka rum räknas?). Batterigivare kan
+vara tysta i flera timmar. Påslaget hoppas en tyst eller orimlig givare över så
+länge något annat styrande rum rapporterar. Är alla prioriterade rum tysta styr
+dina övriga valda rum tillfälligt. Statusen visar vilka givare som hoppades
+över. Av som standard, eftersom ett saknat kallt eller varmt rum annars kan
+snedvrida snittet.
+
+**Justera grundvärdet automatiskt** (Säkerhet och finjustering). Rumsregeln
+ensam lämnar ofta en kvarstående avvikelse: pumpen tar hela steg och inom
+toleransbandet ger rummet ingen påverkan. Baskorrigeringen räknar ihop
+avvikelsen över tid, en grad i ett dygn ger ett steg, och lägger den på
+grundvärdet. Avvikelser under 0,1 °C räknas inte. Den står still vid
+förvärmning, kamin, test, semester, larm, reservgivare och när en
+säkerhetsgräns redan är nådd, och den sparas mellan omstarter. Den nollställs
+när du själv ändrar basförskjutningen.
+
+**Billigt och dyrt jämfört med dygnet** (Elpris, avancerat). I stället för fasta
+kronor räknas dygnets billigaste andel (standard 25 %) som billigt och den
+dyraste andelen (från 75 %) som dyrt. Tibbers `intraday_price_ranking` eller
+Nord Pools `raw_today` används. Saknas dygnets priser gör regeln ingenting.
+
+**Home Assistant.** Påslaget publiceras `sensor.nibe_comfort_status`
+(Styr, Pausad, Förvärmer, Sparar, Kamin, Semester, Väntar på pumpen,
+Övervakning), `_innetemp`, `_mal`, `_onskad_forskjutning`,
+`_nasta_forskjutning`, `_kamin`, `_elprisniva` och `_baskorrigering`.
+De skrivs via Home Assistants state-API varje minut och har därför inget
+unikt id i entitetsregistret. Pausas styrningen längre än inställd tid
+(standard 60 minuter, 0 stänger av) skapas en avisering i Home Assistant,
+och om en notify-tjänst är angiven skickas samma text dit.
+
 ## Skydd och fel
 
 - Saknade, otillgängliga, icke-numeriska eller gamla värden pausar nya

@@ -1,5 +1,22 @@
 # Ändringslogg
 
+## 0.2.46
+
+- Valfritt: styr vidare när en batterigivare är tyst. Tysta eller orimliga
+  givare hoppas över så länge ett annat styrande rum rapporterar; är alla
+  prioriterade rum tysta används övriga valda rum. Av som standard.
+- Valfri automatisk baskorrigering: en bestående rumsavvikelse flyttar
+  grundvärdet långsamt (1 steg per grad och dygn, högst ±2 steg som standard).
+  Står still vid förvärmning, kamin, test, semester, larm och säkerhetsgränser.
+  Nollställs när basförskjutningen ändras för hand.
+- Prisregeln kan jämföra med dygnets egna priser (billigaste/dyraste andel)
+  i stället för fasta kronor. Elpriset visas nu även när det inte styr.
+- Valfria statussensorer i Home Assistant (`sensor.nibe_comfort_*`).
+- Avisering i Home Assistant (och valfri notify-tjänst) när styrningen varit
+  pausad längre än inställd tid; tas bort när styrningen fortsätter.
+- Varning när en termostat används som rumsgivare, och när en givare hoppas över.
+- Senaste larmkod visar hur länge koden åtminstone har stått oförändrad.
+
 ## 0.2.45
 
 - myUplink-anrop identifieras med NIBE Comforts User-Agent för att undvika

@@ -36,6 +36,7 @@
         <span class="eyebrow">HEMMA JUST NU</span>
         <h2 id="status-title">Välkommen till enklare värme</h2>
         <p id="status-message">Välj rum och ställ in din temperatur.</p>
+        <ul id="status-warnings" class="hint warning" hidden></ul>
       </div>
       <div id="warm-room-warning" class="warm-room-warning" role="status" hidden>
         <strong>Andra rum är redan för varma</strong>
@@ -403,6 +404,8 @@
           <label for="priority_sensors">Prioriterade rum · valfritt, högst 2 givare</label>
           <p class="hint" id="priority-help">Välj 1–2 av rummen ovan. Temperaturmålet gäller deras snitt (om du väljer två väger de lika); övriga rum visas men styr inte mot målet och kan ändå bli varmare. Ingen prioritering väljs automatiskt.</p>
           <div id="priority_sensors" class="sensor-list" role="group" aria-describedby="priority-help"></div>
+          <label class="toggle"><input type="checkbox" id="skip_silent_rooms"> Styr vidare när en rumsgivare är tyst</label>
+          <p class="hint">Batterigivare kan vara tysta i flera timmar. Påslaget hoppas en tyst eller orimlig givare över så länge något annat styrande rum rapporterar, och om alla prioriterade rum är tysta används dina övriga valda rum. Avslaget pausar styrningen tills alla styrande rum rapporterar igen; det hindrar att ett saknat kallt eller varmt rum snedvrider snittet.</p>
           <label for="nearest_thermostat">Termostat närmast värmepumpen</label>
           <select id="nearest_thermostat"><option value="">Inte markerad</option></select>
           <p class="hint">Endast en informationsmarkering. Avstånd används inte för styrning och den undantas inte från begränsning.</p>
@@ -494,6 +497,16 @@
           <details id="fixed-price-settings" class="disclosure">
           <summary>Avancerat · extra kurvpåverkan från priset just nu</summary>
           <p>Detta är en separat regel utan framförhållning: höj vid lågt pris och sänk vid högt. Den kan läggas ovanpå förvärmningen. Sätt båda stegvärdena till 0 om du bara vill använda förvärmningen; det stänger inte av förvärmningen.</p>
+          <label for="price_mode">Vad räknas som billigt och dyrt?</label>
+          <select id="price_mode" name="price_mode">
+            <option value="absolute">Fasta prisgränser</option>
+            <option value="relative">Jämfört med dygnets egna priser</option>
+          </select>
+          <div class="field-pair" id="price-relative-fields">
+            <div><label for="price_low_percent">Billigt · dygnets billigaste %</label><input id="price_low_percent" name="price_low_percent" type="number" min="0" max="100" step="1" required></div>
+            <div><label for="price_high_percent">Dyrt · från denna andel av dygnet %</label><input id="price_high_percent" name="price_high_percent" type="number" min="0" max="100" step="1" required></div>
+          </div>
+          <p class="hint" id="price-relative-help">25 och 75 betyder: dygnets billigaste fjärdedel är billig och den dyraste fjärdedelen dyr, oavsett prisnivå. Kräver att prisgivaren har dygnets priser (Tibbers <code>intraday_price_ranking</code> eller Nord Pools <code>raw_today</code>).</p>
           <div class="field-pair">
             <div><label for="price_low">Billigt vid eller under</label><input id="price_low" name="price_low" type="number" min="-10000" max="10000" step="any" required></div>
             <div><label for="price_high">Dyrt vid eller över</label><input id="price_high" name="price_high" type="number" min="-10000" max="10000" step="any" required></div>
@@ -520,8 +533,21 @@
         <details>
           <summary>Säkerhet och finjustering</summary>
           <p>En förskjutningsenhet är inte samma sak som en grads rumstemperatur. Golvvärme och radiatorer reagerar långsamt. Ändra lite och följ resultatet över tid.</p>
+          <label class="toggle"><input type="checkbox" id="auto_base_enabled"> Justera grundvärdet automatiskt</label>
+          <p class="hint">Rumsregeln ensam lämnar ofta en kvarstående avvikelse, eftersom pumpen bara tar hela steg och toleransbandet ger noll påverkan. Påslaget flyttas grundvärdet långsamt: en grads bestående avvikelse ger ett steg per dygn, högst gränsen nedan åt vardera hållet. Står still vid förvärmning, kamin, test, semester, larm och vid säkerhetsgränserna. Nollställs när du själv ändrar basförskjutningen.</p>
+          <p class="hint" id="auto-base-status" role="status"></p>
           <div class="advanced-grid" id="advanced-fields"></div>
         </details>
+      </section>
+      <section class="card">
+        <h2>Home Assistant</h2>
+        <label class="toggle"><input type="checkbox" id="publish_sensors"> Visa status som sensorer i Home Assistant</label>
+        <p class="hint">Skapar <code>sensor.nibe_comfort_status</code>, <code>_innetemp</code>, <code>_mal</code>, <code>_onskad_forskjutning</code>, <code>_nasta_forskjutning</code>, <code>_kamin</code>, <code>_elprisniva</code> och vid automatisk baskorrigering <code>_baskorrigering</code>, för kort och automationer. De uppdateras varje minut och kommer tillbaka inom en minut efter en omstart av Home Assistant.</p>
+        <div class="field-pair">
+          <div><label for="pause_notify_minutes">Meddela när styrningen pausat längre än · minuter</label><input id="pause_notify_minutes" name="pause_notify_minutes" type="number" min="0" max="1440" step="1" required></div>
+          <div><label for="notify_service">Skicka även till · valfritt</label><input id="notify_service" name="notify_service" type="text" placeholder="notify.mobile_app_telefon" pattern="(notify\.[a-z0-9_]+)?"></div>
+        </div>
+        <p class="hint">0 stänger av. Meddelandet visas i Home Assistants aviseringar och tas bort när styrningen fortsätter. Med en notify-tjänst skickas det även dit, till exempel till mobilappen.</p>
       </section>
       <section class="card actions">
         <div><label class="toggle"><input type="checkbox" id="enabled" name="enabled"> Aktivera automatisk styrning</label><p class="hint">Avmarkerat = övervakning. Att stänga av återställer inte pumpens senaste förskjutning.</p></div>

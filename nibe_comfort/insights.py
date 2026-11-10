@@ -11,7 +11,7 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from controller import ControlError, alarm_code, alarm_sources, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, temperature, text_status
+from controller import ControlError, alarm_code, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 from energy import POWER_UNITS, consumption_report, discover_meter, meter_error, produced_energy
 from auxiliary import heater_entities, heater_report
@@ -109,7 +109,9 @@ def alarm_reading(pump_states, label, max_age, now, peers):
         if item["value"] is not None:
             try:
                 code = alarm_code(by_id[codes[0]])
-                item["value"] = f"Senaste larmkod {code} · aktiv status saknas"
+                since = changed_at(by_id[codes[0]]) if code else None
+                item["since"] = since
+                item["value"] = f"Senaste larmkod {code}{f' (åtminstone sedan {short_date(since)})' if since else ''} · aktiv status saknas"
             except ControlError as exc:
                 item.update(value=None, error=str(exc))
     else:
@@ -534,6 +536,16 @@ def price_end(prices):
     return prices[-1][0] + slot
 
 
+def relative_limits(prices, now, config):
+    """Today's price levels that the relative rule treats as cheap and expensive (for the chart)."""
+    day = datetime.fromtimestamp(now).date()
+    values = sorted(value for stamp, value in prices if datetime.fromtimestamp(stamp).date() == day)
+    if len(values) < 2:
+        return {}
+    pick = lambda percent: values[round(percent / 100 * (len(values) - 1))]
+    return {"low": pick(config["price_low_percent"]), "high": pick(config["price_high_percent"]), "relative": True}
+
+
 def planned_offsets(config, status, forecast, prices, now, end, use_prices, windows=None):
     """Simulate what the controller would write later, if the room stays as it is now.
 
@@ -552,6 +564,7 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
     fireplace_active = (status.get("fireplace") or {}).get("phase") == "active"
     fireplace = status["contributions"].get("fireplace", 0) if config["fireplace_enabled"] and fireplace_active else 0
     base_error = status["error"] - (status.get("target_shift") or 0)
+    base_correction = status["contributions"].get("base_correction", 0) or 0
 
     def desired_at(stamp):
         outdoor = price = None
@@ -570,8 +583,9 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
         if price_on:
             price = value_at(prices, stamp) if prices_until is not None and stamp < prices_until else None
             if price is not None:
-                price_adjustment = price_contribution(config, price, error)
-        value = config["base_offset"] + room + weather + price_adjustment + fireplace
+                rank = series_rank(prices, stamp, price) if config.get("price_mode") == "relative" else None
+                price_adjustment = price_contribution(config, price, error, rank)
+        value = config["base_offset"] + base_correction + room + weather + price_adjustment + fireplace
         reasons = []
         if window and window["kind"] == "preheat":
             reasons.append(f"förvärmer +{window['shift']:g}° före dyrt elpris")
@@ -1181,6 +1195,8 @@ class Insights:
             except ControlError as exc:
                 result["prices"]["error"] = str(exc)
             result["prices"]["points"] = [p for p in prices if start - 3600 <= p[0] <= end]
+            if config.get("price_mode") == "relative":
+                result["prices"].update(relative_limits(prices, now, config))
             result["prices"]["end"] = price_end(prices)
             price_id = config["price_entity"]
             if price_id in states:
