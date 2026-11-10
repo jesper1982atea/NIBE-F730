@@ -59,7 +59,13 @@ DEFAULTS = {
     "publish_sensors": False,
     "pause_notify_minutes": 60.0,
     "notify_service": "",
+    "grid_import_entity": "",
+    "grid_export_entity": "",
+    "solar_entity": "",
+    "battery_discharge_entity": "",
+    "battery_charge_entity": "",
 }
+SOURCE_ENTITIES = ("grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity")
 LIMITS = {
     "target_temperature": (10, 30),
     "base_offset": (-10, 10),
@@ -185,6 +191,7 @@ def validate(config):
         ("energy_entity", ("sensor.",)),
         ("forecast_entity", ("weather.",)),
         ("notify_service", ("notify.",)),
+        *((key, ("sensor.",)) for key in SOURCE_ENTITIES),
     ):
         value = result[key]
         if not isinstance(value, str) or (value and not value.startswith(prefixes)):
@@ -199,6 +206,11 @@ def validate(config):
         raise ControlError("Välj utomhusgivare för väderpåverkan.")
     if (result["cheap_boost"] or result["expensive_reduction"]) and not result["price_entity"]:
         raise ControlError("Välj elprisgivare för elprisstyrning.")
+    sources = [result[key] for key in SOURCE_ENTITIES if result[key]]
+    if sources and not result["grid_import_entity"]:
+        raise ControlError("Välj givaren för köpt el från elnätet; utan den kan husets förbrukning inte räknas.")
+    if len(set(sources)) != len(sources):
+        raise ControlError("Samma givare kan inte användas för flera av husets elflöden.")
     if result["preheat_enabled"] and not result["price_entity"]:
         raise ControlError("Välj elprisgivare för förvärmning.")
     if result["enabled"] and (not rooms or not result["offset_entity"]):
@@ -1021,7 +1033,8 @@ class Controller:
                 saved.setdefault("price_provider", "tibber")
                 saved.setdefault("energy_entity", "")
                 for key in ("skip_silent_rooms", "price_mode", "price_low_percent", "price_high_percent", "auto_base_enabled",
-                            "auto_base_limit", "publish_sensors", "pause_notify_minutes", "notify_service"):
+                            "auto_base_limit", "publish_sensors", "pause_notify_minutes", "notify_service",
+                            *SOURCE_ENTITIES):
                     saved.setdefault(key, DEFAULTS[key])
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")

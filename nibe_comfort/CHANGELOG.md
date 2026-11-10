@@ -16,6 +16,9 @@
   pausad längre än inställd tid; tas bort när styrningen fortsätter.
 - Varning när en termostat används som rumsgivare, och när en givare hoppas över.
 - Senaste larmkod visar hur länge koden åtminstone har stått oförändrad.
+- Nytt kort "Var kommer elen ifrån?": husets el per timme från elnät, sol och
+  batteri. Med elmätare på pumpen får pumpen samma fördelning, med köpt och
+  undvikt kostnad. Valfria givare under Inställningar → Husets el.
 
 ## 0.2.45
 

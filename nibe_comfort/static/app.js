@@ -232,6 +232,9 @@ function renderSettings(formSettings = settings, preserveView = false) {
   selectOptions("price_entity", (entity) => entity.entity_id.startsWith("sensor."), formSettings.price_entity);
   selectOptions("forecast_entity", (entity) => entity.entity_id.startsWith("weather."), formSettings.forecast_entity);
   selectOptions("energy_entity", (entity) => entity.energy_meter_error === null, formSettings.energy_entity);
+  for (const id of ["grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity"]) {
+    selectOptions(id, (entity) => entity.entity_id.startsWith("sensor.") && ["kWh", "Wh", "MWh", "W", "kW"].includes(entity.unit), formSettings[id]);
+  }
   $("price_provider").value = formSettings.price_provider;
   $("price_mode").value = formSettings.price_mode;
   renderPriceMode();
@@ -861,11 +864,12 @@ async function refreshSavedSettings() {
         if ((roomDraft && roomFields.includes(key)) || (priceDraft && priceFields.includes(key))
           || JSON.stringify(draft[key]) !== JSON.stringify(settings[key])) merged[key] = draft[key];
       }
-      const energyChanged = ["offset_entity", "energy_entity", "price_entity", "price_provider", "max_age_minutes"]
+      const energyChanged = ["offset_entity", "energy_entity", "price_entity", "price_provider", "max_age_minutes",
+        "grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity"]
         .some((key) => latest[key] !== settings[key]);
       settings = latest;
       renderSettings(merged, true);
-      if (energyChanged) { void refreshEnergy(); void refreshAuxiliary(); }
+      if (energyChanged) { void refreshEnergy(); void refreshAuxiliary(); void refreshSources(); }
     }
     renderSavedSettingsStatus();
   } catch (error) {
@@ -1013,7 +1017,7 @@ async function save(config) {
     void refreshPlan();
     void refreshLearning();
     void refreshEnergy();
-    void refreshAuxiliary();
+    void refreshAuxiliary(); void refreshSources();
   } catch (error) {
     notice(`Kunde inte spara: ${error.message}`, true);
   } finally {
@@ -1530,6 +1534,55 @@ async function refreshEnergy() {
   }
 }
 
+let sourcesBusy = false;
+
+async function refreshSources() {
+  if (sourcesBusy) { pendingRefreshes.add("sources"); return; }
+  sourcesBusy = true;
+  const pill = $("sources-pill");
+  try {
+    if (!settings?.grid_import_entity) {
+      $("sources-data").hidden = true;
+      $("sources-status").textContent = "Välj husets elflöden under Inställningar → Husets el för att se andelen sol och batteri.";
+      pill.textContent = "Inte vald";
+      pill.dataset.tone = "muted";
+      return;
+    }
+    const data = await api("sources");
+    const t = data.house_totals;
+    const share = (part) => (t.house_kwh > 0 ? Math.round((100 * part) / t.house_kwh) : null);
+    $("sources-status").textContent = `${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}.${data.house_complete ? "" : " Vissa timmar saknar data och räknas inte."}`;
+    $("sources-metrics").replaceChildren(
+      metric({ label: "Huset använde", value: displayNumber(t.house_kwh), unit: "kWh" }),
+      metric({ label: `Från elnätet · ${share(t.grid_kwh) ?? "–"} %`, value: displayNumber(t.grid_kwh), unit: "kWh" }),
+      metric({ label: `Direkt från sol · ${share(t.solar_kwh) ?? "–"} %`, value: displayNumber(t.solar_kwh), unit: "kWh" }),
+      metric({ label: `Från batteri · ${share(t.battery_kwh) ?? "–"} %`, value: displayNumber(t.battery_kwh), unit: "kWh" }),
+    );
+    const local = share(t.solar_kwh + t.battery_kwh);
+    pill.textContent = local === null ? "Ingen data" : `${local} % egen el`;
+    pill.dataset.tone = local >= 50 ? "green" : local > 0 ? "amber" : "muted";
+    drawChart($("sources-chart"), [
+      { name: "Elnät", points: data.house.map((h) => [h.start, h.grid_kwh]), until: data.end },
+      { name: "Sol", points: data.house.map((h) => [h.start, h.solar_kwh]), until: data.end },
+      { name: "Batteri", points: data.house.map((h) => [h.start, h.battery_kwh]), until: data.end },
+    ], { start: data.start, end: data.end, unit: " kWh", integer: false, pad: 0.1, left: 96,
+      empty: "Inga fullständiga timvärden.", label: "Husets el per timme" });
+    const p = data.pump_totals;
+    $("sources-pump").textContent = p
+      ? `Pumpen · uppskattat: ${displayNumber(p.kwh)} kWh, varav ${displayNumber(p.solar_kwh)} från sol, ${displayNumber(p.battery_kwh)} från batteri och ${displayNumber(p.grid_kwh)} från elnätet.${p.grid_cost ? ` Köpt el ${displayNumber(p.grid_cost)} ${data.currency || ""}, undvikt ${displayNumber(p.avoided_cost)} ${data.currency || ""}.` : ""}${p.complete ? "" : " Alla timmar kunde inte fördelas."}`
+      : `Pumpens andel kan inte räknas: ${data.pump_error} Med en elmätare på pumpen (välj den under Din värmepump) fördelas även pumpens el.`;
+    $("sources-data").hidden = false;
+  } catch (error) {
+    $("sources-data").hidden = true;
+    $("sources-status").textContent = `Kunde inte räkna husets elflöden: ${error.message}`;
+    pill.textContent = "Fel";
+    pill.dataset.tone = "red";
+  } finally {
+    sourcesBusy = false;
+    if (pendingRefreshes.delete("sources")) void refreshSources();
+  }
+}
+
 async function refreshAuxiliary() {
   if (auxiliaryBusy) { pendingRefreshes.add("auxiliary"); return; }
   auxiliaryBusy = true;
@@ -1600,7 +1653,7 @@ async function refreshAuxiliary() {
     featureTone("auxiliary-section", "auxiliary-pill", "muted", "Ingen data");
   } finally {
     auxiliaryBusy = false;
-    if (pendingRefreshes.delete("auxiliary")) void refreshAuxiliary();
+    if (pendingRefreshes.delete("auxiliary")) void refreshAuxiliary(); void refreshSources();
   }
 }
 
@@ -2147,6 +2200,8 @@ const fieldLabels = {
   price_high_percent: "Dyrt (andel av dygnet)", auto_base_enabled: "Automatisk baskorrigering",
   auto_base_limit: "Gräns för baskorrigering", publish_sensors: "Sensorer i Home Assistant",
   pause_notify_minutes: "Meddela vid paus efter", notify_service: "Notify-tjänst",
+  grid_import_entity: "Köpt el", grid_export_entity: "Såld el", solar_entity: "Solproduktion",
+  battery_discharge_entity: "Batteri ur", battery_charge_entity: "Batteri in",
   min_interval_minutes: "Minsta ändringsintervall", max_step: "Största steg", max_age_minutes: "Högsta mätvärdesålder",
   preheat_enabled: "Förvärmning", preheat_degrees: "Förvärmning · grader",
 };
@@ -2440,6 +2495,7 @@ async function init() {
   $("price_mode").addEventListener("change", renderPriceMode);
   $("refresh-history").addEventListener("click", () => void refreshHistory());
   $("refresh-energy").addEventListener("click", () => void refreshEnergy());
+  $("refresh-sources").addEventListener("click", () => void refreshSources());
   $("refresh-auxiliary").addEventListener("click", () => void refreshAuxiliary());
   $("history-entity").addEventListener("change", () => { if (historyData) renderHistory(); });
   $("refresh-plan").addEventListener("click", () => void refreshPlan());
@@ -2463,7 +2519,7 @@ async function init() {
   void refreshHotWater();
   void refreshLearning();
   void refreshEnergy();
-  void refreshAuxiliary();
+  void refreshAuxiliary(); void refreshSources();
   window.setInterval(refreshStatus, 15000);
   window.setInterval(refreshLearning, 900000);
   window.setInterval(refreshHotWater, 120000);
@@ -2471,6 +2527,7 @@ async function init() {
   window.setInterval(refreshHistory, 300000);
   window.setInterval(refreshEnergy, 300000);
   window.setInterval(refreshAuxiliary, 120000);
+  window.setInterval(refreshSources, 300000);
   window.setInterval(refreshForecast, 1800000);
   window.setInterval(refreshPlan, 300000);
   const resumeDashboard = () => {
@@ -2484,7 +2541,7 @@ async function init() {
     void refreshHotWater();
     void refreshTest();
     void refreshEnergy();
-    void refreshAuxiliary();
+    void refreshAuxiliary(); void refreshSources();
   };
   document.addEventListener("visibilitychange", resumeDashboard);
   window.addEventListener("pageshow", resumeDashboard);

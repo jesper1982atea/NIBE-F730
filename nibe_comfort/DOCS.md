@@ -1050,6 +1050,16 @@ unikt id i entitetsregistret. Pausas styrningen längre än inställd tid
 (standard 60 minuter, 0 stänger av) skapas en avisering i Home Assistant,
 och om en notify-tjänst är angiven skickas samma text dit.
 
+**Var kommer elen ifrån?** Välj husets räknare eller effektgivare för köpt
+el, såld el, solproduktion och batteriets urladdning och laddning (köpt el
+krävs). Varje timme räknas husets förbrukning som köpt + sol + batteri ur −
+såld − batteri in. Det som inte köptes räknas som batteri, högst vad batteriet
+levererade, och resten som direkt sol. Har pumpen en elmätare får den samma
+fördelning som huset samma timme; köpt del prissätts med elpriset och resten
+visas som undvikt kostnad. Det är en uppskattning. Batteriet kan ha laddats
+från elnätet. Räknare som ökar i steg om 0,1 kWh fördelas jämnt sedan förra
+steget, högst ett dygn bakåt.
+
 ## Skydd och fel
 
 - Saknade, otillgängliga, icke-numeriska eller gamla värden pausar nya

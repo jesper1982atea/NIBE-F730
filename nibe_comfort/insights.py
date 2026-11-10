@@ -11,9 +11,9 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from controller import ControlError, alarm_code, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
+from controller import SOURCE_ENTITIES, ControlError, alarm_code, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
-from energy import POWER_UNITS, consumption_report, discover_meter, meter_error, produced_energy
+from energy import ENERGY_UNITS, POWER_UNITS, consumption_report, discover_meter, hourly_energy, meter_error, produced_energy, pump_sources, split_sources
 from auxiliary import heater_entities, heater_report
 
 
@@ -912,6 +912,52 @@ class Insights:
             report["price_provider"] = config["price_provider"]
             report["checked_at"] = time.time()
             return report
+        return self.cached(key, 300, load)
+
+    def sources(self, config):
+        """Where the house's electricity came from per hour over the last day, and the pump's estimated share."""
+        key = ("sources", *(config[name] for name in SOURCE_ENTITIES), config["offset_entity"], config["energy_entity"],
+               config["price_entity"], config["price_provider"], config["max_age_minutes"])
+
+        def load():
+            if not config["grid_import_entity"]:
+                raise ControlError("Välj husets elflöden under inställningarna: minst köpt el, och sol eller batteri.")
+            now = time.time()
+            end = int(now // 3600) * 3600
+            start = end - 86400
+            states = {s["entity_id"]: s for s in self.ha.states()}
+            chosen = {name[:-len("_entity")]: config[name] for name in SOURCE_ENTITIES if config[name]}
+            power = {}
+            for flow, entity_id in chosen.items():
+                if entity_id not in states:
+                    raise ControlError(f"{entity_id} saknas i Home Assistant.")
+                unit = states[entity_id]["attributes"].get("unit_of_measurement")
+                if unit not in ENERGY_UNITS and unit not in POWER_UNITS:
+                    raise ControlError(f"{entity_id}: välj en energi- (kWh) eller effektgivare (W).")
+                power[flow] = unit in POWER_UNITS
+            query = urlencode({
+                "filter_entity_id": ",".join(chosen.values()),
+                "end_time": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+                "significant_changes_only": "0",
+            })
+            stamp = datetime.fromtimestamp(start - 3600, timezone.utc).isoformat()
+            groups = history_groups(self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query))
+            flows = {flow: hourly_energy(groups.get(entity_id, []), entity_id, start, end, power[flow])
+                     for flow, entity_id in chosen.items()}
+            house = split_sources(flows, start, end)
+            known = [hour for hour in house if hour["house_kwh"] is not None]
+            totals = {name: sum(hour[name] for hour in known) for name in ("house_kwh", "grid_kwh", "solar_kwh", "battery_kwh")}
+            result = {"start": start, "end": end, "house": house, "house_totals": totals,
+                      "house_complete": len(known) == len(house), "flows": chosen,
+                      "pump": None, "pump_totals": None, "pump_error": None, "currency": None, "checked_at": time.time()}
+            try:
+                report = self.energy(config)
+                result["pump"], result["pump_totals"] = pump_sources(report["hours"], house)
+                result["currency"] = report["currency"]
+                result["meter"] = report["meter"]
+            except ControlError as exc:
+                result["pump_error"] = str(exc)
+            return result
         return self.cached(key, 300, load)
 
     def auxiliary(self, config):
