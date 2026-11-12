@@ -331,3 +331,5 @@ button.chip:hover{border-color:var(--tone);color:var(--tone);filter:none}
   .feature-head>.feature-pill{margin-left:56px}
   .feature-head>.feature-pill+button{margin-left:auto}
 }
+#alarm-card>button{margin:14px 0 6px}
+#alarm-card>#discover-cloud-devices{margin-top:12px}
