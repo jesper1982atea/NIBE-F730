@@ -18,6 +18,53 @@ from myuplink import MyUplink
 
 LOG = logging.getLogger("nibe_comfort")
 STATIC = Path(__file__).parent / "static"
+LOOP_RETRIES = 3
+LOOP_RETRY_SECONDS = 300
+
+
+def run_control_loop(controller, stop, interval=60, retries=LOOP_RETRIES, retry_seconds=LOOP_RETRY_SECONDS):
+    """Run control rounds until stopped. An unexpected error is reported to Home Assistant and retried
+    a few times; after that the loop stops and says so instead of leaving stale "Styr" sensors."""
+    failures = 0
+    while not stop.is_set():
+        try:
+            controller.tick()
+            failures = 0
+        except ControlError as exc:
+            LOG.warning("%s", exc)
+            failures = 0
+        except Exception:
+            failures += 1
+            final = failures > retries
+            LOG.exception("Oväntat fel i styrloopen (%s av %s)", failures, retries + 1)
+            message = ("Styrloopen har stoppats efter upprepade interna fel. Starta om tillägget och granska loggen."
+                       if final else f"Internt fel. Försöker igen om {round(retry_seconds / 60)} minuter "
+                       f"(försök {failures} av {retries}).")
+            with controller.lock:
+                controller.status = {"error_message": message, "message": "Styrloopen stoppad." if final else "Styrloopen pausad.",
+                                     "stopped": True}
+            try:
+                controller.events.add("fatal", message)
+            except (OSError, sqlite3.Error):
+                LOG.exception("Kunde inte spara felet i ändringsloggen")
+            try:
+                config = controller.settings()
+                controller.notify("NIBE Comfort: internt fel", f"{message} Pumpen behåller sin nuvarande kurvförskjutning.",
+                                  config, create=True)
+                controller.publish(controller.snapshot(), config)
+            except Exception:  # Home Assistant may be the problem; the log above already has the error
+                LOG.exception("Kunde inte rapportera felet till Home Assistant")
+            if final:
+                return
+            stop.wait(retry_seconds)
+            continue
+        stop.wait(interval)
+
+
+def read_json(handler, limit=1024):
+    """The request body as JSON, or {} when it is empty or larger than the limit."""
+    length = int(handler.headers.get("Content-Length", "0"))
+    return json.loads(handler.rfile.read(length)) if 0 < length <= limit else {}
 
 
 def handler_for(controller, api_token=None, insights=None, myuplink=None):
@@ -185,15 +232,41 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
             except (OSError, sqlite3.Error):
                 LOG.exception("Kunde inte läsa tilläggets data")
                 self.respond(500, {"error": "Kunde inte läsa tilläggets data. Kontrollera logg och lagringsutrymme."})
+            except Exception:
+                # An unexpected bug must give the page a readable error, not a dropped connection.
+                LOG.exception("Oväntat fel vid %s", path)
+                self.respond(500, {"error": "Oväntat fel i tillägget. Se tilläggsloggen."})
 
         def do_PUT(self):
+            try:
+                self.handle_put()
+            except Exception:
+                LOG.exception("Oväntat fel vid %s", urlsplit(self.path).path)
+                self.respond(500, {"error": "Oväntat fel i tillägget. Se tilläggsloggen."})
+
+        def handle_put(self):
             if not self.authorized():
                 return
             path = urlsplit(self.path).path
+            if path == "/api/fireplace":
+                try:
+                    body = read_json(self)
+                    if body.get("action") == "start":
+                        plan = controller.start_manual_fireplace(body.get("hours"))
+                    elif body.get("action") == "stop":
+                        plan = controller.stop_manual_fireplace()
+                    else:
+                        raise ControlError("action måste vara start eller stop.")
+                    self.respond(200, {"manual": plan})
+                except (ValueError, AttributeError, ControlError) as exc:
+                    self.respond(400, {"error": str(exc) or "Ogiltig begäran."})
+                except (OSError, sqlite3.Error):
+                    LOG.exception("Kunde inte spara eldningen")
+                    self.respond(500, {"error": "Eldningen kunde inte sparas på disk."})
+                return
             if path == "/api/myuplink/discovery":
                 try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    body = json.loads(self.rfile.read(length)) if 0 < length <= 1024 else {}
+                    body = read_json(self)
                     if not isinstance(body, dict) or set(body) != {"system_id", "device_id"}:
                         raise ControlError("Ange system_id och device_id från upptäckten.")
                     self.respond(200, myuplink.select_device(body["system_id"], body["device_id"], controller.events))
@@ -205,8 +278,7 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                 return
             if path == "/api/myuplink/alarms":
                 try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    body = json.loads(self.rfile.read(length)) if 0 < length <= 1024 else {}
+                    body = read_json(self)
                     if (not isinstance(body, dict) or set(body) != {"action", "id", "confirmed", "system_id", "device_id"}
                             or body["action"] != "reset" or body["confirmed"] is not True
                             or not isinstance(body["system_id"], str) or not body["system_id"]
@@ -221,9 +293,7 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                 return
             if path == "/api/alarms":
                 try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    body = json.loads(self.rfile.read(length)) if 0 < length <= 1024 else {}
-                    if body != {"action": "pause_thermostats"}:
+                    if read_json(self) != {"action": "pause_thermostats"}:
                         raise ControlError("Endast pause_thermostats stöds. Larm återställs inte automatiskt.")
                     self.respond(200, controller.pause_alarm_thermostats())
                 except (ValueError, AttributeError, ControlError) as exc:
@@ -234,8 +304,7 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                 return
             if path == "/api/test":
                 try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    action = json.loads(self.rfile.read(length)).get("action") if 0 < length <= 1024 else None
+                    action = read_json(self).get("action")
                     if action == "start":
                         controller.start_test()
                     elif action == "stop":
@@ -252,8 +321,7 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                 return
             if path == "/api/vacation":
                 try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    body = json.loads(self.rfile.read(length)) if 0 < length <= 1024 else {}
+                    body = read_json(self)
                     action = body.get("action")
                     if action == "schedule":
                         plan = controller.schedule_vacation(body.get("start"), body.get("end"))
@@ -301,24 +369,6 @@ def main():
     controller = Controller(HomeAssistant(token), "/data")
     stop = threading.Event()
 
-    def control_loop():
-        while not stop.is_set():
-            try:
-                controller.tick()
-            except ControlError as exc:
-                LOG.warning("%s", exc)
-            except Exception:
-                # Unexpected failures are visible and stop control, never silently retried.
-                LOG.exception("Oväntat fel; styrloopen har stoppats")
-                with controller.lock:
-                    controller.status = {"error_message": "Internt fel. Starta om tillägget och granska loggen.", "message": "Styrloopen stoppad."}
-                try:
-                    controller.events.add("fatal", "Styrloopen stoppad på grund av internt fel. Kontrollera tilläggsloggen.")
-                except (OSError, sqlite3.Error):
-                    LOG.exception("Kunde inte spara felet i ändringsloggen")
-                return
-            stop.wait(60)
-
     insights = Insights(controller.ha, controller.data_dir)
     myuplink = MyUplink(options, controller.data_dir)
     servers = [ThreadingHTTPServer(("0.0.0.0", 8098), handler_for(controller, insights=insights, myuplink=myuplink))]
@@ -327,7 +377,7 @@ def main():
     for server in servers:
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
-    threading.Thread(target=control_loop, daemon=True).start()
+    threading.Thread(target=run_control_loop, args=(controller, stop), daemon=True).start()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
     LOG.info("NIBE Comfort startad; lokalt API %s", "aktiverat" if local_token else "avstängt")

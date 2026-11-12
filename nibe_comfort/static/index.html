@@ -201,6 +201,14 @@
         <p id="fireplace-status" role="status">Kaminobservation är av tills du väljer rum och sparar.</p>
         <p id="fireplace-control" class="feature-sub" role="status"></p>
       </div>
+      <div id="fireplace-manual" class="vacation-presets" role="group" aria-label="Jag eldar nu">
+        <span>Jag eldar nu:</span>
+        <button type="button" class="chip" data-hours="2">2 h</button>
+        <button type="button" class="chip" data-hours="4">4 h</button>
+        <button type="button" class="chip" data-hours="6">6 h</button>
+        <button type="button" id="fireplace-manual-stop" class="chip" hidden>Avsluta eldning</button>
+      </div>
+      <p id="fireplace-manual-status" class="hint" role="status"></p>
       <div class="feature-meter">
         <div class="feature-meter-head"><span>Inlärning av typiska förlopp</span><strong id="fireplace-learn-count">0 av 3</strong></div>
         <div class="feature-track"><i id="fireplace-learn-bar"></i></div>
@@ -244,6 +252,7 @@
           <div id="hw-metrics" class="live-grid"></div>
         </div>
       </div>
+      <p id="hw-control" class="explanation" hidden></p>
       <h3>När används varmvattnet?</h3>
       <p id="hw-pattern" class="explanation"></p>
       <details class="disclosure" id="hot-water-details">
@@ -567,6 +576,18 @@
         <label for="solar_entity">Solproduktion</label><select id="solar_entity" name="solar_entity"></select>
         <label for="battery_discharge_entity">Batteri · urladdning</label><select id="battery_discharge_entity" name="battery_discharge_entity"></select>
         <label for="battery_charge_entity">Batteri · laddning</label><select id="battery_charge_entity" name="battery_charge_entity"></select>
+      </section>
+      <section class="card">
+        <h2>Varmvatten på billig el</h2>
+        <label class="toggle"><input type="checkbox" id="hot_water_price_enabled"> Ladda varmvattnet när elen är billig</label>
+        <p class="hint">Av från början. Pumpens varmvattenläge sätts till läget vid billig el när elpriset är billigt eller före dyra timmar, annars till det vanliga läget. Högst en ändring i timmen. Ett annat läge som du valt för hand lämnas orört. Kräver att automatiken är på.</p>
+        <label for="hot_water_mode_entity">Pumpens varmvattenläge · select</label>
+        <input id="hot_water_mode_entity" type="text" placeholder="select.f370_cu_3x400v_comfort_mode" pattern="(select.[a-z0-9_]+)?">
+        <div class="field-pair">
+          <div><label for="hot_water_cheap_option">Läge vid billig el</label><input id="hot_water_cheap_option" type="text" maxlength="64"></div>
+          <div><label for="hot_water_normal_option">Vanligt läge</label><input id="hot_water_normal_option" type="text" maxlength="64"></div>
+        </div>
+        <p id="hot-water-settings-status" class="hint" role="status"></p>
       </section>
       <section class="card">
         <h2>Home Assistant</h2>

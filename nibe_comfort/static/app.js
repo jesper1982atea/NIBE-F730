@@ -387,6 +387,34 @@ function featureTone(card, pill, tone, text) {
   $(pill).textContent = text;
 }
 
+let fireplaceManualBusy = false;
+
+async function manualFireplace(body) {
+  if (fireplaceManualBusy) return;
+  fireplaceManualBusy = true;
+  $("fireplace-manual").querySelectorAll("button").forEach((button) => { button.disabled = true; });
+  try {
+    await api("fireplace", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    $("fireplace-manual-status").textContent = body.action === "start" ? "Kaminläget är startat." : "Eldningen är avslutad.";
+  } catch (error) {
+    $("fireplace-manual-status").textContent = `Det gick inte: ${error.message}`;
+  } finally {
+    fireplaceManualBusy = false;
+    $("fireplace-manual").querySelectorAll("button").forEach((button) => { button.disabled = false; });
+    await refreshStatus();
+  }
+}
+
+function renderHotWaterControl() {
+  const state = lastStatus?.hot_water;
+  const text = !state?.enabled ? "" : state.error ? state.error
+    : `Varmvattenläge ${state.current ?? "okänt"} · önskat ${state.desired} (${state.reason}).${state.note ? ` ${state.note}` : ""}${state.next_change_at
+      ? ` Nästa ändring tidigast ${new Date(state.next_change_at * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.` : ""}`;
+  $("hw-control").textContent = text;
+  $("hw-control").hidden = !text;
+  $("hot-water-settings-status").textContent = text || (settings?.hot_water_price_enabled ? "Väntar på nästa avläsning." : "");
+}
+
 function renderFireplace() {
   const state = lastStatus?.fireplace;
   $("fireplace-status").textContent = state?.message || (settings?.fireplace_enabled
@@ -401,6 +429,12 @@ function renderFireplace() {
   $("fireplace-learn-bar").style.width = `${Math.round(Math.min(1, completed / 3) * 100)}%`;
   if (state?.active_since != null) $("fireplace-status").textContent += ` Observerat förlopp från ${new Date(state.active_since * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.`;
   const enabled = state ? state.enabled : settings?.fireplace_enabled;
+  const manual = state?.manual_until != null;
+  $("fireplace-manual-stop").hidden = !manual;
+  $("fireplace-manual").hidden = !enabled;
+  if (!fireplaceManualBusy) $("fireplace-manual-status").textContent = manual
+    ? `Kaminläge till ${new Date(state.manual_until * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}. Välj en ny tid för att förlänga.`
+    : "Starta kaminläget direkt i stället för att vänta på att extravärmen upptäcks.";
   const [tone, text] = !enabled ? ["muted", "Av"]
     : state?.phase === "active" ? (state.contribution < 0 ? ["red", "Sänker värmen"] : ["amber", "Extravärme"])
     : state?.phase === "candidate" ? ["amber", "Misstänkt värme"]
@@ -797,6 +831,7 @@ async function refreshStatus() {
     lastStatus = state;
     renderVacation();
     renderFireplace();
+    renderHotWaterControl();
     renderRoomImpact();
     $("indoor").textContent = displayNumber(state.indoor);
     renderIndoorDiff();
@@ -837,6 +872,7 @@ async function refreshStatus() {
     lastStatus = null;
     renderVacation();
     renderFireplace();
+    renderHotWaterControl();
     renderRoomImpact();
     for (const id of ["indoor", "outdoor-now", "current-offset", "hero-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
     $("hero-offset-base").textContent = "";
@@ -2229,6 +2265,8 @@ const fieldLabels = {
   price_high_percent: "Dyrt (andel av dygnet)", auto_base_enabled: "Automatisk baskorrigering",
   auto_base_limit: "Gräns för baskorrigering", publish_sensors: "Sensorer i Home Assistant",
   pause_notify_minutes: "Meddela vid paus efter", notify_service: "Notify-tjänst",
+  hot_water_price_enabled: "Varmvatten på billig el", hot_water_mode_entity: "Varmvattenläge",
+  hot_water_cheap_option: "Läge vid billig el", hot_water_normal_option: "Vanligt varmvattenläge",
   grid_import_entity: "Köpt el", grid_export_entity: "Såld el", solar_entity: "Solproduktion",
   battery_discharge_entity: "Batteri ur", battery_charge_entity: "Batteri in",
   min_interval_minutes: "Minsta ändringsintervall", max_step: "Största steg", max_age_minutes: "Högsta mätvärdesålder",
@@ -2491,6 +2529,9 @@ async function init() {
   $("fireplace_max_age_minutes").addEventListener("input", updateSaveState);
   $("refresh-alarms").addEventListener("click", () => { void refreshAlarms(); void refreshCloudAlarms(); });
   $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
+  $("fireplace-manual").querySelectorAll("[data-hours]").forEach((button) => button.addEventListener("click",
+    () => void manualFireplace({ action: "start", hours: Number(button.dataset.hours) })));
+  $("fireplace-manual-stop").addEventListener("click", () => void manualFireplace({ action: "stop" }));
   $("discover-cloud-devices").addEventListener("click", () => void discoverCloudDevices());
   $("save-cloud-device").addEventListener("click", () => void saveCloudDevice());
   $("cloud-device-choice").addEventListener("change", () => {

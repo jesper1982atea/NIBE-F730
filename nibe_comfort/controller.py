@@ -58,6 +58,10 @@ DEFAULTS = {
     "auto_base_limit": 2.0,
     "publish_sensors": False,
     "pause_notify_minutes": 60.0,
+    "hot_water_price_enabled": False,
+    "hot_water_mode_entity": "",
+    "hot_water_cheap_option": "Normal",
+    "hot_water_normal_option": "Economy",
     "notify_service": "",
     "grid_import_entity": "",
     "grid_export_entity": "",
@@ -107,6 +111,10 @@ VACATION_MODE = "vacation"
 VACATION_MODE_SUFFIX = "_smart_home_mode"
 VACATION_RETRY_SECONDS = 300
 VACATION_MAX_SECONDS = 366 * 86400
+MANUAL_FIREPLACE_MIN_HOURS = 0.5
+# The pump needs time to finish a hot water charge; never flip the mode more often than this.
+HOT_WATER_MIN_SECONDS = 3600
+MANUAL_FIREPLACE_MAX_HOURS = 8
 # Automatic base correction: one curve step per degree of lasting deviation and day. Small
 # deviations are ignored so sensor noise does not walk the correction.
 AUTO_BASE_RATE = 1 / 86400
@@ -146,7 +154,7 @@ def validate(config):
     if result["price_mode"] not in ("absolute", "relative"):
         raise ControlError("Prisnivån måste följa fasta gränser eller dygnets egna priser.")
     for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled",
-                "auto_base_enabled", "publish_sensors", "skip_silent_rooms"):
+                "auto_base_enabled", "publish_sensors", "skip_silent_rooms", "hot_water_price_enabled"):
         if type(result[key]) is not bool:
             raise ControlError(f"{key} måste vara boolesk.")
     for key, (low, high) in LIMITS.items():
@@ -191,11 +199,21 @@ def validate(config):
         ("energy_entity", ("sensor.",)),
         ("forecast_entity", ("weather.",)),
         ("notify_service", ("notify.",)),
+        ("hot_water_mode_entity", ("select.",)),
         *((key, ("sensor.",)) for key in SOURCE_ENTITIES),
     ):
         value = result[key]
         if not isinstance(value, str) or (value and not value.startswith(prefixes)):
             raise ControlError(f"{key}: fel entitetstyp.")
+    for key in ("hot_water_cheap_option", "hot_water_normal_option"):
+        if not isinstance(result[key], str) or not result[key].strip() or len(result[key]) > 64:
+            raise ControlError(f"{key}: ange pumpens namn på läget.")
+        result[key] = result[key].strip()
+    if result["hot_water_price_enabled"]:
+        if not result["hot_water_mode_entity"]:
+            raise ControlError("Välj pumpens varmvattenläge (select) för varmvatten på billig el.")
+        if result["hot_water_cheap_option"] == result["hot_water_normal_option"]:
+            raise ControlError("Läget vid billig el och vanligt läge måste vara olika.")
     if not result["min_offset"] <= result["base_offset"] <= result["max_offset"]:
         raise ControlError("Basförskjutningen måste ligga inom säkerhetsgränserna.")
     if result["price_low"] >= result["price_high"]:
@@ -894,6 +912,8 @@ PRICE_LABELS = {"cheap": "Billigt", "expensive": "Dyrt"}
 def control_state(status, config):
     """One word for what the control is doing right now."""
     vacation = status.get("vacation") or {}
+    if status.get("stopped"):
+        return "Stoppad"
     if not config["enabled"]:
         return "Övervakning"
     if status.get("error_message"):
@@ -1034,7 +1054,8 @@ class Controller:
                 saved.setdefault("energy_entity", "")
                 for key in ("skip_silent_rooms", "price_mode", "price_low_percent", "price_high_percent", "auto_base_enabled",
                             "auto_base_limit", "publish_sensors", "pause_notify_minutes", "notify_service",
-                            *SOURCE_ENTITIES):
+                            "hot_water_price_enabled", "hot_water_mode_entity", "hot_water_cheap_option",
+                            "hot_water_normal_option", *SOURCE_ENTITIES):
                     saved.setdefault(key, DEFAULTS[key])
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
@@ -1072,6 +1093,14 @@ class Controller:
                 if self.fireplace_path.exists() else empty_state()
         except (ValueError, TypeError) as exc:
             raise ControlError("Kunde inte läsa sparade kaminobservationer. Kontrollera fireplace-state.json.") from exc
+        self.manual_fireplace_path = Path(data_dir) / "fireplace-manual.json"
+        self.manual_fireplace = None
+        if self.manual_fireplace_path.exists():
+            try:
+                saved = json.loads(self.manual_fireplace_path.read_text())
+                self.manual_fireplace = {"start": number(saved["start"], "Eldning start"), "until": number(saved["until"], "Eldning slut")}
+            except (ValueError, TypeError, KeyError, ControlError):
+                LOG.warning("Sparad manuell eldning kunde inte läsas; ignoreras.")
         self.thermostat_path = Path(data_dir) / "thermostat-state.json"
         self.thermostats = json.loads(self.thermostat_path.read_text()) if self.thermostat_path.exists() else {}
         if not isinstance(self.thermostats, dict):
@@ -1099,6 +1128,7 @@ class Controller:
         self.paused_since = None
         self.pause_notified = False
         self.report_error = None
+        self.hot_water_written = 0.0
 
     def peers(self):
         """Same-device entities per entity, refreshed every 5 minutes."""
@@ -1117,7 +1147,41 @@ class Controller:
         return {**copy.deepcopy(self.status), "vacation": copy.deepcopy(self.vacation)}
 
     def fireplace_observations(self):
-        return fireplace_intervals(self.fireplace_state)
+        rows = fireplace_intervals(self.fireplace_state)
+        manual = self.manual_fireplace
+        if manual:
+            # Heat the user reported is excluded from pump learning just like detected heat.
+            rows.append({"start": manual["start"], "end": manual["until"] if manual["until"] <= time.time() else None})
+        return rows
+
+    def start_manual_fireplace(self, hours):
+        """The user says a fire is burning: act as if extra heat were detected until the chosen time."""
+        with self.lock:
+            if not self.config["fireplace_enabled"] or not self.config["fireplace_rooms"]:
+                raise ControlError("Slå på braskaminen och välj kaminens rum under Värme från kaminen först.")
+            hours = number(hours, "Antal timmar")
+            if not MANUAL_FIREPLACE_MIN_HOURS <= hours <= MANUAL_FIREPLACE_MAX_HOURS:
+                raise ControlError(f"Ange {MANUAL_FIREPLACE_MIN_HOURS:g}–{MANUAL_FIREPLACE_MAX_HOURS:g} timmar.")
+            now = time.time()
+            current = self.manual_fireplace
+            start = current["start"] if current and current["until"] > now else now
+            plan = {"start": start, "until": now + hours * 3600}
+            atomic_json(self.manual_fireplace_path, plan)
+            self.manual_fireplace = plan
+            self.events.add("fireplace_manual_start", f"Du angav att du eldar. Kaminläget gäller i {hours:g} timmar.", until=plan["until"])
+            return copy.deepcopy(plan)
+
+    def stop_manual_fireplace(self):
+        with self.lock:
+            now = time.time()
+            current = self.manual_fireplace
+            if not current or current["until"] <= now:
+                raise ControlError("Ingen pågående eldning att avsluta.")
+            plan = {**current, "until": now}
+            atomic_json(self.manual_fireplace_path, plan)
+            self.manual_fireplace = plan
+            self.events.add("fireplace_manual_stop", "Eldningen avslutad. Kurvan räknas om utan kaminbidrag.")
+            return copy.deepcopy(plan)
 
     def fireplace_step(self, entities, now, peers):
         # Longer limits are opt-in: quiet sensors and missed reports cannot be distinguished here.
@@ -1131,6 +1195,14 @@ class Controller:
                 details = {k: v for k, v in event.items() if k not in ("kind", "message")}
                 self.events.add(event["kind"], event["message"], **details)
             self.fireplace_state = state
+        manual = self.manual_fireplace
+        status["manual_until"] = None
+        if manual and manual["until"] > now and self.config["fireplace_enabled"]:
+            status["manual_until"] = manual["until"]
+            if status["phase"] != "active":
+                ends = datetime.fromtimestamp(manual["until"]).strftime("%H:%M")
+                status = {**status, "phase": "active", "manual_until": manual["until"],
+                          "message": f"Du har angett att du eldar. Kaminläget gäller till {ends}."}
         return status
 
     def save(self, config):
@@ -1231,14 +1303,63 @@ class Controller:
                     self.notify("NIBE Comfort igång igen", "Giltiga mätvärden igen; styrningen fortsätter.", config, create=False)
                 self.paused_since = None
                 self.pause_notified = False
-            if config["publish_sensors"]:
-                for entity_id, state, attrs in sensor_states(status, config):
-                    self.ha.request(f"/states/{entity_id}", {"state": state, "attributes": attrs})
+            self.publish(status, config)
             self.report_error = None
         except Exception as exc:  # reporting is optional; control has already finished this round
             if str(exc) != self.report_error:
                 LOG.warning("Kunde inte rapportera till Home Assistant: %s", exc)
                 self.report_error = str(exc)
+
+    def hot_water_step(self, entities, now, result, preheat, hold):
+        """Opt-in: the pump hot water mode follows the price. Leaves modes it does not manage alone."""
+        config = self.config
+        if not config["hot_water_price_enabled"]:
+            return {"enabled": False}
+        cheap, normal = config["hot_water_cheap_option"], config["hot_water_normal_option"]
+        reason = ("förvärmer före dyr el" if preheat.get("kind") == "preheat"
+                  else "billig el" if result.get("price_level") == "cheap" else None)
+        desired = cheap if reason else normal
+        report = {"enabled": True, "entity_id": config["hot_water_mode_entity"], "desired": desired,
+                  "reason": reason or "inte billig el", "current": None, "note": None, "error": None, "next_change_at": None}
+        state = next((e for e in entities if e["entity_id"] == config["hot_water_mode_entity"]), None)
+        if state is None or state.get("state") in ("unavailable", "unknown", None):
+            report["error"] = "Pumpens varmvattenläge kan inte läsas just nu."
+            return report
+        current = report["current"] = state["state"]
+        options = (state.get("attributes") or {}).get("options") or []
+        missing = [option for option in (cheap, normal) if option not in options]
+        if missing:
+            offered = ", ".join(map(str, options))
+            report["error"] = f"Läget {missing[0]} finns inte. Pumpen erbjuder: {offered}."
+            return report
+        if current not in (cheap, normal):
+            report["note"] = f"Läget {current} är valt för hand och lämnas orört."
+            return report
+        if not config["enabled"] or hold:
+            report["note"] = "Övervakning eller paus: varmvattenläget ändras inte."
+            return report
+        if current == desired:
+            return report
+        wait = HOT_WATER_MIN_SECONDS - (now - self.hot_water_written)
+        if wait > 0:
+            report["next_change_at"] = now + wait
+            return report
+        self.hot_water_written = now
+        try:
+            self.ha.set_select(config["hot_water_mode_entity"], desired)
+        except ControlError as exc:
+            report["error"] = f"Varmvattenläget kunde inte ändras: {exc}"
+            self.events.add("hot_water_failed", report["error"], entity_id=config["hot_water_mode_entity"], value=desired)
+            return report
+        self.events.add("hot_water_mode", f"Varmvatten {current} → {desired} ({report['reason']}).",
+                        entity_id=config["hot_water_mode_entity"], previous=current, value=desired)
+        report["current"] = desired
+        return report
+
+    def publish(self, status, config):
+        if config["publish_sensors"]:
+            for entity_id, state, attrs in sensor_states(status, config):
+                self.ha.request(f"/states/{entity_id}", {"state": state, "attributes": attrs})
 
     def notify(self, title, message, config, create):
         if create:
@@ -1791,6 +1912,7 @@ class Controller:
                                "control_in_progress": True}
                 result["pump_alarm"] = alarm
                 result["thermostat_control"] = self.thermostat_step(entities, now, peers, testing or vacation, alarm_hold=alarm_hold)
+                result["hot_water"] = self.hot_water_step(entities, now, result, preheat, testing or vacation or alarm_hold)
                 if testing:
                     result["message"] = "Test av styrningen pågår: automatiken väntar tills testet är klart."
                 elif alarm_hold:
