@@ -111,6 +111,7 @@ def alarm_reading(pump_states, label, max_age, now, peers):
                 code = alarm_code(by_id[codes[0]])
                 since = changed_at(by_id[codes[0]]) if code else None
                 item["since"] = since
+                item["code"] = code
                 item["value"] = f"Senaste larmkod {code}{f' (åtminstone sedan {short_date(since)})' if since else ''} · aktiv status saknas"
             except ControlError as exc:
                 item.update(value=None, error=str(exc))

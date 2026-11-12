@@ -331,5 +331,9 @@ button.chip:hover{border-color:var(--tone);color:var(--tone);filter:none}
   .feature-head>.feature-pill{margin-left:56px}
   .feature-head>.feature-pill+button{margin-left:auto}
 }
-#alarm-card>button{margin:14px 0 6px}
-#alarm-card>#discover-cloud-devices{margin-top:12px}
+#alarm-card>button,#alarm-more>button{margin:14px 0 6px}
+#alarm-more>#discover-cloud-devices{margin-top:12px}
+.hw-tank .hw-percent.on-fill,.hw-tank .hw-label.on-fill{fill:#fff;stroke:none}
+.feature-row #fireplace_max_age_minutes{max-width:140px}
+@media(max-width:600px){.page-nav{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}.page-nav::-webkit-scrollbar{display:none}.page-nav a{flex:none}}
+#alarm-more a{color:var(--green)}

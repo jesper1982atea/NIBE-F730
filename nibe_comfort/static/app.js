@@ -641,6 +641,11 @@ function displayNumber(value) {
   return typeof value === "number" ? value.toLocaleString("sv-SE", { maximumFractionDigits: 2 }) : "—";
 }
 
+function duration(seconds) {
+  const minutes = Math.round(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ""}`;
+}
+
 let statusBusy = false;
 
 const vacationTime = (time) => new Date(time * 1000).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" });
@@ -1072,6 +1077,7 @@ function drawChart(container, series, options) {
   values.push(...guides.map((guide) => guide.value));
   const pad = options.pad ?? 0.5;
   let minimum = Math.min(...values) - pad, maximum = Math.max(...values) + pad;
+  if (Math.min(...values) >= 0 && minimum < 0) minimum = 0;
   if (options.integer !== false) { minimum = Math.floor(minimum); maximum = Math.ceil(maximum); }
   if (maximum - minimum < 1e-9) { minimum -= 1; maximum += 1; }
   const width = chartWidth(container), narrow = width < 520;
@@ -1191,10 +1197,11 @@ function metric(item) {
   label.textContent = item.label;
   const value = document.createElement("strong");
   // Home Assistant states are raw strings ("36.8"); show numbers the Swedish way like the rest of the page.
-  const shown = typeof item.value === "string" && /^-?\d+(\.\d+)?$/.test(item.value) ? displayNumber(Number(item.value)) : item.value;
-  value.textContent = item.value === null ? "Okänt" : `${shown} ${item.unit || ""}`.trim();
+  const shown = typeof item.value === "string" && /^-?\d+(\.\d+)?$/.test(item.value) ? displayNumber(Number(item.value)) : operationText(item.value);
+  value.textContent = item.value === null ? "Okänt" : item.code != null ? `Kod ${item.code}` : `${shown} ${item.unit || ""}`.trim();
   const detail = document.createElement("small");
-  detail.textContent = item.error || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE")}` : "");
+  detail.textContent = item.error || (item.code != null ? `Senaste larmkod${item.since ? ` · sedan ${new Date(item.since * 1000).toLocaleDateString("sv-SE", { day: "numeric", month: "short" })}` : ""} · aktiv status saknas` : "")
+    || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE")}` : "");
   if (item.entity_id) block.title = item.entity_id;
   block.append(label, value, detail);
   return block;
@@ -1331,11 +1338,13 @@ async function refreshAlarms() {
       : data.active === true ? `Aktivt pumplarm${data.code !== null ? ` ${data.code}` : ""}`
       : data.active === false ? "Inget aktivt pumplarm rapporterat." : "Larmstatus är okänd.";
     $("alarm-explanation").textContent = data.explanation;
-    $("alarm-observations").replaceChildren(...data.observations.map(metric));
+    // Operating values and rooms help troubleshoot an active alarm; without one they repeat the pump card.
+    const active = data.active === true;
+    $("alarm-observations").replaceChildren(...(active ? data.observations.filter((item) => item.value !== null).map(metric) : []));
     $("alarm-pause").hidden = !data.can_pause;
-    $("alarm-rooms").replaceChildren(...data.rooms.map((room) => {
+    $("alarm-rooms").replaceChildren(...(active || data.can_pause ? data.rooms : []).map((room) => {
       const item = document.createElement("li");
-      item.textContent = `${room.name}: ${displayNumber(room.temperature)} °C · börvärde ${displayNumber(room.setpoint)} °C${room.error ? ` · ${room.error}` : ""}`;
+      item.textContent = `${room.name}: ${displayNumber(room.temperature)} °C${room.setpoint == null ? "" : ` · börvärde ${displayNumber(room.setpoint)} °C`}${room.error ? ` · ${room.error}` : ""}`;
       return item;
     }));
   } catch (error) {
@@ -1449,9 +1458,13 @@ function historyChangeText(change) {
 }
 
 function historyMarkers(changes) {
-  return changes.map((change) => ({
+  // A confirmed request and the pump readback of the same value are one change on the chart.
+  const confirmed = changes.filter((change) => change.status === "confirmed");
+  const shown = changes.filter((change) => change.status !== "observed" || !confirmed.some((other) =>
+    other.kind === change.kind && other.value === change.value && Math.abs(other.timestamp - change.timestamp) <= 900));
+  return shown.map((change) => ({
     time: change.timestamp,
-    label: `${change.kind === "offset" ? "K" : "T"} ${displayNumber(change.value)} · ${["confirmed", "observed"].includes(change.status) ? "återläst" : "begäran"}`,
+    label: `${change.kind === "offset" ? "K" : "T"} ${displayNumber(change.value)}${["confirmed", "observed"].includes(change.status) ? "" : " · begäran"}`,
     short: `${change.kind === "offset" ? "K" : "T"}${change.id}`,
     className: change.status === "confirmed" ? "done-auto" : "done-other",
     title: historyChangeText(change),
@@ -1474,10 +1487,11 @@ async function refreshEnergy() {
     const data = await api("energy");
     if (signature() !== requested) { pendingRefreshes.add("energy"); return; }
     const totals = data.totals;
+    showEnergySection(true);
     $("energy-data").hidden = false;
     const covered = totals.coverage_seconds / 3600;
     const priced = totals.priced_seconds / 3600;
-    $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name} · ${data.meter.entity_id}. ${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
+    $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name}. ${new Date(data.start * 1000).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" })}–${clock(data.end)}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
     $("energy-metrics").replaceChildren(
       metric({ label: `${data.method === "power" ? "Uppskattad el" : "Använd el"} · ${totals.kwh === null ? "endast täckt del" : "hela perioden"}`,
         value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
@@ -1527,11 +1541,18 @@ async function refreshEnergy() {
   } catch (error) {
     if (signature() !== requested) { pendingRefreshes.add("energy"); return; }
     $("energy-data").hidden = true;
+    // Without any electricity meter for the pump the card has nothing to show; the sources card says how to add one.
+    showEnergySection(!(!settings.energy_entity && /Ingen entydig/.test(error.message)));
     $("energy-status").textContent = `Kunde inte läsa elförbrukningen: ${error.message.replace(/[.!?]+\s*$/, "")}. Försöker igen automatiskt.`;
   } finally {
     energyBusy = false;
     if (pendingRefreshes.delete("energy")) void refreshEnergy();
   }
+}
+
+function showEnergySection(visible) {
+  $("energy-section").hidden = !visible;
+  document.querySelector('.page-nav a[href="#energy-section"]').hidden = !visible;
 }
 
 let sourcesBusy = false;
@@ -1567,10 +1588,12 @@ async function refreshSources() {
       { name: "Batteri", points: data.house.map((h) => [h.start, h.battery_kwh]), until: data.end },
     ], { start: data.start, end: data.end, unit: " kWh", integer: false, pad: 0.1, left: 96,
       empty: "Inga fullständiga timvärden.", label: "Husets el per timme" });
+    legend($("sources-legend"), [{ name: "Elnät" }, { name: "Sol" }, { name: "Batteri" }]);
     const p = data.pump_totals;
     $("sources-pump").textContent = p
       ? `Pumpen · uppskattat: ${displayNumber(p.kwh)} kWh, varav ${displayNumber(p.solar_kwh)} från sol, ${displayNumber(p.battery_kwh)} från batteri och ${displayNumber(p.grid_kwh)} från elnätet.${p.grid_cost ? ` Köpt el ${displayNumber(p.grid_cost)} ${data.currency || ""}, undvikt ${displayNumber(p.avoided_cost)} ${data.currency || ""}.` : ""}${p.complete ? "" : " Alla timmar kunde inte fördelas."}`
-      : `Pumpens andel kan inte räknas: ${data.pump_error} Med en elmätare på pumpen (välj den under Din värmepump) fördelas även pumpens el.`;
+      : "Pumpens andel visas när en elmätare för pumpen är vald under Inställningar → Din värmepump.";
+    $("sources-pump").title = p ? "" : data.pump_error || "";
     $("sources-data").hidden = false;
   } catch (error) {
     $("sources-data").hidden = true;
@@ -1600,18 +1623,20 @@ async function refreshAuxiliary() {
     if (signature() !== requested) { pendingRefreshes.add("auxiliary"); return; }
     const totals = data.totals;
     const covered = totals.coverage_seconds / 3600;
-    $("auxiliary-status").textContent = `${data.meter.name} · ${data.meter.entity_id}. ${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}.`;
+    $("auxiliary-status").textContent = `${data.meter.name} · ${new Date(data.start * 1000).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" })}–${clock(data.end)}.`;
+    $("auxiliary-status").title = data.meter.entity_id;
     $("auxiliary-current").textContent = data.current.error
       ? `Just nu: okänt. ${data.current.error}`
       : `Senast avläst ${new Date(data.checked_at * 1000).toLocaleString("sv-SE")}: elpatronen är ${data.current.active ? "i drift" : "av"} · ${displayNumber(data.current.kw)} kW.`;
     $("auxiliary-metrics").replaceChildren(
       metric({ label: "Observerade körperioder · täckt del", value: covered > 0 ? data.runs.length : null, unit: "st" }),
-      metric({ label: "Observerad drifttid · täckt del", value: covered > 0 ? displayNumber(data.runtime_seconds / 60) : null, unit: "min" }),
+      metric({ label: "Observerad drifttid · täckt del", value: covered > 0 ? duration(data.runtime_seconds) : null }),
       metric({ label: "Uppskattad el · täckt del", value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
       metric({ label: "Uppskattad kostnad · prissatt del", value: totals.priced_seconds > 0 ? displayNumber(totals.partial_cost) : null, unit: data.currency || "" }),
     );
     $("auxiliary-coverage").textContent = `Datatäckning ${displayNumber(covered)} av 24 timmar. ${data.observed_starts} ${data.observed_starts === 1 ? "start" : "starter"} med observerad övergång från av till på. ${data.skipped_intervals} intervall med lucka eller ogiltiga värden utelämnade. Perioder kan ha börjat före eller fortsatt efter den täckta delen.`;
-    $("auxiliary-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(totals.priced_seconds / 3600)} av 24 timmar. ${data.price_error || "Endast avgifter och moms som finns i prisgivaren ingår."}`;
+    $("auxiliary-price-status").title = data.price_entity || "";
+    $("auxiliary-price-status").textContent = `${data.price_entity ? (data.price_provider === "nordpool" ? "Nord Pool" : "Tibber") : "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(totals.priced_seconds / 3600)} av 24 timmar. ${data.price_error || "Endast avgifter och moms som finns i prisgivaren ingår."}`;
     drawChart($("auxiliary-chart"), [{
       name: "Elpatronens uppskattade el", points: data.hours.map((hour) => [hour.start, hour.kwh]), until: data.end,
     }], { start: data.start, end: data.end, unit: " kWh", integer: false, left: 96, pad: 0.1,
@@ -1633,7 +1658,7 @@ async function refreshAuxiliary() {
       const row = body.insertRow();
       for (const value of [
         `${new Date(run.start * 1000).toLocaleString("sv-SE")}–${clock(run.end)}. ${run.start_observed ? "Start observerad" : "Början okänd"}. ${run.end_observed ? "Stopp observerat" : "Slut okänt"}.`,
-        `${displayNumber(run.seconds / 60)} min`, `${displayNumber(run.max_kw)} kW`, `${displayNumber(run.kwh)} kWh`,
+        duration(run.seconds), `${displayNumber(run.max_kw)} kW`, `${displayNumber(run.kwh)} kWh`,
         `${displayNumber(run.cost)} ${data.currency || ""}${run.cost === null ? ` (prissatt del ${run.priced_seconds > 0 ? displayNumber(run.partial_cost) : "—"})` : ""}`,
         context,
       ]) row.insertCell().textContent = value;
@@ -1643,6 +1668,8 @@ async function refreshAuxiliary() {
       ? "Inga körperioder observerades i den täckta delen. Det säger inget om dataluckorna."
       : "Underlag saknas. Inga slutsatser om drifttid eller kostnad kan dras.";
     $("auxiliary-data").hidden = false;
+    // The chart was drawn while hidden, so redraw it at its real width.
+    chartRedraws.get($("auxiliary-chart"))?.();
     featureTone("auxiliary-section", "auxiliary-pill", data.current.error ? "muted" : data.current.active ? "amber" : "green",
       data.current.error ? "Okänt just nu" : data.current.active ? `I drift · ${displayNumber(data.current.kw)} kW` : "Av just nu");
   } catch (error) {
@@ -1962,6 +1989,8 @@ function drawTank(container, data) {
   const svg = svgElement("svg", { viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true" });
   svg.append(svgElement("rect", { x: inner.x - 6, y: inner.y - 8, width: inner.w + 12, height: inner.h + 16, rx: 26, class: "hw-shell" }));
   const level = typeof data.level === "number" ? data.level : null;
+  // Text over the coloured water is white; over the empty part it stays dark.
+  const onFill = (y) => (level !== null && y - 6 > inner.y + inner.h * (1 - level) ? " on-fill" : "");
   const clip = svgElement("clipPath", { id: "hw-clip" });
   clip.append(svgElement("rect", { x: inner.x, y: inner.y, width: inner.w, height: inner.h, rx: 20 }));
   svg.append(clip);
@@ -1970,12 +1999,12 @@ function drawTank(container, data) {
     const fill = inner.h * level;
     const tone = level >= 0.5 ? "hw-hot" : level >= 0.25 ? "hw-warm" : "hw-cold";
     svg.append(svgElement("rect", { x: inner.x, y: inner.y + inner.h - fill, width: inner.w, height: fill, class: `hw-fill ${tone}`, "clip-path": "url(#hw-clip)" }));
-    svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h / 2 + 8, "text-anchor": "middle", class: "hw-percent" }, `${Math.round(level * 100)}%`));
+    svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h / 2 + 8, "text-anchor": "middle", class: `hw-percent${onFill(inner.y + inner.h / 2 + 8)}` }, `${Math.round(level * 100)}%`));
   } else {
     svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h / 2 + 6, "text-anchor": "middle", class: "hw-percent small" }, "okänt"));
   }
-  if (typeof data.top === "number") svg.append(svgElement("text", { x: width / 2, y: inner.y + 22, "text-anchor": "middle", class: "hw-label" }, `topp ${displayNumber(data.top)}°`));
-  if (typeof data.charge === "number") svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h - 14, "text-anchor": "middle", class: "hw-label" }, `BT6 ${displayNumber(data.charge)}°`));
+  if (typeof data.top === "number") svg.append(svgElement("text", { x: width / 2, y: inner.y + 22, "text-anchor": "middle", class: `hw-label${onFill(inner.y + 22)}` }, `topp ${displayNumber(data.top)}°`));
+  if (typeof data.charge === "number") svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h - 14, "text-anchor": "middle", class: `hw-label${onFill(inner.y + inner.h - 14)}` }, `BT6 ${displayNumber(data.charge)}°`));
   if (data.charging) svg.append(svgElement("text", { x: width / 2, y: 16, "text-anchor": "middle", class: "hw-charging" }, "⚡ laddar"));
   container.append(svg);
 }
@@ -2127,7 +2156,7 @@ async function refreshLearning() {
     $("learn-message").textContent = [model?.message, data.prediction_note].filter(Boolean).join(" ");
     featureTone("learning-card", "learn-pill", { learning: "blue", rough: "amber", good: "green" }[model?.status] || "muted",
       { learning: "Lär sig", rough: "Preliminär", good: "Känner huset" }[model?.status] || "Ingen modell");
-    $("learn-meter-text").textContent = model ? `${displayNumber(model.days)} av 7 dygn` : "–";
+    $("learn-meter-text").textContent = model ? (model.days >= 7 ? `Klart · ${displayNumber(model.days)} dygn` : `${displayNumber(model.days)} av 7 dygn`) : "–";
     $("learn-meter-bar").style.width = `${model ? Math.round(Math.max(0, Math.min(1, model.hours / model.needed_hours)) * 100) : 0}%`;
     $("learn-message").hidden = !$("learn-message").textContent;
     $("learn-progress").replaceChildren(...(model ? [

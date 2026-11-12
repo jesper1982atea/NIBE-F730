@@ -186,6 +186,8 @@ class CodeOnlyAlarmTests(unittest.TestCase):
         item = next(i for i in overview(self.states, self.registry, self.cfg, self.now)["pump"] if i["key"] == "alarm")
         self.assertRegex(item["value"], r"^Senaste larmkod 184 \(åtminstone sedan \d+ \w+\) · aktiv status saknas$")
         self.assertEqual((item["active"], item["error"]), (None, None))
+        # The UI shows the bare code as the tile value and the rest as detail text.
+        self.assertEqual((item["code"], type(item["since"])), (184, float))
         self.states[-2]["state"] = "0"
         item = next(i for i in overview(self.states, self.registry, self.cfg, self.now)["pump"] if i["key"] == "alarm")
         self.assertEqual((item["value"], item["active"]), ("Senaste larmkod 0 · aktiv status saknas", None))

@@ -146,8 +146,7 @@
       </div>
       <div id="preheat-steps" class="preheat-steps" aria-hidden="true"></div>
       <p id="preheat-example" class="hint" role="status"></p>
-      <p class="hint">Måländringen är inte en garanti för rummens temperatur eller besparing. Huset reagerar långsamt; kurvgränser, tolerans och väntetid gäller fortfarande. Sparad termostatbegränsning kan bromsa förvärmningen eftersom den följer ditt vanliga mål.</p>
-      <details class="disclosure"><summary>Hur väljs tiderna?</summary><p>Kräver kommande priser från din sparade elpriskälla, inte bara priset just nu. Dyra perioder är minst en timme med pris minst 25 % över det kommande dygnets mittpris. Förvärmning planeras bara om timmarna före är minst 20 % billigare. Ett lägre mål kan planeras under dyrperioden även utan föregående förvärmning. Starttiden är normalt tre timmar före och anpassas till 1–6 timmar när husmodellen har tillräckligt underlag. Saknas prisunderlag används ditt vanliga mål och orsaken visas i planen.</p></details>
+      <details class="disclosure"><summary>Hur väljs tiderna?</summary><p>Kräver kommande priser från din sparade elpriskälla, inte bara priset just nu. Dyra perioder är minst en timme med pris minst 25 % över det kommande dygnets mittpris. Förvärmning planeras bara om timmarna före är minst 20 % billigare. Ett lägre mål kan planeras under dyrperioden även utan föregående förvärmning. Starttiden är normalt tre timmar före och anpassas till 1–6 timmar när husmodellen har tillräckligt underlag. Saknas prisunderlag används ditt vanliga mål och orsaken visas i planen.</p><p class="hint">Måländringen är inte en garanti för rummens temperatur eller besparing. Huset reagerar långsamt; kurvgränser, tolerans och väntetid gäller fortfarande. Sparad termostatbegränsning kan bromsa förvärmningen eftersom den följer ditt vanliga mål.</p></details>
       </div>
       <h3>Plan närmaste dygnet</h3>
       <div id="preheat-timeline" class="preheat-timeline" role="img" aria-label="Förvärmning och svalare perioder närmaste dygnet"></div>
@@ -218,7 +217,7 @@
           <div><label for="fireplace_max_age_minutes">Högsta ålder på kaminens rumsvärden · minuter</label><input id="fireplace_max_age_minutes" name="fireplace_max_age_minutes" form="settings" type="number" min="5" max="1440" step="1" required aria-describedby="fireplace-age-help"></div>
           <button type="submit" form="settings" id="save-fireplace">Spara inställningar</button>
         </div>
-        <p id="fireplace-age-help" class="hint">Standard 15 minuter. Gäller alla valda rum i kaminanalysen, även jämförelserummen. Givare som bara rapporterar ändringar kan vara tysta länge, men tystnad kan också bero på batteri-, radio- eller integrationsfel. En högre gräns kan ge osäkrare kaminbedömning och extra värmesänkning. Höj bara efter att du kontrollerat givarens rapportering. Gränsen blir aldrig längre än Högsta ålder på mätvärden och ändrar inte den vanliga rumsregeln.</p>
+        <p id="fireplace-age-help" class="hint">Standard 15 minuter. Höj bara om givarna rapporterar glest.</p>
       </div>
       <h3>Senaste misstänkta perioder</h3>
       <ul id="fireplace-history" class="feature-timeline"></ul>
@@ -229,6 +228,7 @@
         <p>Vi jämför kaminrummets snabba temperaturökning under ungefär en timme med övriga valda rum. Mönstret måste bestå innan en misstänkt period sparas. En långsam eller jämnt spridd värmeökning kan missas; sol kan ge falska träffar. Aktuella värden krävs i alla valda rum.</p>
         <p>Efter minst tre avslutade förlopp med samma rumsval visas typisk observerad varaktighet och temperaturökning i rummen. Det visar vad som hände samtidigt, inte hur mycket värme kaminen säkert gav eller hur länge glöden varar. Varaktigheten gäller tills den lokala temperaturskillnaden klingat av, inte tills hela huset svalnat.</p>
         <p>Kaminbidraget är en extra sänkning av det beräknade målet, inte ytterligare ett steg ned vid varje avläsning. När observationen tar slut, aktuella värden saknas eller det styrande snittet är för kallt tas bidraget bort och kurvan räknas om. Även då gäller minsta ändringsintervall. Huvudautomatiken måste vara på för att några ändringar ska skickas.</p>
+        <p>Högsta ålder på kaminens rumsvärden: Gäller alla valda rum i kaminanalysen, även jämförelserummen. Givare som bara rapporterar ändringar kan vara tysta länge, men tystnad kan också bero på batteri-, radio- eller integrationsfel. En högre gräns kan ge osäkrare kaminbedömning och extra värmesänkning. Höj bara efter att du kontrollerat givarens rapportering. Gränsen blir aldrig längre än Högsta ålder på mätvärden och ändrar inte den vanliga rumsregeln.</p>
         <p>Observationer sparas från aktiveringen och överlever omstart. Misstänkta perioder och sex timmar därefter undantas från pumpens inlärning. Temperaturprognosen pausas under en pågående observation; den inlärda varaktigheten används inte för att skicka framtida styrkommandon.</p>
       </details>
     </section>
@@ -246,7 +246,6 @@
       </div>
       <h3>När används varmvattnet?</h3>
       <p id="hw-pattern" class="explanation"></p>
-      <p class="hint">Varmvattenkortet visar bara information. Nivån är en uppskattning, inte uppmätta liter; tillägget ändrar inte varmvatteninställningarna.</p>
       <details class="disclosure" id="hot-water-details">
         <summary>Visa användning och temperaturhistorik</summary>
       <div id="hw-hours" class="chart" role="img" aria-label="Tappningar per timme på dygnet"></div>
@@ -257,6 +256,7 @@
       <p class="hint">Tappningar syns som snabba fall i laddgivaren BT6 längre ner i tanken när kallt vatten strömmar in. BT7 i toppen ändras mindre. Skuggade fält = pumpen laddar varmvatten.</p>
       <h3>Senaste tappningarna</h3>
       <ul id="hw-list" class="plan-changes"></ul>
+      <p class="hint">Varmvattenkortet visar bara information. Nivån är en uppskattning, inte uppmätta liter; tillägget ändrar inte varmvatteninställningarna.</p>
       </details>
     </section>
 
@@ -277,8 +277,10 @@
       <h3 id="thermostat-charts-title">Rum för rum · Home Assistant-områden</h3>
       <p id="history-area-status" class="hint" role="status"></p>
       <div id="thermostat-charts" class="thermostat-charts"></div>
-      <p class="hint">Korten grupperas efter rummets område i Home Assistant. De visar temperaturförändringen under dygnet och termostatändringar som loggats i just det området. Kurvförskjutning är en gemensam ändring för hela huset och visas separat i styrhistoriken, inte som en ändring i ett enskilt rum. Om ett rum saknar område tilldelar du området till enheten eller entiteten i Home Assistant. Givare rapporterar bara när värdet ändras, så ett värde gäller tills nästa rapport. Luckor betyder att givaren var otillgänglig.</p>
-      <details class="disclosure"><summary>Avancerat · mätpunkter som tabell</summary><div id="history-table" class="table-scroll"></div></details>
+      <details class="disclosure"><summary>Om graferna · mätpunkter som tabell</summary>
+  <p class="hint">Korten grupperas efter rummets område i Home Assistant. De visar temperaturförändringen under dygnet och termostatändringar som loggats i just det området. Kurvförskjutning är en gemensam ändring för hela huset och visas separat i styrhistoriken, inte som en ändring i ett enskilt rum. Om ett rum saknar område tilldelar du området till enheten eller entiteten i Home Assistant. Givare rapporterar bara när värdet ändras, så ett värde gäller tills nästa rapport. Luckor betyder att givaren var otillgänglig.</p>
+        <div id="history-table" class="table-scroll"></div>
+      </details>
     </section>
 
     <section class="card dashboard" id="pump-card" data-tone="muted">
@@ -304,34 +306,37 @@
       <div id="alarm-observations" class="live-grid"></div>
       <button type="button" id="alarm-pause" hidden>Pausa appens termostatbegränsning</button>
       <ul id="alarm-rooms"></ul>
-      <p class="hint">Temperatur vid eller över börvärdet kan innebära minskat värmebehov, men bevisar inte att ventilen är stängd eller att flödet är tillräckligt. En paus öppnar inte ventiler och ändrar inte befintliga börvärden. Återaktivering görs medvetet under Inställningar.</p>
-      <p class="hint">Driftvärdena är senaste rapporter, inte värden vid larmets start. Gles myUplink-historik kan missa korta kompressorkörningar. Cirkulationspumpens hastighet bevisar inte faktiskt flöde; vattenvolym, luft och ventiler måste kontrolleras på anläggningen.</p>
-      <p>Vid larm 229: kontrollera enligt NIBE att värmesystemet har tillräckligt flöde och är urluftat. Kontrollera även pumpens driftläge vid larmet — varmvatten kan kräva annan felsökning än rumsvärme. Vid återkommande larm, kontakta installatör eller NIBE-service. Appen kan inte garantera att larmet inte återkommer.</p>
-      <p>Home Assistant-anslutningen erbjuder ingen kvittering. Den separata myUplink-anslutningen nedan kan begära manuell kvittering av larm 229 när API:t ger ett verifierat numeriskt larm-ID. UUID spärras eftersom dokumentationen anger heltal för reset. Appen gissar aldrig att larmkod 229 är ett reset-ID.</p>
-      <h3>Direktanslutning till myUplink</h3>
-      <p class="hint">Ange bara client ID och client secret under tilläggets Konfiguration och starta om tillägget. Hämta sedan anläggningar nedan och spara rätt pumpval. System-/device-ID behöver inte letas upp manuellt. Anslutningen är separat från HA-pumpvalet. Hemligheten visas aldrig i webbsidan.</p>
-      <button type="button" id="discover-cloud-devices" class="secondary">Hämta mina anläggningar och pumpar</button>
-      <p id="cloud-discovery-status" role="status"></p>
-      <label for="cloud-device-choice">Anläggning och enhet från myUplink</label>
-      <select id="cloud-device-choice" disabled><option value="">Hämta anläggningar först</option></select>
-      <button type="button" id="save-cloud-device" disabled>Spara pumpval för larm</button>
-      <details id="myuplink-setup-guide">
-        <summary>Konfigurationsguide: callback-URL och befintlig HA-applikation</summary>
-        <p><strong>Ingen ny callback-server behövs.</strong> Direktanslutningen använder client credentials, inte webbinloggning. Den använder ingen callback-URL och har ingen egen OAuth callback-sökväg.</p>
-        <ol>
-          <li>Öppna <a href="https://dev.myuplink.com/apps" target="_blank" rel="noopener noreferrer">myUplink Developer → Applications</a>. Du kan prova Client ID och Client Secret från din befintliga Home Assistant-applikation om klienten tillåter client credentials och READSYSTEM/WRITESYSTEM. Det är inte verifierat för din klient.</li>
-          <li>Låt HA-applikationens callback vara oförändrad. Standard är <code>https://my.home-assistant.io/redirect/oauth</code>. Utan My Home Assistant: <code>&lt;HOME_ASSISTANT_URL&gt;/auth/external/callback</code>. Dessa adresser hör till HA, inte NIBE Comfort. Rotera inte hemligheten eller radera klienten för att testa.</li>
-          <li>Fyll i myuplink_client_id och myuplink_client_secret under tilläggets Konfiguration. Lämna myuplink_system_id och myuplink_device_id tomma. Spara och starta om bara NIBE Comfort.</li>
-          <li>Tryck Hämta mina anläggningar och pumpar ovan. Appen hämtar ID:n via API:t. En enda enhet visas direkt; flera kräver ditt val. Kontrollera anläggning, enhet och ID:n och tryck Spara pumpval för larm. Hämtning väljer eller sparar aldrig en pump åt dig. Developer-portalen visar klientuppgifter, inte nödvändigtvis pump-ID:n.</li>
-          <li>Kontrollera system/device i larmlistan nedan. Konfigurering och uppdatering kvitterar inga larm. UUID-larm kan fortfarande ha spärrad kvittering.</li>
-        </ol>
-        <p class="hint">En separat myUplink-applikation ger bättre isolering från HA. Kräver registreringen en callback kan HA-adressen ovan användas som registreringsvärde; tillägget använder den inte. Vid 401/403: kontrollera klientuppgifter, tillåtna tokenflöden, behörigheter och åtkomst till anläggningen. Fungerande HA-inloggning garanterar inte att client credentials fungerar. Vi återanvänder inte HA:s access-/refresh-token.</p>
-        <a href="https://www.home-assistant.io/integrations/myuplink/" target="_blank" rel="noopener noreferrer">Home Assistants officiella callback-guide</a>
-      </details>
-      <p id="cloud-alarm-status" role="status">Hämtar direktanslutningens status…</p>
       <p id="cloud-alarm-action" role="status"></p>
       <ul id="cloud-alarms"></ul>
-      <a href="https://www.nibe.eu/sv-se/support/vanliga-fragor/faq-items/min-produkt-larmar-for-korta-drifttider-vad-ska-jag-gora" target="_blank" rel="noopener noreferrer">NIBE:s råd om korta drifttider</a>
+      <details class="disclosure" id="alarm-more">
+        <summary>Mer om larm · kvittering och myUplink</summary>
+        <p>Vid larm 229: kontrollera enligt NIBE att värmesystemet har tillräckligt flöde och är urluftat. Kontrollera även pumpens driftläge vid larmet — varmvatten kan kräva annan felsökning än rumsvärme. Vid återkommande larm, kontakta installatör eller NIBE-service. Appen kan inte garantera att larmet inte återkommer.</p>
+        <a href="https://www.nibe.eu/sv-se/support/vanliga-fragor/faq-items/min-produkt-larmar-for-korta-drifttider-vad-ska-jag-gora" target="_blank" rel="noopener noreferrer">NIBE:s råd om korta drifttider</a>
+        <p class="hint">Temperatur vid eller över börvärdet kan innebära minskat värmebehov, men bevisar inte att ventilen är stängd eller att flödet är tillräckligt. En paus öppnar inte ventiler och ändrar inte befintliga börvärden. Återaktivering görs medvetet under Inställningar.</p>
+        <p class="hint">Driftvärdena är senaste rapporter, inte värden vid larmets start. Gles myUplink-historik kan missa korta kompressorkörningar. Cirkulationspumpens hastighet bevisar inte faktiskt flöde; vattenvolym, luft och ventiler måste kontrolleras på anläggningen.</p>
+        <p>Home Assistant-anslutningen erbjuder ingen kvittering. Den separata myUplink-anslutningen nedan kan begära manuell kvittering av larm 229 när API:t ger ett verifierat numeriskt larm-ID. UUID spärras eftersom dokumentationen anger heltal för reset. Appen gissar aldrig att larmkod 229 är ett reset-ID.</p>
+        <h3>Direktanslutning till myUplink</h3>
+        <p class="hint">Ange bara client ID och client secret under tilläggets Konfiguration och starta om tillägget. Hämta sedan anläggningar nedan och spara rätt pumpval. System-/device-ID behöver inte letas upp manuellt. Anslutningen är separat från HA-pumpvalet. Hemligheten visas aldrig i webbsidan.</p>
+        <button type="button" id="discover-cloud-devices" class="secondary">Hämta mina anläggningar och pumpar</button>
+        <p id="cloud-discovery-status" role="status"></p>
+        <label for="cloud-device-choice">Anläggning och enhet från myUplink</label>
+        <select id="cloud-device-choice" disabled><option value="">Hämta anläggningar först</option></select>
+        <button type="button" id="save-cloud-device" disabled>Spara pumpval för larm</button>
+        <details id="myuplink-setup-guide">
+          <summary>Konfigurationsguide: callback-URL och befintlig HA-applikation</summary>
+          <p><strong>Ingen ny callback-server behövs.</strong> Direktanslutningen använder client credentials, inte webbinloggning. Den använder ingen callback-URL och har ingen egen OAuth callback-sökväg.</p>
+          <ol>
+            <li>Öppna <a href="https://dev.myuplink.com/apps" target="_blank" rel="noopener noreferrer">myUplink Developer → Applications</a>. Du kan prova Client ID och Client Secret från din befintliga Home Assistant-applikation om klienten tillåter client credentials och READSYSTEM/WRITESYSTEM. Det är inte verifierat för din klient.</li>
+            <li>Låt HA-applikationens callback vara oförändrad. Standard är <code>https://my.home-assistant.io/redirect/oauth</code>. Utan My Home Assistant: <code>&lt;HOME_ASSISTANT_URL&gt;/auth/external/callback</code>. Dessa adresser hör till HA, inte NIBE Comfort. Rotera inte hemligheten eller radera klienten för att testa.</li>
+            <li>Fyll i myuplink_client_id och myuplink_client_secret under tilläggets Konfiguration. Lämna myuplink_system_id och myuplink_device_id tomma. Spara och starta om bara NIBE Comfort.</li>
+            <li>Tryck Hämta mina anläggningar och pumpar ovan. Appen hämtar ID:n via API:t. En enda enhet visas direkt; flera kräver ditt val. Kontrollera anläggning, enhet och ID:n och tryck Spara pumpval för larm. Hämtning väljer eller sparar aldrig en pump åt dig. Developer-portalen visar klientuppgifter, inte nödvändigtvis pump-ID:n.</li>
+            <li>Kontrollera system/device i larmlistan nedan. Konfigurering och uppdatering kvitterar inga larm. UUID-larm kan fortfarande ha spärrad kvittering.</li>
+          </ol>
+          <p class="hint">En separat myUplink-applikation ger bättre isolering från HA. Kräver registreringen en callback kan HA-adressen ovan användas som registreringsvärde; tillägget använder den inte. Vid 401/403: kontrollera klientuppgifter, tillåtna tokenflöden, behörigheter och åtkomst till anläggningen. Fungerande HA-inloggning garanterar inte att client credentials fungerar. Vi återanvänder inte HA:s access-/refresh-token.</p>
+          <a href="https://www.home-assistant.io/integrations/myuplink/" target="_blank" rel="noopener noreferrer">Home Assistants officiella callback-guide</a>
+        </details>
+        <p id="cloud-alarm-status" role="status">Hämtar direktanslutningens status…</p>
+      </details>
     </section>
 
     <section class="card dashboard" id="energy-section">
@@ -343,8 +348,6 @@
       <div id="energy-chart" class="chart" role="img" aria-label="Pumpens elanvändning per timme med styrmarkeringar"></div>
       <p id="energy-price-status" role="status"></p>
       <div id="energy-cost-chart" class="chart" role="img" aria-label="Beräknad kostnad per timme med styrmarkeringar"></div>
-      <p class="hint">K = kurvförskjutning, T = termostat, I = sparade inställningar. En begäran utan återläsning är inte en bekräftad ändring. Graferna visar bara fullständiga timmar; tabellen visar datatäckningen.</p>
-      <p class="hint">Timfördelningen är uppskattad: ökningen i elmätaren fördelas jämnt mellan dess rapporter (högst två timmar). Kostnaden beräknas med historiken från din sparade prisgivare, aldrig dagens pris för äldre timmar. Bara avgifter och moms som redan finns i givaren ingår; fast avgift ingår inte. Luckor, otillgängliga värden och räknaråterställningar räknas inte som noll. Producerad värme är inte använd el.</p>
       <details class="disclosure">
         <summary>Före och efter våra ändringar</summary>
         <p class="hint">Visar närmaste hela timmen före och efter ändringens timme. Mellantimmen hoppas över. Bekräftade ändringar avser HA:s återläsning, inte en oberoende fysisk mätning. Väder, varmvatten, kamin och värmesystemets tröghet påverkar också förbrukningen: skillnaden är en observation, inte bevisad effekt eller besparing.</p>
@@ -352,6 +355,8 @@
       </details>
       <details class="disclosure">
         <summary>Timvärden och datatäckning</summary>
+  <p class="hint">K = kurvförskjutning, T = termostat, I = sparade inställningar. En begäran utan återläsning är inte en bekräftad ändring. Graferna visar bara fullständiga timmar; tabellen visar datatäckningen.</p>
+  <p class="hint">Timfördelningen är uppskattad: ökningen i elmätaren fördelas jämnt mellan dess rapporter (högst två timmar). Kostnaden beräknas med historiken från din sparade prisgivare, aldrig dagens pris för äldre timmar. Bara avgifter och moms som redan finns i givaren ingår; fast avgift ingår inte. Luckor, otillgängliga värden och räknaråterställningar räknas inte som noll. Producerad värme är inte använd el.</p>
         <div id="energy-table" class="table-scroll"></div>
       </details>
       </div>
@@ -371,10 +376,10 @@
           <summary>Körningar, kostnad och vad som hände samtidigt</summary>
           <p>En körperiod betyder att elpatronens rapporterade effekt var över noll. Effektsteg inom samma period räknas inte som nya starter. Dataluckor delar upp perioderna; okänd början eller slut är inte en bekräftad start eller ett stopp.</p>
           <p>Driftläge, gradminuter, ute- och varmvattentemperatur visas vid periodens början om färsk historik finns (högst 15 minuter gammal). Det är samtidiga observationer, inte en säker startorsak. Pumpens interna reglering kan exempelvis begära tillsats vid värmeunderskott eller varmvattenbehov; givarna här visar inte säkert vilket villkor som utlöste det.</p>
+                <p class="hint">kWh och kostnad uppskattas från elpatronens W/kW-historik med historiska priser från din valda elpriskälla. Registrerade 0 kW gäller till nästa tillstånd eller periodens slut. Över noll gäller högst 15 minuter mellan rapporter och ingen extrapolering efter sista rapporten. Okända, otillgängliga och ogiltiga värden bryter nollperioden. Saknad historik räknas aldrig som noll; avbrott som integrationen inte registrerat kan däremot inte upptäckas här. Visningen ändrar inga inställningar i pumpen.</p>
           <p class="hint">På liten skärm kan du rulla tabellen i sidled för att se alla uppgifter.</p>
           <div id="auxiliary-runs" class="table-scroll" tabindex="0" role="region" aria-label="Elpatronens körperioder och samtidiga observationer"></div>
         </details>
-        <p class="hint">kWh och kostnad uppskattas från elpatronens W/kW-historik med historiska priser från din valda elpriskälla. Registrerade 0 kW gäller till nästa tillstånd eller periodens slut. Över noll gäller högst 15 minuter mellan rapporter och ingen extrapolering efter sista rapporten. Okända, otillgängliga och ogiltiga värden bryter nollperioden. Saknad historik räknas aldrig som noll; avbrott som integrationen inte registrerat kan däremot inte upptäckas här. Visningen ändrar inga inställningar i pumpen.</p>
       </div>
     </section>
 
@@ -385,8 +390,11 @@
       <div id="sources-data" hidden>
         <div id="sources-metrics" class="live-grid"></div>
         <div id="sources-chart" class="chart" role="img" aria-label="Husets el per timme från elnät, sol och batteri"></div>
+        <div id="sources-legend" class="chart-legend"></div>
         <p id="sources-pump" role="status"></p>
-        <p class="hint">Husets förbrukning = köpt el + sol + batteri ur − såld el − batteri in. Det som inte köptes kom från batteriet (högst vad det levererade) och resten direkt från panelerna. Batteriet kan ha laddats från elnätet; "från batteri" betyder inte alltid sol. Räknare som ökar i små steg fördelas jämnt sedan förra steget. Undvikt kostnad räknas till köppriset.</p>
+        <details class="disclosure"><summary>Så räknas det</summary>
+  <p class="hint">Husets förbrukning = köpt el + sol + batteri ur − såld el − batteri in. Det som inte köptes kom från batteriet (högst vad det levererade) och resten direkt från panelerna. Batteriet kan ha laddats från elnätet; "från batteri" betyder inte alltid sol. Räknare som ökar i små steg fördelas jämnt sedan förra steget. Undvikt kostnad räknas till köppriset.</p>
+        </details>
       </div>
     </section>
 
