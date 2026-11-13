@@ -62,6 +62,12 @@ DEFAULTS = {
     "hot_water_mode_entity": "",
     "hot_water_cheap_option": "Normal",
     "hot_water_normal_option": "Economy",
+    "aux_limit_enabled": False,
+    "aux_limit_entity": "",
+    "aux_limit_option": "",
+    "aux_normal_option": "",
+    "aux_limit_max_drop": 0.5,
+    "aux_limit_min_outdoor": -10.0,
     "notify_service": "",
     "grid_import_entity": "",
     "grid_export_entity": "",
@@ -70,6 +76,8 @@ DEFAULTS = {
     "battery_charge_entity": "",
 }
 SOURCE_ENTITIES = ("grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity")
+AUX_LIMIT_KEYS = ("aux_limit_enabled", "aux_limit_entity", "aux_limit_option", "aux_normal_option",
+                  "aux_limit_max_drop", "aux_limit_min_outdoor")
 LIMITS = {
     "target_temperature": (10, 30),
     "base_offset": (-10, 10),
@@ -92,6 +100,8 @@ LIMITS = {
     "price_high_percent": (0, 100),
     "auto_base_limit": (0.5, 5),
     "pause_notify_minutes": (0, 1440),
+    "aux_limit_max_drop": (0.1, 2),
+    "aux_limit_min_outdoor": (-30, 15),
 }
 
 
@@ -115,6 +125,8 @@ VACATION_MAX_SECONDS = 366 * 86400
 MANUAL_FIREPLACE_PENDING_SECONDS = 1800
 # The pump needs time to finish a hot water charge; never flip the mode more often than this.
 HOT_WATER_MIN_SECONDS = 3600
+# The electric heater limit uses the same pace; lifting the limit is never delayed.
+AUX_LIMIT_MIN_SECONDS = 3600
 # Automatic base correction: one curve step per degree of lasting deviation and day. Small
 # deviations are ignored so sensor noise does not walk the correction.
 AUTO_BASE_RATE = 1 / 86400
@@ -154,7 +166,8 @@ def validate(config):
     if result["price_mode"] not in ("absolute", "relative"):
         raise ControlError("Prisnivån måste följa fasta gränser eller dygnets egna priser.")
     for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled",
-                "auto_base_enabled", "publish_sensors", "skip_silent_rooms", "hot_water_price_enabled"):
+                "auto_base_enabled", "publish_sensors", "skip_silent_rooms", "hot_water_price_enabled",
+                "aux_limit_enabled"):
         if type(result[key]) is not bool:
             raise ControlError(f"{key} måste vara boolesk.")
     for key, (low, high) in LIMITS.items():
@@ -200,6 +213,7 @@ def validate(config):
         ("forecast_entity", ("weather.",)),
         ("notify_service", ("notify.",)),
         ("hot_water_mode_entity", ("select.",)),
+        ("aux_limit_entity", ("select.",)),
         *((key, ("sensor.",)) for key in SOURCE_ENTITIES),
     ):
         value = result[key]
@@ -214,6 +228,17 @@ def validate(config):
             raise ControlError("Välj pumpens varmvattenläge (select) för varmvatten på billig el.")
         if result["hot_water_cheap_option"] == result["hot_water_normal_option"]:
             raise ControlError("Läget vid billig el och vanligt läge måste vara olika.")
+    for key in ("aux_limit_option", "aux_normal_option"):
+        if not isinstance(result[key], str) or len(result[key]) > 64:
+            raise ControlError(f"{key}: ange pumpens namn på läget.")
+        result[key] = result[key].strip()
+    if result["aux_limit_enabled"]:
+        if not result["aux_limit_entity"]:
+            raise ControlError("Välj pumpens inställning för max eltillsats (select) för att begränsa elpatronen.")
+        if not result["aux_limit_option"] or not result["aux_normal_option"]:
+            raise ControlError("Välj både begränsad och vanlig max eltillsats.")
+        if result["aux_limit_option"] == result["aux_normal_option"]:
+            raise ControlError("Begränsad och vanlig max eltillsats måste vara olika.")
     if not result["min_offset"] <= result["base_offset"] <= result["max_offset"]:
         raise ControlError("Basförskjutningen måste ligga inom säkerhetsgränserna.")
     if result["price_low"] >= result["price_high"]:
@@ -322,8 +347,8 @@ class HomeAssistant:
     def set_thermostat(self, entity_id, value):
         self.request("/services/climate/set_temperature", {"entity_id": entity_id, "temperature": value}, timeout=SERVICE_TIMEOUT_SECONDS)
 
-    def set_select(self, entity_id, option):
-        self.request("/services/select/select_option", {"entity_id": entity_id, "option": option}, timeout=SERVICE_TIMEOUT_SECONDS)
+    def set_select(self, entity_id, option, timeout=SERVICE_TIMEOUT_SECONDS):
+        self.request("/services/select/select_option", {"entity_id": entity_id, "option": option}, timeout=timeout)
 
     def notify_services(self):
         """Notify services a person can pick, e.g. the mobile app on a phone, with a readable name."""
@@ -1073,7 +1098,7 @@ class Controller:
                 for key in ("skip_silent_rooms", "price_mode", "price_low_percent", "price_high_percent", "auto_base_enabled",
                             "auto_base_limit", "publish_sensors", "pause_notify_minutes", "notify_service",
                             "hot_water_price_enabled", "hot_water_mode_entity", "hot_water_cheap_option",
-                            "hot_water_normal_option", *SOURCE_ENTITIES):
+                            "hot_water_normal_option", *SOURCE_ENTITIES, *AUX_LIMIT_KEYS):
                     saved.setdefault(key, DEFAULTS[key])
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
@@ -1149,6 +1174,18 @@ class Controller:
         self.pause_notified = False
         self.report_error = None
         self.hot_water_written = 0.0
+        self.aux_written = 0.0
+        # Set while our lower electric heater limit is in force, so it is lifted after errors and restarts.
+        self.aux_limit_path = Path(data_dir) / "aux-limit.json"
+        self.aux_limited = False
+        self.aux_restore = None
+        if self.aux_limit_path.exists():
+            try:
+                saved = json.loads(self.aux_limit_path.read_text())
+                if saved.get("limited") is True and isinstance(saved.get("entity_id"), str) and isinstance(saved.get("normal"), str):
+                    self.aux_limited, self.aux_restore = True, saved
+            except (ValueError, AttributeError, OSError):
+                LOG.warning("Sparat elpatronläge kunde inte läsas; ignoreras.")
 
     def peers(self):
         """Same-device entities per entity, refreshed every 5 minutes."""
@@ -1232,6 +1269,10 @@ class Controller:
             atomic_json(self.path, config)
             if config["base_offset"] != self.config["base_offset"] and self.base_correction["value"]:
                 self.reset_base_correction("Grundvärdet ändrades för hand; den automatiska baskorrigeringen börjar om från 0.")
+            if self.aux_limited and (not config["aux_limit_enabled"] or (config["aux_limit_entity"], config["aux_normal_option"])
+                                     != (self.aux_restore["entity_id"], self.aux_restore["normal"])):
+                # Restore with the old choice before the new one takes over.
+                self.lift_aux_limit("inställningen för elpatronen ändrades")
             self.config = config
             self.status = {"message": "Inställningar sparade. Väntar på ny avläsning.", "error_message": None,
                            "enabled": config["enabled"]}
@@ -1360,6 +1401,92 @@ class Controller:
             return report
         self.events.add("hot_water_mode", f"Varmvatten {current} → {desired} ({report['reason']}).",
                         entity_id=config["hot_water_mode_entity"], previous=current, value=desired)
+        report["current"] = desired
+        return report
+
+    def store_aux_limited(self, plan):
+        """plan is where to restore the full limit, or None once it is restored."""
+        atomic_json(self.aux_limit_path, plan or {"limited": False})
+        self.aux_limited = plan is not None
+        self.aux_restore = plan
+
+    def lift_aux_limit(self, reason, timeout=SERVICE_TIMEOUT_SECONDS):
+        """Give the electric heater its usual limit back. Safe to call any time; a no-op unless we lowered it."""
+        if not self.aux_limited:
+            return None
+        plan = self.aux_restore
+        try:
+            self.ha.set_select(plan["entity_id"], plan["normal"], timeout=timeout)
+        except ControlError as exc:
+            message = f"Elpatronens vanliga max eltillsats kunde inte återställas: {exc}"
+            self.events.add("aux_limit_failed", message, entity_id=plan["entity_id"], value=plan["normal"])
+            return message
+        self.store_aux_limited(None)
+        self.events.add("aux_limit", f"Elpatronen får sin vanliga max eltillsats {plan['normal']} igen ({reason}).",
+                        entity_id=plan["entity_id"], value=plan["normal"])
+        return None
+
+    def aux_limit_step(self, entities, now, result, preheat, hold):
+        """Opt-in: lower the pump's electric heater limit in expensive hours, never while the house is cold."""
+        config = self.config
+        if not config["aux_limit_enabled"]:
+            self.lift_aux_limit("begränsningen är avstängd")
+            return {"enabled": False}
+        entity_id, limited, normal = config["aux_limit_entity"], config["aux_limit_option"], config["aux_normal_option"]
+        reason = None
+        if preheat.get("kind") != "preheat":
+            reason = ("dyr period efter förvärmning" if preheat.get("kind") == "coast"
+                      else "dyr el" if result.get("price_level") == "expensive" else None)
+        guard = None
+        indoor, outdoor = result.get("indoor"), result.get("outdoor")
+        if reason and (indoor is None or indoor < config["target_temperature"] - config["aux_limit_max_drop"]):
+            guard = "För kallt inne: elpatronen får full effekt."
+        elif reason and outdoor is not None and outdoor < config["aux_limit_min_outdoor"]:
+            guard = "För kallt ute: elpatronen får full effekt."
+        desired = limited if reason and not guard else normal
+        report = {"enabled": True, "entity_id": entity_id, "desired": desired, "limited": desired == limited,
+                  "reason": guard or reason or "inte dyr el", "current": None, "note": None, "error": None, "next_change_at": None}
+        state = next((e for e in entities if e["entity_id"] == entity_id), None)
+        if state is None or state.get("state") in ("unavailable", "unknown", None):
+            report["error"] = "Pumpens max eltillsats kan inte läsas just nu."
+            return report
+        current = report["current"] = state["state"]
+        options = (state.get("attributes") or {}).get("options") or []
+        missing = [option for option in (limited, normal) if option not in options]
+        if missing:
+            report["error"] = f"Läget {missing[0]} finns inte. Pumpen erbjuder: {', '.join(map(str, options))}."
+            return report
+        if current not in (limited, normal):
+            report["note"] = f"Max eltillsats {current} är vald för hand och lämnas orörd."
+            if self.aux_limited:
+                self.store_aux_limited(None)
+            return report
+        if not config["enabled"] or hold:
+            report["note"] = "Övervakning eller paus: elpatronen begränsas inte."
+            if current == limited and self.aux_limited:
+                report["error"] = self.lift_aux_limit("övervakning eller paus")
+                if not report["error"]:
+                    report["current"] = normal
+            return report
+        if current == desired:
+            if current == normal and self.aux_limited:
+                self.store_aux_limited(None)
+            return report
+        if desired == limited:
+            wait = AUX_LIMIT_MIN_SECONDS - (now - self.aux_written)
+            if wait > 0:
+                report["next_change_at"] = now + wait
+                return report
+        self.aux_written = now
+        try:
+            self.ha.set_select(entity_id, desired)
+        except ControlError as exc:
+            report["error"] = f"Max eltillsats kunde inte ändras: {exc}"
+            self.events.add("aux_limit_failed", report["error"], entity_id=entity_id, value=desired)
+            return report
+        self.store_aux_limited({"limited": True, "entity_id": entity_id, "normal": normal} if desired == limited else None)
+        self.events.add("aux_limit", f"Max eltillsats {current} → {desired} ({report['reason']}).",
+                        entity_id=entity_id, previous=current, value=desired)
         report["current"] = desired
         return report
 
@@ -1931,6 +2058,7 @@ class Controller:
                 result["pump_alarm"] = alarm
                 result["thermostat_control"] = self.thermostat_step(entities, now, peers, testing or vacation, alarm_hold=alarm_hold)
                 result["hot_water"] = self.hot_water_step(entities, now, result, preheat, testing or vacation or alarm_hold)
+                result["aux_limit"] = self.aux_limit_step(entities, now, result, preheat, testing or vacation or alarm_hold)
                 if testing:
                     result["message"] = "Test av styrningen pågår: automatiken väntar tills testet är klart."
                 elif alarm_hold:

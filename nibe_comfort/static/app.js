@@ -121,31 +121,58 @@ function selectOptions(id, predicate, configured = settings[id]) {
   select.value = configured;
 }
 
-const HOT_WATER_HINT = /comfort_mode|hot_?water|varmvatten|dhw/i;
+// Pump settings chosen as a select entity plus two of its own options.
+const MODE_PICKERS = {
+  hot_water: {
+    entity: "hot_water_mode_entity", options: ["hot_water_cheap_option", "hot_water_normal_option"],
+    hint: /comfort_mode|hot_?water|varmvatten|dhw/i,
+    // NIBE's usual pair when a newly chosen select has neither current mode.
+    defaults: (options) => [options.includes("Normal") ? "Normal" : options[0], options.includes("Economy") ? "Economy" : options[1] ?? options[0]],
+  },
+  aux: {
+    entity: "aux_limit_entity", options: ["aux_limit_option", "aux_normal_option"],
+    hint: /electrical_add|eltillsats|add_heat/i,
+    // Smallest step above zero when expensive, and whatever the pump uses today as the usual limit.
+    defaults: (options, entity) => [options.find((o) => parseFloat(o) > 0) ?? options[0], entity?.state ?? options.at(-1)],
+  },
+};
 
-function renderHotWaterSelects(entityId, cheap, normal) {
-  const select = $("hot_water_mode_entity");
+function renderModeSelects(picker, entityId, first, second) {
+  const { entity, hint } = MODE_PICKERS[picker];
+  const select = $(entity);
   select.replaceChildren(new Option("Inte vald", ""));
-  // Likely hot water mode selects first; every select stays available for other pumps.
+  // Likely selects first; every select stays available for other pumps.
   const selects = entities.filter((e) => e.entity_id.startsWith("select."));
-  const likely = (e) => HOT_WATER_HINT.test(`${e.entity_id} ${e.name}`) && !/schedul|schema/i.test(e.entity_id);
-  for (const entity of [...selects.filter(likely), ...selects.filter((e) => !likely(e))]) {
-    select.add(new Option(`${entity.name} · ${entity.entity_id}`, entity.entity_id));
+  const likely = (e) => hint.test(`${e.entity_id} ${e.name}`) && !/schedul|schema/i.test(e.entity_id);
+  for (const item of [...selects.filter(likely), ...selects.filter((e) => !likely(e))]) {
+    select.add(new Option(`${item.name} · ${item.entity_id}`, item.entity_id));
   }
   if (entityId && !selects.some((e) => e.entity_id === entityId)) select.add(new Option(`${entityId} (saknas / ej tillgänglig)`, entityId));
   select.value = entityId || "";
-  renderHotWaterModes(cheap, normal);
+  renderModes(picker, first, second);
 }
 
-function renderHotWaterModes(cheap, normal) {
-  const options = entities.find((e) => e.entity_id === $("hot_water_mode_entity").value)?.options || [];
-  for (const [id, configured] of [["hot_water_cheap_option", cheap], ["hot_water_normal_option", normal]]) {
-    const select = $(id);
+function pickerChanged(picker) {
+  const { entity, options: ids, defaults } = MODE_PICKERS[picker];
+  const chosen = entities.find((e) => e.entity_id === $(entity).value);
+  const options = chosen?.options || [];
+  const fallback = defaults(options, chosen);
+  // A newly chosen select keeps the current modes if it has them.
+  renderModes(picker, ...ids.map((id, i) => options.includes($(id).value) ? $(id).value : fallback[i]));
+}
+
+function renderModes(picker, first, second) {
+  const { entity, options: ids, defaults } = MODE_PICKERS[picker];
+  const chosen = entities.find((e) => e.entity_id === $(entity).value);
+  const options = chosen?.options || [];
+  const fallback = defaults(options, chosen);
+  for (const [i, configured] of [first, second].entries()) {
+    const select = $(ids[i]);
     select.replaceChildren(...options.map((option) => new Option(option, option)));
     if (configured && !options.includes(configured)) {
       select.add(new Option(options.length ? `${configured} (finns inte i pumpen)` : configured, configured));
     }
-    select.value = configured || options[0] || "";
+    select.value = configured || fallback[i] || "";
   }
 }
 
@@ -303,7 +330,8 @@ function renderSettings(formSettings = settings, preserveView = false) {
     selectOptions(id, (entity) => entity.entity_id.startsWith("sensor.") && ["kWh", "Wh", "MWh", "W", "kW"].includes(entity.unit), formSettings[id]);
   }
   renderNotifyOptions(formSettings.notify_service);
-  renderHotWaterSelects(formSettings.hot_water_mode_entity, formSettings.hot_water_cheap_option, formSettings.hot_water_normal_option);
+  renderModeSelects("hot_water", formSettings.hot_water_mode_entity, formSettings.hot_water_cheap_option, formSettings.hot_water_normal_option);
+  renderModeSelects("aux", formSettings.aux_limit_entity, formSettings.aux_limit_option, formSettings.aux_normal_option);
   $("price_provider").value = formSettings.price_provider;
   $("price_mode").value = formSettings.price_mode;
   renderPriceMode();
@@ -482,6 +510,16 @@ function renderHotWaterControl() {
   $("hw-control").textContent = text;
   $("hw-control").hidden = !text;
   $("hot-water-settings-status").textContent = text || (settings?.hot_water_price_enabled ? "Väntar på nästa avläsning." : "");
+}
+
+function renderAuxLimitControl() {
+  const state = lastStatus?.aux_limit;
+  const text = !state?.enabled ? "" : state.error ? state.error
+    : `Max eltillsats ${state.current ?? "okänd"} · önskad ${state.desired} (${state.reason}).${state.note ? ` ${state.note}` : ""}${state.next_change_at
+      ? ` Nästa sänkning tidigast ${new Date(state.next_change_at * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.` : ""}`;
+  $("aux-limit-control").textContent = text;
+  $("aux-limit-control").hidden = !text;
+  $("aux-limit-settings-status").textContent = text || (settings?.aux_limit_enabled ? "Väntar på nästa avläsning." : "");
 }
 
 function renderFireplace() {
@@ -901,6 +939,7 @@ async function refreshStatus() {
     renderVacation();
     renderFireplace();
     renderHotWaterControl();
+    renderAuxLimitControl();
     renderRoomImpact();
     $("indoor").textContent = displayNumber(state.indoor);
     renderIndoorDiff();
@@ -942,6 +981,7 @@ async function refreshStatus() {
     renderVacation();
     renderFireplace();
     renderHotWaterControl();
+    renderAuxLimitControl();
     renderRoomImpact();
     for (const id of ["indoor", "outdoor-now", "current-offset", "hero-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
     $("hero-offset-base").textContent = "";
@@ -2336,6 +2376,9 @@ const fieldLabels = {
   pause_notify_minutes: "Meddela vid paus efter", notify_service: "Notify-tjänst",
   hot_water_price_enabled: "Varmvatten på billig el", hot_water_mode_entity: "Varmvattenläge",
   hot_water_cheap_option: "Läge vid billig el", hot_water_normal_option: "Vanligt varmvattenläge",
+  aux_limit_enabled: "Begränsa elpatronen vid dyr el", aux_limit_entity: "Max eltillsats-inställning",
+  aux_limit_option: "Max eltillsats vid dyr el", aux_normal_option: "Vanlig max eltillsats",
+  aux_limit_max_drop: "Släpp begränsning under målet", aux_limit_min_outdoor: "Ingen begränsning under utetemp",
   grid_import_entity: "Köpt el", grid_export_entity: "Såld el", solar_entity: "Solproduktion",
   battery_discharge_entity: "Batteri ur", battery_charge_entity: "Batteri in",
   min_interval_minutes: "Minsta ändringsintervall", max_step: "Största steg", max_age_minutes: "Högsta mätvärdesålder",
@@ -2600,14 +2643,8 @@ async function init() {
   $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
   $("fireplace-manual-start").addEventListener("click", () => void manualFireplace());
   $("notify-test").addEventListener("click", () => void testNotify());
-  $("hot_water_mode_entity").addEventListener("change", () => {
-    // A newly chosen select keeps the current modes if it has them, otherwise NIBE's usual pair.
-    const options = entities.find((e) => e.entity_id === $("hot_water_mode_entity").value)?.options || [];
-    const pick = (current, preferred, fallback) => options.includes(current) ? current
-      : options.includes(preferred) ? preferred : fallback;
-    renderHotWaterModes(pick($("hot_water_cheap_option").value, "Normal", options[0]),
-      pick($("hot_water_normal_option").value, "Economy", options[1] ?? options[0]));
-  });
+  $("hot_water_mode_entity").addEventListener("change", () => pickerChanged("hot_water"));
+  $("aux_limit_entity").addEventListener("change", () => pickerChanged("aux"));
   $("notify_service").addEventListener("change", () => { $("notify-test").disabled = !$("notify_service").value; $("notify-status").textContent = ""; });
   $("discover-cloud-devices").addEventListener("click", () => void discoverCloudDevices());
   $("save-cloud-device").addEventListener("click", () => void saveCloudDevice());

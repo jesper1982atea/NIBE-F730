@@ -33,6 +33,8 @@ def run_control_loop(controller, stop, interval=60, retries=LOOP_RETRIES, retry_
         except ControlError as exc:
             LOG.warning("%s", exc)
             failures = 0
+            # Without a full control round the house temperature is unknown: never keep the heater limited.
+            lift_aux_limit(controller, "styrningen saknar aktuella värden")
         except Exception:
             failures += 1
             final = failures > retries
@@ -43,6 +45,7 @@ def run_control_loop(controller, stop, interval=60, retries=LOOP_RETRIES, retry_
             with controller.lock:
                 controller.status = {"error_message": message, "message": "Styrloopen stoppad." if final else "Styrloopen pausad.",
                                      "stopped": True}
+            lift_aux_limit(controller, "internt fel i styrloopen")
             try:
                 controller.events.add("fatal", message)
             except (OSError, sqlite3.Error):
@@ -59,6 +62,18 @@ def run_control_loop(controller, stop, interval=60, retries=LOOP_RETRIES, retry_
             stop.wait(retry_seconds)
             continue
         stop.wait(interval)
+
+
+def lift_aux_limit(controller, reason, timeout=None):
+    """Best effort: a failure here must never stop the loop or the shutdown."""
+    try:
+        with controller.lock:
+            if timeout is None:
+                controller.lift_aux_limit(reason)
+            else:
+                controller.lift_aux_limit(reason, timeout=timeout)
+    except Exception:
+        LOG.exception("Kunde inte återställa elpatronens max eltillsats")
 
 
 def read_json(handler, limit=1024):
@@ -392,6 +407,8 @@ def main():
         signal.signal(sig, lambda *_: stop.set())
     LOG.info("NIBE Comfort startad; lokalt API %s", "aktiverat" if local_token else "avstängt")
     stop.wait()
+    # A stopped add-on must not leave the electric heater limited for the rest of the winter.
+    lift_aux_limit(controller, "tillägget stoppas", timeout=20)
     for server in servers:
         server.shutdown()
         server.server_close()

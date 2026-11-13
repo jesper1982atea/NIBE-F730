@@ -371,6 +371,7 @@
       <div class="feature-head"><div class="feature-icon icon-bolt" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 13h6l-1 8 8-10h-6l1-8Z"/></svg></div><div><span class="section-number">ELTILLSATS · SENASTE 24 AVSLUTADE TIMMARNA</span><h2>När går elpatronen?</h2></div><span id="auxiliary-pill" class="feature-pill">Hämtar…</span><button type="button" id="refresh-auxiliary" class="secondary">Uppdatera</button></div>
       <p class="section-intro">Se elpatronens egen effekt, observerade körperioder och uppskattad kostnad. Detta är en del av pumpens el, inte en extra kostnad att lägga ovanpå pumpens totalsiffra.</p>
       <p id="auxiliary-status" role="status">Hämtar elpatronens historik…</p>
+      <p id="aux-limit-control" class="explanation" role="status" hidden></p>
       <div id="auxiliary-data" hidden>
         <p id="auxiliary-current" role="status"></p>
         <div id="auxiliary-metrics" class="live-grid"></div>
@@ -584,6 +585,20 @@
           <div><label for="hot_water_normal_option">Vanligt läge</label><select id="hot_water_normal_option"></select></div>
         </div>
         <p id="hot-water-settings-status" class="hint" role="status"></p>
+      </section>
+      <section class="card">
+        <h2>Begränsa elpatronen vid dyr el</h2>
+        <label class="toggle"><input type="checkbox" id="aux_limit_enabled"> Sänk pumpens max eltillsats under dyra timmar</label>
+        <p class="hint">Av från början. Under dyra timmar, och under den svalare perioden efter en förvärmning, sätts pumpens max eltillsats till det begränsade läget. Annars gäller det vanliga. Elpatronen får alltid full effekt när det är för kallt inne eller ute, och begränsningen tas bort direkt om styrningen pausas, saknar värden eller tillägget stoppas. Högst en sänkning i timmen. Ett annat läge som du valt för hand lämnas orört. Kräver att automatiken är på.</p>
+        <label for="aux_limit_entity">Pumpens inställning för max eltillsats</label>
+        <select id="aux_limit_entity"></select>
+        <div class="field-pair">
+          <div><label for="aux_limit_option">Max eltillsats vid dyr el</label><select id="aux_limit_option"></select></div>
+          <div><label for="aux_normal_option">Vanlig max eltillsats</label><select id="aux_normal_option"></select></div>
+          <div><label for="aux_limit_max_drop">Släpp begränsningen när det är kallare än målet minus · °C</label><input id="aux_limit_max_drop" type="number" min="0.1" max="2" step="0.1" required></div>
+          <div><label for="aux_limit_min_outdoor">Begränsa aldrig när det är kallare ute än · °C</label><input id="aux_limit_min_outdoor" type="number" min="-30" max="15" step="1" required></div>
+        </div>
+        <p id="aux-limit-settings-status" class="hint" role="status"></p>
       </section>
       <section class="card">
         <h2>Home Assistant</h2>

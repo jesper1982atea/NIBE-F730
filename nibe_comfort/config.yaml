@@ -9,6 +9,8 @@ arch:
   - amd64
 init: false
 startup: application
+# Time to give the electric heater its usual limit back when the add-on stops.
+timeout: 30
 boot: auto
 homeassistant_api: true
 ingress: true

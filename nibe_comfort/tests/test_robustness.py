@@ -361,3 +361,103 @@ class NotifyServiceTests(unittest.TestCase):
         self.assertEqual(call("/api/notify", "PUT", {"service": "notify.mobile_app_ipad"}), (200, {"sent": "notify.mobile_app_ipad"}))
         self.assertEqual(call("/api/notify", "PUT", {"service": "notify.gone"})[0], 400)
         self.assertEqual(call("/api/notify", "PUT", {"x": 1})[0], 400)
+
+
+class AuxLimitTests(unittest.TestCase):
+    ADD = "select.pump_max_electrical_add"
+    OPTIONS = ("0.0 kW", "2.0 kW", "4.60 kW", "7.1 kW")
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.ha = Mock()
+        self.ha.integration_registry.return_value = []
+        self.ha.states.side_effect = lambda: fixtures()
+        self.controller = Controller(self.ha, self.temp.name)
+        self.cfg = config(enabled=True, target_temperature=21, aux_limit_enabled=True, aux_limit_entity=self.ADD,
+                          aux_limit_option="2.0 kW", aux_normal_option="7.1 kW")
+        self.controller.save(self.cfg)
+
+    def step(self, current, level=None, kind=None, indoor=21.0, outdoor=0.0, hold=False, now=10_000.0, options=OPTIONS):
+        add = {"entity_id": self.ADD, "state": current, "attributes": {"options": list(options)}}
+        return self.controller.aux_limit_step([add], now, {"price_level": level, "indoor": indoor, "outdoor": outdoor},
+                                              {"kind": kind}, hold)
+
+    def test_off_by_default_and_validated(self):
+        controller = Controller(self.ha, tempfile.mkdtemp(dir=self.temp.name))
+        self.assertEqual(controller.aux_limit_step([], 0, {}, {}, False), {"enabled": False})
+        for bad in ({"aux_limit_entity": ""}, {"aux_limit_entity": "number.x"}, {"aux_limit_option": ""},
+                    {"aux_normal_option": "2.0 kW"}, {"aux_limit_max_drop": 0}, {"aux_limit_min_outdoor": 20}):
+            with self.assertRaises(ControlError):
+                self.controller.save({**self.cfg, **bad})
+        # Disabled, the options may stay empty.
+        self.controller.save({**self.cfg, "aux_limit_enabled": False, "aux_limit_entity": "", "aux_limit_option": ""})
+
+    def test_expensive_hours_and_coast_limit_cheap_hours_restore_at_once(self):
+        report = self.step("7.1 kW", level="expensive")
+        self.ha.set_select.assert_called_once_with(self.ADD, "2.0 kW")
+        self.assertTrue(report["limited"])
+        self.assertTrue(self.controller.aux_limited)
+        self.ha.set_select.reset_mock()
+        # Lifting the limit is never delayed.
+        self.step("2.0 kW", level="normal", now=10_060.0)
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW")
+        self.assertFalse(self.controller.aux_limited)
+        self.ha.set_select.reset_mock()
+        # Lowering again waits an hour from the last change.
+        report = self.step("7.1 kW", kind="coast", now=10_120.0)
+        self.ha.set_select.assert_not_called()
+        self.assertEqual(report["reason"], "dyr period efter förvärmning")
+        self.assertEqual(report["next_change_at"], 10_060.0 + 3600)
+        # Preheating wants heat even in an expensive hour.
+        self.assertEqual(self.step("7.1 kW", level="expensive", kind="preheat", now=20_000.0)["desired"], "7.1 kW")
+
+    def test_cold_house_or_cold_weather_get_full_power(self):
+        report = self.step("7.1 kW", level="expensive", indoor=20.4)
+        self.assertEqual(report["desired"], "7.1 kW")
+        self.assertIn("kallt inne", report["reason"])
+        self.assertIn("kallt inne", self.step("7.1 kW", level="expensive", indoor=None)["reason"])
+        self.assertIn("kallt ute", self.step("7.1 kW", level="expensive", outdoor=-12)["reason"])
+        self.ha.set_select.assert_not_called()
+        self.step("7.1 kW", level="expensive")
+        self.ha.set_select.reset_mock()
+        # The house cooled while limited: full power again straight away.
+        self.step("2.0 kW", level="expensive", indoor=20.4, now=10_060.0)
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW")
+
+    def test_hand_picked_monitoring_and_holds(self):
+        self.assertIn("för hand", self.step("4.60 kW", level="expensive")["note"])
+        self.ha.set_select.assert_not_called()
+        self.step("7.1 kW", level="expensive")
+        self.ha.set_select.reset_mock()
+        # A pause lifts our own limit but does not lower anything.
+        report = self.step("2.0 kW", level="expensive", hold=True, now=10_060.0)
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+        self.assertEqual(report["current"], "7.1 kW")
+        self.ha.set_select.reset_mock()
+        self.controller.save({**self.cfg, "enabled": False})
+        self.assertIn("Övervakning", self.step("7.1 kW", level="expensive")["note"])
+        self.ha.set_select.assert_not_called()
+
+    def test_limit_survives_restart_and_is_lifted_on_errors_and_setting_changes(self):
+        self.step("7.1 kW", level="expensive")
+        restored = Controller(self.ha, self.temp.name)
+        self.assertTrue(restored.aux_limited)
+        self.ha.set_select.reset_mock()
+        self.ha.set_select.side_effect = ControlError("timeout")
+        self.assertIn("kunde inte återställas", restored.lift_aux_limit("test"))
+        self.assertTrue(restored.aux_limited)
+        self.ha.set_select.side_effect = None
+        restored.save({**self.cfg, "aux_limit_enabled": False})
+        self.ha.set_select.assert_called_with(self.ADD, "7.1 kW", timeout=60)
+        self.assertFalse(restored.aux_limited)
+        self.assertIsNone(restored.lift_aux_limit("nothing to do"))
+
+    def test_control_loop_lifts_the_limit_when_a_round_fails(self):
+        controller = Mock()
+        controller.lock = threading.Lock()
+        stop = threading.Event()
+        controller.tick.side_effect = lambda: (stop.set(), (_ for _ in ()).throw(ControlError("rum saknas")))
+        with self.assertLogs("nibe_comfort", "WARNING"):
+            run_control_loop(controller, stop, interval=0)
+        controller.lift_aux_limit.assert_called_once_with("styrningen saknar aktuella värden")
