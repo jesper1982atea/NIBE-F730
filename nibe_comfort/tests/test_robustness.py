@@ -38,47 +38,94 @@ class ManualFireplaceTests(unittest.TestCase):
             self.controller.tick()
         return self.controller.snapshot()
 
-    def test_manual_fire_is_active_at_once_and_ends_on_stop(self):
-        self.assertNotEqual(self.tick(0)["fireplace"]["phase"], "active")
-        plan = self.controller.start_manual_fireplace(3)
-        self.assertAlmostEqual(plan["until"] - plan["start"], 3 * 3600, delta=5)
-        status = self.tick(1)
+    def press(self, minute):
+        with patch("controller.time.time", return_value=self.now + minute * 60):
+            return self.controller.start_manual_fireplace()
+
+    def run_minutes(self, start, stop, local=21, other=21):
+        status = None
+        for minute in range(start, stop + 1, 5):
+            status = self.tick(minute, local, other)
+        return status
+
+    def test_one_press_is_active_at_once_and_counts_as_control(self):
+        self.run_minutes(0, 60)
+        self.assertNotEqual(self.tick(61)["fireplace"]["phase"], "active")
+        plan = self.press(61)
+        self.assertFalse(plan["already_active"])
+        status = self.tick(62)
         self.assertEqual(status["fireplace"]["phase"], "active")
-        self.assertIsNotNone(status["fireplace"]["manual_until"])
+        self.assertTrue(status["fireplace"]["manual"])
         self.assertIn("eldar", status["fireplace"]["message"])
         self.assertEqual(control_state(status, {**self.cfg, "enabled": True}), "Kamin")
-        # Same control term as detected heat, with the usual guard against a cold control average.
-        expected = evaluate(self.cfg, self.ha.states.return_value, self.now + 60, fireplace_active=True,
+        expected = evaluate(self.cfg, self.ha.states.return_value, self.now + 62 * 60, fireplace_active=True,
                             indoor_samples=self.controller.indoor_samples[:-1])
         self.assertEqual(status["contributions"]["fireplace"], expected["contributions"]["fireplace"])
-        self.controller.stop_manual_fireplace()
-        self.assertNotEqual(self.tick(2)["fireplace"]["phase"], "active")
-        self.assertEqual([e["kind"] for e in self.controller.events.recent()][:2],
-                         ["fireplace_manual_stop", "fireplace_manual_start"])
-        with self.assertRaises(ControlError):
-            self.controller.stop_manual_fireplace()
+        # The observation took over the press; nothing is left pending.
+        self.assertIsNone(self.controller.manual_fireplace)
+        self.assertTrue(self.controller.fireplace_state["active"]["manual"])
+        self.assertEqual(self.controller.start_manual_fireplace()["already_active"], True)
+        self.assertEqual([e["kind"] for e in self.controller.events.recent()][0], "fireplace_manual_start")
 
-    def test_manual_fire_is_excluded_from_learning_and_survives_restart(self):
-        plan = self.controller.start_manual_fireplace(2)
-        rows = self.controller.fireplace_observations()
-        self.assertIn({"start": plan["start"], "end": None}, rows)
+    def test_long_warm_day_stays_active_until_room_is_no_warmer(self):
+        self.run_minutes(0, 60)
+        self.press(62)
+        self.run_minutes(65, 90)
+        # Fire out after a couple of hours, but the fireplace room stays warmer all day.
+        status = self.run_minutes(95, 10 * 60, local=22.5)
+        self.assertEqual(status["fireplace"]["phase"], "active")
+        self.assertIn("inte längre är varmare", status["fireplace"]["message"])
+        status = self.run_minutes(10 * 60 + 5, 10 * 60 + 25, local=21)
+        self.assertEqual(status["fireplace"]["phase"], "active")
+        status = self.run_minutes(10 * 60 + 30, 11 * 60)
+        self.assertNotEqual(status["fireplace"]["phase"], "active")
+        episode = self.controller.fireplace_state["episodes"][-1]
+        self.assertTrue(episode["complete"] and episode["manual"] and episode["warmed"])
+        self.assertGreater(episode["end"] - episode["start"], 9 * 3600)
+
+    def test_press_without_extra_heat_ends_after_three_hours(self):
+        self.run_minutes(0, 60)
+        self.press(62)
+        self.assertEqual(self.run_minutes(65, 60 + 175)["fireplace"]["phase"], "active")
+        self.assertNotEqual(self.run_minutes(60 + 180, 60 + 190)["fireplace"]["phase"], "active")
+        episode = self.controller.fireplace_state["episodes"][-1]
+        self.assertFalse(episode["complete"])
+        self.assertFalse(episode["warmed"])
+
+    def test_pending_press_is_excluded_from_learning_and_survives_restart(self):
+        plan = self.press(0)
+        self.assertIn({"start": plan["requested"], "end": None}, self.controller.fireplace_observations())
         restored = Controller(self.ha, self.temp.name)
-        self.assertEqual(restored.manual_fireplace, plan)
+        self.assertEqual(restored.manual_fireplace, plan["requested"])
+        # The finished episode keeps the press out of pump learning as well.
+        self.tick(1)
+        self.assertIn(None, [row["end"] for row in self.controller.fireplace_observations()])
 
-    def test_manual_fire_validates_hours_and_requires_fireplace_setup(self):
-        for hours in (0, 0.2, 9, "x", None, float("nan")):
-            with self.assertRaises(ControlError):
-                self.controller.start_manual_fireplace(hours)
+    def test_press_requires_fireplace_setup_and_is_dropped_when_disabled(self):
         self.controller.save(config())
         with self.assertRaises(ControlError):
-            self.controller.start_manual_fireplace(3)
-
-    def test_expired_or_disabled_manual_fire_is_ignored(self):
-        self.controller.start_manual_fireplace(0.5)
-        self.assertNotEqual(self.tick(31)["fireplace"]["phase"], "active")
-        self.controller.start_manual_fireplace(3)
+            self.controller.start_manual_fireplace()
+        self.controller.save(self.cfg)
+        self.press(0)
         self.controller.save({**self.cfg, "fireplace_enabled": False})
-        self.assertEqual(self.tick(32)["fireplace"]["phase"], "off")
+        self.assertEqual(self.tick(1)["fireplace"]["phase"], "off")
+        self.assertIsNone(self.controller.manual_fireplace)
+
+    def test_press_without_room_values_waits_then_is_dropped(self):
+        self.press(0)
+        entities = [entity("number.offset", 0, self.now, min=-10, max=10, step=1)]
+        for minute in (1, 20):
+            status = self.controller.fireplace_step(entities, self.now + minute * 60, {})
+            self.assertEqual(status["phase"], "active")
+            self.assertIn("Väntar på aktuella rumsvärden", status["message"])
+        status = self.controller.fireplace_step(entities, self.now + 31 * 60, {})
+        self.assertNotEqual(status["phase"], "active")
+        self.assertIsNone(self.controller.manual_fireplace)
+        self.assertEqual(self.controller.events.recent()[0]["kind"], "fireplace_manual_dropped")
+
+    def test_old_timed_file_is_ignored(self):
+        Path(self.temp.name, "fireplace-manual.json").write_text(json.dumps({"start": 1, "until": 2}))
+        self.assertIsNone(Controller(self.ha, self.temp.name).manual_fireplace)
 
 
 class ControlLoopTests(unittest.TestCase):
@@ -173,18 +220,18 @@ class UnexpectedApiErrorTests(unittest.TestCase):
     def test_bug_in_a_put_handler_gives_a_readable_500(self):
         with patch.object(self.controller, "start_manual_fireplace", side_effect=KeyError("bug")), \
                 self.assertLogs("nibe_comfort", "ERROR"):
-            code, body = self.request("/api/fireplace", "PUT", {"action": "start", "hours": 2})
+            code, body = self.request("/api/fireplace", "PUT", {"action": "start"})
         self.assertEqual(code, 500)
         self.assertIn("Oväntat fel", body["error"])
 
     def test_fireplace_endpoint_validates_actions(self):
         self.assertEqual(self.request("/api/fireplace", "PUT", {"action": "x"})[0], 400)
-        self.assertEqual(self.request("/api/fireplace", "PUT", {"action": "start", "hours": 3})[0], 400)
+        self.assertEqual(self.request("/api/fireplace", "PUT", {"action": "stop"})[0], 400)
+        self.assertEqual(self.request("/api/fireplace", "PUT", {"action": "start"})[0], 400)
         self.controller.save(config(fireplace_enabled=True, fireplace_rooms=["sensor.living"]))
-        code, body = self.request("/api/fireplace", "PUT", {"action": "start", "hours": 3})
+        code, body = self.request("/api/fireplace", "PUT", {"action": "start"})
         self.assertEqual(code, 200)
-        self.assertIsNotNone(body["manual"]["until"])
-        self.assertEqual(self.request("/api/fireplace", "PUT", {"action": "stop"})[0], 200)
+        self.assertIsNotNone(body["manual"]["requested"])
 
 
 if __name__ == "__main__":

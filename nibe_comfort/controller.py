@@ -111,10 +111,10 @@ VACATION_MODE = "vacation"
 VACATION_MODE_SUFFIX = "_smart_home_mode"
 VACATION_RETRY_SECONDS = 300
 VACATION_MAX_SECONDS = 366 * 86400
-MANUAL_FIREPLACE_MIN_HOURS = 0.5
+# A "Jag eldar nu" press waits this long for fresh room values before it is dropped.
+MANUAL_FIREPLACE_PENDING_SECONDS = 1800
 # The pump needs time to finish a hot water charge; never flip the mode more often than this.
 HOT_WATER_MIN_SECONDS = 3600
-MANUAL_FIREPLACE_MAX_HOURS = 8
 # Automatic base correction: one curve step per degree of lasting deviation and day. Small
 # deviations are ignored so sensor noise does not walk the correction.
 AUTO_BASE_RATE = 1 / 86400
@@ -1094,12 +1094,14 @@ class Controller:
         except (ValueError, TypeError) as exc:
             raise ControlError("Kunde inte läsa sparade kaminobservationer. Kontrollera fireplace-state.json.") from exc
         self.manual_fireplace_path = Path(data_dir) / "fireplace-manual.json"
+        # A press not yet taken over by the fireplace observation (it needs fresh room values).
         self.manual_fireplace = None
         if self.manual_fireplace_path.exists():
             try:
                 saved = json.loads(self.manual_fireplace_path.read_text())
-                self.manual_fireplace = {"start": number(saved["start"], "Eldning start"), "until": number(saved["until"], "Eldning slut")}
-            except (ValueError, TypeError, KeyError, ControlError):
+                if saved.get("requested") is not None:
+                    self.manual_fireplace = number(saved["requested"], "Eldning start")
+            except (ValueError, TypeError, KeyError, AttributeError, ControlError):
                 LOG.warning("Sparad manuell eldning kunde inte läsas; ignoreras.")
         self.thermostat_path = Path(data_dir) / "thermostat-state.json"
         self.thermostats = json.loads(self.thermostat_path.read_text()) if self.thermostat_path.exists() else {}
@@ -1148,61 +1150,48 @@ class Controller:
 
     def fireplace_observations(self):
         rows = fireplace_intervals(self.fireplace_state)
-        manual = self.manual_fireplace
-        if manual:
+        if self.manual_fireplace is not None:
             # Heat the user reported is excluded from pump learning just like detected heat.
-            rows.append({"start": manual["start"], "end": manual["until"] if manual["until"] <= time.time() else None})
+            rows.append({"start": self.manual_fireplace, "end": None})
         return rows
 
-    def start_manual_fireplace(self, hours):
-        """The user says a fire is burning: act as if extra heat were detected until the chosen time."""
+    def start_manual_fireplace(self):
+        """The user says a fire is burning. The observation decides when the heat has faded."""
         with self.lock:
             if not self.config["fireplace_enabled"] or not self.config["fireplace_rooms"]:
                 raise ControlError("Slå på braskaminen och välj kaminens rum under Värme från kaminen först.")
-            hours = number(hours, "Antal timmar")
-            if not MANUAL_FIREPLACE_MIN_HOURS <= hours <= MANUAL_FIREPLACE_MAX_HOURS:
-                raise ControlError(f"Ange {MANUAL_FIREPLACE_MIN_HOURS:g}–{MANUAL_FIREPLACE_MAX_HOURS:g} timmar.")
+            if self.fireplace_state["active"]:
+                return {"requested": None, "already_active": True}
             now = time.time()
-            current = self.manual_fireplace
-            start = current["start"] if current and current["until"] > now else now
-            plan = {"start": start, "until": now + hours * 3600}
-            atomic_json(self.manual_fireplace_path, plan)
-            self.manual_fireplace = plan
-            self.events.add("fireplace_manual_start", f"Du angav att du eldar. Kaminläget gäller i {hours:g} timmar.", until=plan["until"])
-            return copy.deepcopy(plan)
-
-    def stop_manual_fireplace(self):
-        with self.lock:
-            now = time.time()
-            current = self.manual_fireplace
-            if not current or current["until"] <= now:
-                raise ControlError("Ingen pågående eldning att avsluta.")
-            plan = {**current, "until": now}
-            atomic_json(self.manual_fireplace_path, plan)
-            self.manual_fireplace = plan
-            self.events.add("fireplace_manual_stop", "Eldningen avslutad. Kurvan räknas om utan kaminbidrag.")
-            return copy.deepcopy(plan)
+            if self.manual_fireplace is None:
+                atomic_json(self.manual_fireplace_path, {"requested": now})
+                self.manual_fireplace = now
+                self.events.add("fireplace_manual_start", "Du angav att du eldar. Kaminläget gäller tills kaminrummet "
+                                "inte längre är varmare än övriga rum.")
+            return {"requested": self.manual_fireplace, "already_active": False}
 
     def fireplace_step(self, entities, now, peers):
         # Longer limits are opt-in: quiet sensors and missed reports cannot be distinguished here.
         limit = min(self.config["fireplace_max_age_minutes"], self.config["max_age_minutes"])
         config = {**self.config, "max_age_minutes": limit}
         readings = current_readings(config, entities, now, peers)["rooms"] if config["fireplace_enabled"] else []
-        state, status, events = update_fireplace(self.fireplace_state, self.config, readings, now)
+        manual = self.manual_fireplace if config["fireplace_enabled"] else None
+        state, status, events = update_fireplace(self.fireplace_state, self.config, readings, now, manual_at=manual)
         if state != self.fireplace_state:
             atomic_json(self.fireplace_path, state)
             for event in events:
                 details = {k: v for k, v in event.items() if k not in ("kind", "message")}
                 self.events.add(event["kind"], event["message"], **details)
             self.fireplace_state = state
-        manual = self.manual_fireplace
-        status["manual_until"] = None
-        if manual and manual["until"] > now and self.config["fireplace_enabled"]:
-            status["manual_until"] = manual["until"]
-            if status["phase"] != "active":
-                ends = datetime.fromtimestamp(manual["until"]).strftime("%H:%M")
-                status = {**status, "phase": "active", "manual_until": manual["until"],
-                          "message": f"Du har angett att du eldar. Kaminläget gäller till {ends}."}
+        if self.manual_fireplace is not None and (state["active"] or manual is None
+                                                  or now - manual > MANUAL_FIREPLACE_PENDING_SECONDS):
+            if manual is not None and not state["active"]:
+                self.events.add("fireplace_manual_dropped", "Jag eldar nu släpptes: aktuella rumsvärden saknades i en halvtimme.")
+            atomic_json(self.manual_fireplace_path, {"requested": None})
+            self.manual_fireplace = None
+        elif self.manual_fireplace is not None and status["phase"] != "active":
+            status = {**status, "phase": "active", "manual": True,
+                      "message": "Du har angett att du eldar. Väntar på aktuella rumsvärden."}
         return status
 
     def save(self, config):

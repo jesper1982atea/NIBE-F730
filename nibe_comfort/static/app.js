@@ -389,20 +389,20 @@ function featureTone(card, pill, tone, text) {
 
 let fireplaceManualBusy = false;
 
-async function manualFireplace(body) {
+async function manualFireplace() {
   if (fireplaceManualBusy) return;
   fireplaceManualBusy = true;
-  $("fireplace-manual").querySelectorAll("button").forEach((button) => { button.disabled = true; });
+  $("fireplace-manual-start").disabled = true;
   try {
-    await api("fireplace", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    $("fireplace-manual-status").textContent = body.action === "start" ? "Kaminläget är startat." : "Eldningen är avslutad.";
+    await api("fireplace", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "start" }) });
   } catch (error) {
     $("fireplace-manual-status").textContent = `Det gick inte: ${error.message}`;
+    return;
   } finally {
     fireplaceManualBusy = false;
-    $("fireplace-manual").querySelectorAll("button").forEach((button) => { button.disabled = false; });
-    await refreshStatus();
+    $("fireplace-manual-start").disabled = false;
   }
+  await refreshStatus();
 }
 
 function renderHotWaterControl() {
@@ -429,12 +429,12 @@ function renderFireplace() {
   $("fireplace-learn-bar").style.width = `${Math.round(Math.min(1, completed / 3) * 100)}%`;
   if (state?.active_since != null) $("fireplace-status").textContent += ` Observerat förlopp från ${new Date(state.active_since * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.`;
   const enabled = state ? state.enabled : settings?.fireplace_enabled;
-  const manual = state?.manual_until != null;
-  $("fireplace-manual-stop").hidden = !manual;
-  $("fireplace-manual").hidden = !enabled;
-  if (!fireplaceManualBusy) $("fireplace-manual-status").textContent = manual
-    ? `Kaminläge till ${new Date(state.manual_until * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}. Välj en ny tid för att förlänga.`
-    : "Starta kaminläget direkt i stället för att vänta på att extravärmen upptäcks.";
+  const active = state?.phase === "active";
+  // One press is enough; the observation decides when the extra heat has faded.
+  $("fireplace-manual").hidden = !enabled || active;
+  $("fireplace-manual-status").hidden = !enabled || active;
+  if (!fireplaceManualBusy) $("fireplace-manual-status").textContent =
+    "Starta kaminläget direkt i stället för att vänta på att extravärmen upptäcks. Det avslutas av sig självt när kaminrummet inte längre är varmare än övriga rum.";
   const [tone, text] = !enabled ? ["muted", "Av"]
     : state?.phase === "active" ? (state.contribution < 0 ? ["red", "Sänker värmen"] : ["amber", "Extravärme"])
     : state?.phase === "candidate" ? ["amber", "Misstänkt värme"]
@@ -2529,9 +2529,7 @@ async function init() {
   $("fireplace_max_age_minutes").addEventListener("input", updateSaveState);
   $("refresh-alarms").addEventListener("click", () => { void refreshAlarms(); void refreshCloudAlarms(); });
   $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
-  $("fireplace-manual").querySelectorAll("[data-hours]").forEach((button) => button.addEventListener("click",
-    () => void manualFireplace({ action: "start", hours: Number(button.dataset.hours) })));
-  $("fireplace-manual-stop").addEventListener("click", () => void manualFireplace({ action: "stop" }));
+  $("fireplace-manual-start").addEventListener("click", () => void manualFireplace());
   $("discover-cloud-devices").addEventListener("click", () => void discoverCloudDevices());
   $("save-cloud-device").addEventListener("click", () => void saveCloudDevice());
   $("cloud-device-choice").addEventListener("change", () => {

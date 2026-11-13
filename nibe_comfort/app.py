@@ -251,12 +251,9 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
             if path == "/api/fireplace":
                 try:
                     body = read_json(self)
-                    if body.get("action") == "start":
-                        plan = controller.start_manual_fireplace(body.get("hours"))
-                    elif body.get("action") == "stop":
-                        plan = controller.stop_manual_fireplace()
-                    else:
-                        raise ControlError("action måste vara start eller stop.")
+                    if body.get("action") != "start":
+                        raise ControlError("action måste vara start.")
+                    plan = controller.start_manual_fireplace()
                     self.respond(200, {"manual": plan})
                 except (ValueError, AttributeError, ControlError) as exc:
                     self.respond(400, {"error": str(exc) or "Ogiltig begäran."})
