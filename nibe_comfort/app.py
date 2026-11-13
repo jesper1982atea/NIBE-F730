@@ -191,7 +191,7 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                 elif path == "/api/entities":
                     entities = []
                     for entity in controller.ha.states():
-                        if entity["entity_id"].startswith(("sensor.", "number.", "weather.", "climate.")):
+                        if entity["entity_id"].startswith(("sensor.", "number.", "weather.", "climate.", "select.")):
                             attrs = entity.get("attributes", {})
                             current = None
                             temperature_error = None
@@ -213,6 +213,8 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                                 "setpoint": attrs.get("temperature") if entity["entity_id"].startswith("climate.") else None,
                                 "temperature_unit": attrs.get("temperature_unit"),
                                 "target_temp_step": attrs.get("target_temp_step"),
+                                "options": [str(o) for o in attrs.get("options") or []][:50]
+                                if entity["entity_id"].startswith("select.") and isinstance(attrs.get("options"), list) else None,
                             })
                     self.respond(200, entities)
                 elif path == "/api/areas":

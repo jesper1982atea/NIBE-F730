@@ -307,6 +307,21 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(entities[0]["state_class"], "total_increasing")
         self.assertIn("Producerad", entities[1]["energy_meter_error"])
 
+    def test_select_entities_carry_their_modes_for_hot_water(self):
+        mode = {"entity_id": "select.f370_comfort_mode", "state": "Economy",
+                "attributes": {"friendly_name": "Komfortläge", "options": ["Economy", "Normal", "Lux"]}}
+        broken = {"entity_id": "select.broken", "state": "x", "attributes": {"options": "Economy"}}
+        light = {"entity_id": "light.kitchen", "state": "on", "attributes": {"options": ["a"]}}
+        self.ha.states.side_effect = lambda: [mode, broken, light, meter_rows()[0]]
+        status, entities = self.request("/api/entities")
+        self.assertEqual(status, 200)
+        by_id = {e["entity_id"]: e for e in entities}
+        self.assertEqual(by_id["select.f370_comfort_mode"]["options"], ["Economy", "Normal", "Lux"])
+        self.assertIsNone(by_id["select.broken"]["options"])
+        self.assertNotIn("light.kitchen", by_id)
+        self.assertIsNone(by_id[meter_rows()[0]["entity_id"]]["options"])
+        self.assertIsNotNone(by_id["select.f370_comfort_mode"]["energy_meter_error"])
+
     def test_version_comes_from_build(self):
         with patch.dict(os.environ, {"NIBE_COMFORT_VERSION": "9.9.9"}):
             status, data = self.request("/api/version")

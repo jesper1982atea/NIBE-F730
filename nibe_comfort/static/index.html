@@ -577,11 +577,11 @@
         <h2>Varmvatten på billig el</h2>
         <label class="toggle"><input type="checkbox" id="hot_water_price_enabled"> Ladda varmvattnet när elen är billig</label>
         <p class="hint">Av från början. Pumpens varmvattenläge sätts till läget vid billig el när elpriset är billigt eller före dyra timmar, annars till det vanliga läget. Högst en ändring i timmen. Ett annat läge som du valt för hand lämnas orört. Kräver att automatiken är på.</p>
-        <label for="hot_water_mode_entity">Pumpens varmvattenläge · select</label>
-        <input id="hot_water_mode_entity" type="text" placeholder="select.f370_cu_3x400v_comfort_mode" pattern="(select.[a-z0-9_]+)?">
+        <label for="hot_water_mode_entity">Pumpens inställning för varmvattenläge</label>
+        <select id="hot_water_mode_entity"></select>
         <div class="field-pair">
-          <div><label for="hot_water_cheap_option">Läge vid billig el</label><input id="hot_water_cheap_option" type="text" maxlength="64"></div>
-          <div><label for="hot_water_normal_option">Vanligt läge</label><input id="hot_water_normal_option" type="text" maxlength="64"></div>
+          <div><label for="hot_water_cheap_option">Läge vid billig el</label><select id="hot_water_cheap_option"></select></div>
+          <div><label for="hot_water_normal_option">Vanligt läge</label><select id="hot_water_normal_option"></select></div>
         </div>
         <p id="hot-water-settings-status" class="hint" role="status"></p>
       </section>

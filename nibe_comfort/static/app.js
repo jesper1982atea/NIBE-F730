@@ -121,6 +121,34 @@ function selectOptions(id, predicate, configured = settings[id]) {
   select.value = configured;
 }
 
+const HOT_WATER_HINT = /comfort_mode|hot_?water|varmvatten|dhw/i;
+
+function renderHotWaterSelects(entityId, cheap, normal) {
+  const select = $("hot_water_mode_entity");
+  select.replaceChildren(new Option("Inte vald", ""));
+  // Likely hot water mode selects first; every select stays available for other pumps.
+  const selects = entities.filter((e) => e.entity_id.startsWith("select."));
+  const likely = (e) => HOT_WATER_HINT.test(`${e.entity_id} ${e.name}`) && !/schedul|schema/i.test(e.entity_id);
+  for (const entity of [...selects.filter(likely), ...selects.filter((e) => !likely(e))]) {
+    select.add(new Option(`${entity.name} · ${entity.entity_id}`, entity.entity_id));
+  }
+  if (entityId && !selects.some((e) => e.entity_id === entityId)) select.add(new Option(`${entityId} (saknas / ej tillgänglig)`, entityId));
+  select.value = entityId || "";
+  renderHotWaterModes(cheap, normal);
+}
+
+function renderHotWaterModes(cheap, normal) {
+  const options = entities.find((e) => e.entity_id === $("hot_water_mode_entity").value)?.options || [];
+  for (const [id, configured] of [["hot_water_cheap_option", cheap], ["hot_water_normal_option", normal]]) {
+    const select = $(id);
+    select.replaceChildren(...options.map((option) => new Option(option, option)));
+    if (configured && !options.includes(configured)) {
+      select.add(new Option(options.length ? `${configured} (finns inte i pumpen)` : configured, configured));
+    }
+    select.value = configured || options[0] || "";
+  }
+}
+
 let notifyServices = null;
 
 function renderNotifyOptions(configured) {
@@ -275,6 +303,7 @@ function renderSettings(formSettings = settings, preserveView = false) {
     selectOptions(id, (entity) => entity.entity_id.startsWith("sensor.") && ["kWh", "Wh", "MWh", "W", "kW"].includes(entity.unit), formSettings[id]);
   }
   renderNotifyOptions(formSettings.notify_service);
+  renderHotWaterSelects(formSettings.hot_water_mode_entity, formSettings.hot_water_cheap_option, formSettings.hot_water_normal_option);
   $("price_provider").value = formSettings.price_provider;
   $("price_mode").value = formSettings.price_mode;
   renderPriceMode();
@@ -2571,6 +2600,14 @@ async function init() {
   $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
   $("fireplace-manual-start").addEventListener("click", () => void manualFireplace());
   $("notify-test").addEventListener("click", () => void testNotify());
+  $("hot_water_mode_entity").addEventListener("change", () => {
+    // A newly chosen select keeps the current modes if it has them, otherwise NIBE's usual pair.
+    const options = entities.find((e) => e.entity_id === $("hot_water_mode_entity").value)?.options || [];
+    const pick = (current, preferred, fallback) => options.includes(current) ? current
+      : options.includes(preferred) ? preferred : fallback;
+    renderHotWaterModes(pick($("hot_water_cheap_option").value, "Normal", options[0]),
+      pick($("hot_water_normal_option").value, "Economy", options[1] ?? options[0]));
+  });
   $("notify_service").addEventListener("change", () => { $("notify-test").disabled = !$("notify_service").value; $("notify-status").textContent = ""; });
   $("discover-cloud-devices").addEventListener("click", () => void discoverCloudDevices());
   $("save-cloud-device").addEventListener("click", () => void saveCloudDevice());
