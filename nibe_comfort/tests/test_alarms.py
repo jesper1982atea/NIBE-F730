@@ -152,7 +152,8 @@ class CodeOnlyAlarmTests(unittest.TestCase):
         self.assertIsNone(alarm["active"])
         self.assertIsNone(alarm["code"])
         self.assertEqual(alarm["latest_code"], 184)
-        self.assertIn("184", alarm["error"])
+        self.assertIn("184 Filterlarm", alarm["error"])
+        self.assertEqual(alarm["info"]["name"], "Filterlarm")
         self.states[-2]["state"] = "229"
         self.assertIsNone(self.alarm()["active"])
 
@@ -184,7 +185,69 @@ class CodeOnlyAlarmTests(unittest.TestCase):
 
     def test_overview_shows_latest_code_without_active_state(self):
         item = next(i for i in overview(self.states, self.registry, self.cfg, self.now)["pump"] if i["key"] == "alarm")
-        self.assertEqual((item["value"], item["active"], item["error"]), ("Senaste larmkod 184 · aktiv status saknas", None, None))
+        self.assertRegex(item["value"], r"^Senaste larmkod 184 Filterlarm \(åtminstone sedan \d+ \w+\) · aktiv status saknas$")
+        self.assertEqual((item["active"], item["error"]), (None, None))
+        # The UI shows the bare code as the tile value and the rest as detail text.
+        self.assertEqual((item["code"], type(item["since"])), (184, float))
+        self.assertEqual(item["code_name"], "Filterlarm")
         self.states[-2]["state"] = "0"
         item = next(i for i in overview(self.states, self.registry, self.cfg, self.now)["pump"] if i["key"] == "alarm")
         self.assertEqual((item["value"], item["active"]), ("Senaste larmkod 0 · aktiv status saknas", None))
+
+
+class AlarmTextTests(unittest.TestCase):
+    def test_known_codes_have_plain_text_and_unknown_ones_stay_numbers(self):
+        from alarm_codes import ALARMS, alarm_info, alarm_label
+        self.assertEqual(alarm_label(184), "184 Filterlarm")
+        self.assertIn("rengör", alarm_info(184)["action"].lower())
+        self.assertEqual(alarm_label(99999), "99999")
+        self.assertIsNone(alarm_info(None))
+        self.assertIsNone(alarm_info("184"))
+        for code, (name, meaning, action, severity) in ALARMS.items():
+            self.assertTrue(name and meaning.endswith(".") and action.endswith("."), code)
+            self.assertIn(severity, ("låg", "medel", "hög"), code)
+
+    def test_explanation_names_the_latest_code_and_what_to_do(self):
+        from insights import alarm_explanation
+        text = alarm_explanation(184, None)
+        self.assertIn("Senaste larmkod 184 är Filterlarm", text)
+        self.assertIn("Föreslagen åtgärd: Rengör frånluftsfiltret", text)
+        self.assertIn("inte verifierad för din modell", text)
+        self.assertIn("display", text)
+        self.assertIn("Larm 63 Lågt luftflöde:", alarm_explanation(63, True))
+        self.assertIn("finns inte i Comforts lista", alarm_explanation(4711, None))
+        self.assertIn("Inget aktuellt larm 229", alarm_explanation(None, None))
+
+
+class AcknowledgedAlarmTests(CodeOnlyAlarmTests):
+    """A generic notification counter cannot prove the status of the latest alarm."""
+    NOTES = "sensor.pump_notifications"
+
+    def with_notes(self, value):
+        self.registry = [*self.registry, {"entity_id": self.NOTES, "device_id": "pump", "platform": "myuplink"}]
+        self.states = [*self.states, entity(self.NOTES, value, self.now)]
+
+    def test_no_open_notifications_does_not_confirm_acknowledgement(self):
+        self.with_notes("0")
+        alarm = self.alarm()
+        self.assertIsNone(alarm["active"])
+        self.assertIsNotNone(alarm["error"])
+        self.assertEqual(alarm["latest_code"], 184)
+        self.assertEqual(alarm["info"]["name"], "Filterlarm")
+        item = next(i for i in overview(self.states, self.registry, self.cfg, self.now)["pump"] if i["key"] == "alarm")
+        self.assertIsNone(item["active"])
+        self.assertIn("aktiv status saknas", item["value"])
+
+    def test_open_or_unreadable_notifications_keep_the_status_unknown(self):
+        for value in ("2", "unknown", "1.5"):
+            with self.subTest(value=value):
+                self.setUp()
+                self.with_notes(value)
+                alarm = self.alarm()
+                self.assertIsNone(alarm["active"])
+                self.assertIn("184 Filterlarm", alarm["error"])
+        # A zero notification counter does not establish the status of code 229.
+        self.setUp()
+        self.with_notes("0")
+        self.states[-3]["state"] = "229"
+        self.assertEqual((self.alarm()["active"], self.alarm()["code"]), (None, None))

@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import math
 import os
 import re
@@ -14,6 +15,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from alarm_codes import alarm_info, alarm_label
 from fireplace import empty_state, intervals as fireplace_intervals, update as update_fireplace, validate_state as validate_fireplace_state
 
 
@@ -49,7 +51,34 @@ DEFAULTS = {
     "max_age_minutes": 180.0,
     "preheat_enabled": False,
     "preheat_degrees": 0.5,
+    "skip_silent_rooms": False,
+    "price_mode": "absolute",
+    "price_low_percent": 25.0,
+    "price_high_percent": 75.0,
+    "auto_base_enabled": False,
+    "auto_base_limit": 2.0,
+    "publish_sensors": False,
+    "pause_notify_minutes": 60.0,
+    "hot_water_price_enabled": False,
+    "hot_water_mode_entity": "",
+    "hot_water_cheap_option": "Normal",
+    "hot_water_normal_option": "Economy",
+    "aux_limit_enabled": False,
+    "aux_limit_entity": "",
+    "aux_limit_option": "",
+    "aux_normal_option": "",
+    "aux_limit_max_drop": 0.5,
+    "aux_limit_min_outdoor": -10.0,
+    "notify_service": "",
+    "grid_import_entity": "",
+    "grid_export_entity": "",
+    "solar_entity": "",
+    "battery_discharge_entity": "",
+    "battery_charge_entity": "",
 }
+SOURCE_ENTITIES = ("grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity")
+AUX_LIMIT_KEYS = ("aux_limit_enabled", "aux_limit_entity", "aux_limit_option", "aux_normal_option",
+                  "aux_limit_max_drop", "aux_limit_min_outdoor")
 LIMITS = {
     "target_temperature": (10, 30),
     "base_offset": (-10, 10),
@@ -68,6 +97,12 @@ LIMITS = {
     "max_age_minutes": (5, 1440),
     "fireplace_max_age_minutes": (5, 1440),
     "preheat_degrees": (0.1, 1.5),
+    "price_low_percent": (0, 100),
+    "price_high_percent": (0, 100),
+    "auto_base_limit": (0.5, 5),
+    "pause_notify_minutes": (0, 1440),
+    "aux_limit_max_drop": (0.1, 2),
+    "aux_limit_min_outdoor": (-30, 15),
 }
 
 
@@ -87,6 +122,28 @@ VACATION_MODE = "vacation"
 VACATION_MODE_SUFFIX = "_smart_home_mode"
 VACATION_RETRY_SECONDS = 300
 VACATION_MAX_SECONDS = 366 * 86400
+# A "Jag eldar nu" press waits this long for fresh room values before it is dropped.
+MANUAL_FIREPLACE_PENDING_SECONDS = 1800
+# The pump needs time to finish a hot water charge; never flip the mode more often than this.
+HOT_WATER_MIN_SECONDS = 3600
+# The electric heater limit uses the same pace; lifting the limit is never delayed.
+AUX_LIMIT_MIN_SECONDS = 3600
+# A cloud service may finish after a client timeout. Keep the recovery record and
+# require a later observation, rather than treating a service response as readback.
+AUX_RESTORE_CONFIRM_SECONDS = 120
+AUX_RESTORE_RETRY_SECONDS = 300
+# Automatic base correction: one curve step per degree of lasting deviation and day. Small
+# deviations are ignored so sensor noise does not walk the correction.
+AUTO_BASE_RATE = 1 / 86400
+AUTO_BASE_NOISE = 0.1
+AUTO_BASE_MAX_GAP = 600
+AUTO_BASE_SAVE_SECONDS = 600
+PAUSE_NOTIFICATION_ID = "nibe_comfort_paus"
+SENSOR_PREFIX = "sensor.nibe_comfort_"
+MONTHS = ("jan", "feb", "mars", "apr", "maj", "juni", "juli", "aug", "sep", "okt", "nov", "dec")
+
+
+LOG = logging.getLogger("nibe_comfort")
 
 
 class ControlError(Exception):
@@ -111,7 +168,11 @@ def validate(config):
     result = copy.deepcopy(config)
     if result["price_provider"] not in ("tibber", "nordpool"):
         raise ControlError("Välj Tibber eller Nord Pool som elpriskälla.")
-    for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled"):
+    if result["price_mode"] not in ("absolute", "relative"):
+        raise ControlError("Prisnivån måste följa fasta gränser eller dygnets egna priser.")
+    for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled",
+                "auto_base_enabled", "publish_sensors", "skip_silent_rooms", "hot_water_price_enabled",
+                "aux_limit_enabled"):
         if type(result[key]) is not bool:
             raise ControlError(f"{key} måste vara boolesk.")
     for key, (low, high) in LIMITS.items():
@@ -155,20 +216,60 @@ def validate(config):
         ("price_entity", ("sensor.",)),
         ("energy_entity", ("sensor.",)),
         ("forecast_entity", ("weather.",)),
+        ("notify_service", ("notify.",)),
+        ("hot_water_mode_entity", ("select.",)),
+        ("aux_limit_entity", ("select.",)),
+        *((key, ("sensor.",)) for key in SOURCE_ENTITIES),
     ):
         value = result[key]
         if not isinstance(value, str) or (value and not value.startswith(prefixes)):
             raise ControlError(f"{key}: fel entitetstyp.")
+    for key in ("hot_water_cheap_option", "hot_water_normal_option"):
+        if not isinstance(result[key], str) or not result[key].strip() or len(result[key]) > 64:
+            raise ControlError(f"{key}: ange pumpens namn på läget.")
+        result[key] = result[key].strip()
+    if result["hot_water_price_enabled"]:
+        if not result["hot_water_mode_entity"]:
+            raise ControlError("Välj pumpens varmvattenläge (select) för varmvatten på billig el.")
+        if result["hot_water_cheap_option"] == result["hot_water_normal_option"]:
+            raise ControlError("Läget vid billig el och vanligt läge måste vara olika.")
+    for key in ("aux_limit_option", "aux_normal_option"):
+        if not isinstance(result[key], str) or len(result[key]) > 64:
+            raise ControlError(f"{key}: ange pumpens namn på läget.")
+        result[key] = result[key].strip()
+    if result["aux_limit_enabled"]:
+        if not result["aux_limit_entity"]:
+            raise ControlError("Välj pumpens inställning för max eltillsats (select) för att begränsa elpatronen.")
+        if not result["aux_limit_option"] or not result["aux_normal_option"]:
+            raise ControlError("Välj både begränsad och vanlig max eltillsats.")
+        if result["aux_limit_option"] == result["aux_normal_option"]:
+            raise ControlError("Begränsad och vanlig max eltillsats måste vara olika.")
+        values = [re.fullmatch(r"\s*(\d+(?:[.,]\d+)?)\s*(?:kW)?\s*", result[key], re.IGNORECASE)
+                  for key in ("aux_limit_option", "aux_normal_option")]
+        if (not all(values) or not 0 < float(values[0].group(1).replace(",", "."))
+                < float(values[1].group(1).replace(",", "."))):
+            raise ControlError("Välj två numeriska kW-lägen där begränsningen är större än 0 och lägre än det vanliga läget.")
     if not result["min_offset"] <= result["base_offset"] <= result["max_offset"]:
         raise ControlError("Basförskjutningen måste ligga inom säkerhetsgränserna.")
     if result["price_low"] >= result["price_high"]:
         raise ControlError("Lågprisgränsen måste vara lägre än högprisgränsen.")
+    if result["price_low_percent"] >= result["price_high_percent"]:
+        raise ControlError("Andelen billiga timmar måste vara lägre än gränsen för dyra.")
     if result["weather_gain"] and not result["outdoor_entity"]:
         raise ControlError("Välj utomhusgivare för väderpåverkan.")
     if (result["cheap_boost"] or result["expensive_reduction"]) and not result["price_entity"]:
         raise ControlError("Välj elprisgivare för elprisstyrning.")
+    sources = [result[key] for key in SOURCE_ENTITIES if result[key]]
+    if sources and not result["grid_import_entity"]:
+        raise ControlError("Välj givaren för köpt el från elnätet; utan den kan husets förbrukning inte räknas.")
+    if len(set(sources)) != len(sources):
+        raise ControlError("Samma givare kan inte användas för flera av husets elflöden.")
     if result["preheat_enabled"] and not result["price_entity"]:
         raise ControlError("Välj elprisgivare för förvärmning.")
+    if (result["hot_water_price_enabled"] or result["aux_limit_enabled"]) and not result["price_entity"]:
+        raise ControlError("Välj elprisgivare för prisstyrning av varmvatten eller elpatron.")
+    if result["aux_limit_enabled"] and not result["outdoor_entity"]:
+        raise ControlError("Välj utomhusgivare för elpatronens köldgräns.")
     if result["enabled"] and (not rooms or not result["offset_entity"]):
         raise ControlError("Välj rumsgivare och kurvförskjutning innan aktivering.")
     return result
@@ -260,8 +361,26 @@ class HomeAssistant:
     def set_thermostat(self, entity_id, value):
         self.request("/services/climate/set_temperature", {"entity_id": entity_id, "temperature": value}, timeout=SERVICE_TIMEOUT_SECONDS)
 
-    def set_select(self, entity_id, option):
-        self.request("/services/select/select_option", {"entity_id": entity_id, "option": option}, timeout=SERVICE_TIMEOUT_SECONDS)
+    def set_select(self, entity_id, option, timeout=SERVICE_TIMEOUT_SECONDS):
+        self.request("/services/select/select_option", {"entity_id": entity_id, "option": option}, timeout=timeout)
+
+    def notify_services(self):
+        """Notify services a person can pick, e.g. the mobile app on a phone, with a readable name."""
+        domains = self.request("/services")
+        if not isinstance(domains, list):
+            raise ControlError("Home Assistant returnerade ett ogiltigt tjänstesvar.")
+        names = next((d.get("services") for d in domains if isinstance(d, dict) and d.get("domain") == "notify"), None) or {}
+        if not isinstance(names, dict):
+            raise ControlError("Home Assistant returnerade ett ogiltigt tjänstesvar.")
+        services = []
+        # send_message needs a notify entity, and persistent_notification is always used anyway.
+        for name in names:
+            if name in ("send_message", "persistent_notification") or not re.fullmatch(r"[a-z0-9_]+", name):
+                continue
+            label = name.removeprefix("mobile_app_").replace("_", " ").strip().capitalize() or name
+            services.append({"service": f"notify.{name}",
+                             "name": f"Mobilappen · {label}" if name.startswith("mobile_app_") else label})
+        return sorted(services, key=lambda s: (not s["service"].startswith("notify.mobile_app_"), s["name"]))
 
     def integration_registry(self):
         template = (
@@ -463,6 +582,19 @@ def alarm_sources(ids):
             sorted(key for key in ids if key.startswith("sensor.") and entity_base(key).endswith("_alarms")))
 
 
+def short_date(stamp):
+    moment = datetime.fromtimestamp(stamp)
+    return f"{moment.day} {MONTHS[moment.month - 1]}"
+
+
+def changed_at(entity):
+    """When the value last changed as a timestamp. Home Assistant resets this at restart, so it is a lower bound."""
+    try:
+        return datetime.fromisoformat(entity.get("last_changed") or entity.get("last_updated")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
 def alarm_code(entity):
     code = number(entity["state"], "Larmkod")
     if code != int(code) or not 0 <= code <= 99999:
@@ -474,7 +606,7 @@ def pump_alarm(entities, config, peers, now):
     """Only read alarm entities associated with the configured pump."""
     states = {e["entity_id"]: e for e in entities}
     ids = set(peers.get(config["offset_entity"], ()))
-    result = {"active": None, "code": None, "latest_code": None, "error": None, "reported_at": None}
+    result = {"active": None, "code": None, "latest_code": None, "info": None, "since": None, "error": None, "reported_at": None}
     alarms, codes = alarm_sources(ids)
     try:
         if len(alarms) == 1:
@@ -486,6 +618,7 @@ def pump_alarm(entities, config, peers, now):
             if len(codes) == 1:
                 code = alarm_code(fresh_entity(states, codes[0], config["max_age_minutes"], now, ids))
                 result["code"] = code if result["active"] else None
+                result["info"] = alarm_info(result["code"])
             elif result["active"]:
                 raise ControlError("Aktivt larm, men ingen entydig kodgivare hittades.")
         elif not alarms and len(codes) == 1:
@@ -493,9 +626,12 @@ def pump_alarm(entities, config, peers, now):
             # has cleared, so the number alone cannot prove an active alarm.
             entity = fresh_entity(states, codes[0], config["max_age_minutes"], now, ids)
             code = alarm_code(entity)
-            result.update(latest_code=code or None, reported_at=entity.get("last_reported") or entity.get("last_updated"))
+            since = changed_at(entity) if code else None
+            result.update(latest_code=code or None, since=since, info=alarm_info(code) if code else None,
+                          reported_at=entity.get("last_reported") or entity.get("last_updated"))
             raise ControlError("Pumpen har ingen larmstatus i myUplink, bara senaste larmkod"
-                               + (f" ({code})" if code else "") + ". Se pumpens display för om larmet är aktivt.")
+                               + (f" ({alarm_label(code)}{f', oförändrad åtminstone sedan {short_date(since)}' if since else ''})" if code else "")
+                               + ". Se pumpens display för om larmet är aktivt.")
         else:
             raise ControlError("Ingen entydig larmgivare hittades på vald pump.")
     except ControlError as exc:
@@ -531,12 +667,68 @@ def next_step(config, current, desired, minimum, step):
     return round(minimum + max(first, min(last, nearest)) * step, 6)
 
 
-def price_contribution(config, price, error):
+def series_rank(points, stamp, price):
+    """Place of a price among the same day's prices: 0 = cheapest, 1 = most expensive."""
+    day = datetime.fromtimestamp(stamp).date()
+    values = [value for start, value in points if datetime.fromtimestamp(start).date() == day]
+    if len(values) < 2:
+        return None
+    return sum(value < price for value in values) / (len(values) - 1)
+
+
+def price_rank(entity, now):
+    """Today's rank of the current price from the price sensor itself (Tibber or Nord Pool attributes)."""
+    attrs = entity.get("attributes", {})
+    price = number(entity["state"], "Elpris")
+    ranking = attrs.get("intraday_price_ranking")
+    if isinstance(ranking, (int, float)) and not isinstance(ranking, bool) and 0 <= ranking <= 1:
+        return float(ranking)
+    raw = attrs.get("raw_today")
+    if raw:
+        if not isinstance(raw, list):
+            return None
+        try:
+            points = sorted((datetime.fromisoformat(str(row["start"])).timestamp(), number(row["value"], "Elpris"))
+                            for row in raw)
+        except (KeyError, TypeError, ValueError, ControlError, OverflowError):
+            return None
+        step = 3600 if len(points) in (23, 24, 25) else 900 if len(points) in (92, 96, 100) else None
+        if (step is None or any(abs(points[i + 1][0] - points[i][0] - step) > 1 for i in range(len(points) - 1))
+                or not points[0][0] <= now < points[-1][0] + step):
+            return None
+        current = next((value for start, value in points if start <= now < start + step), None)
+        if current is None or not math.isclose(current, price, rel_tol=1e-6, abs_tol=1e-6):
+            return None
+        return sum(value < price for _, value in points) / (len(points) - 1)
+    values = attrs.get("today") or []
+    if not isinstance(values, list) or len(values) not in (23, 24, 25, 92, 96, 100):
+        return None
+    try:
+        values = [number(value, "Elpris") for value in values]
+    except ControlError:
+        return None
+    if not any(math.isclose(value, price, rel_tol=1e-6, abs_tol=1e-6) for value in values):
+        return None
+    return sum(value < price for value in values) / (len(values) - 1)
+
+
+def price_level(config, price, rank=None):
+    """'cheap', 'expensive' or None. Relative mode compares with the day's own prices."""
+    if config["price_mode"] == "relative":
+        if rank is None:
+            return None
+        return "cheap" if rank * 100 <= config["price_low_percent"] + 1e-9 else \
+            "expensive" if rank * 100 >= config["price_high_percent"] - 1e-9 else None
+    return "cheap" if price <= config["price_low"] else "expensive" if price >= config["price_high"] else None
+
+
+def price_contribution(config, price, error, rank=None):
     """Offset change from a price level; never worsens an existing comfort deficit/excess."""
     adjustment = 0
-    if price <= config["price_low"]:
+    level = price_level(config, price, rank)
+    if level == "cheap":
         adjustment = config["cheap_boost"]
-    elif price >= config["price_high"]:
+    elif level == "expensive":
         adjustment = -config["expensive_reduction"]
     if error > config["deadband"]:
         adjustment = max(0, adjustment)
@@ -580,14 +772,51 @@ def thermostat_state(config, states, key, now, peers):
     return current, setpoint, round(target, 6)
 
 
-def indoor_temperature(config, get):
+def read_rooms(keys, get):
+    values, skipped = {}, []
+    for key in keys:
+        try:
+            value = temperature(get(key))
+            if not 5 <= value <= 40:
+                raise ControlError(f"{key}: orimlig inomhustemperatur (utanför 5–40 °C).")
+            values[key] = value
+        except ControlError as exc:
+            skipped.append({"entity_id": key, "error": str(exc)})
+    return values, skipped
+
+
+def indoor_reading(config, get):
+    """Mean of the controlling rooms.
+
+    By default every controlling room must report, so a missing cold or warm room never skews
+    the mean. With skip_silent_rooms, battery sensors that stay silent for hours are skipped
+    while another controlling room still reports; when every prioritised room is silent, the
+    other selected rooms are used instead. Control then pauses only when no selected room reports.
+    """
     selected = control_rooms(config)
     if not selected:
         raise ControlError("Välj minst en rumsgivare.")
-    rooms = [temperature(get(key)) for key in selected]
-    if any(not 5 <= value <= 40 for value in rooms):
-        raise ControlError("En rumsgivare visar en orimlig inomhustemperatur (utanför 5–40 °C).")
-    return sum(rooms) / len(rooms)
+    if not config["skip_silent_rooms"]:
+        rooms = [temperature(get(key)) for key in selected]
+        if any(not 5 <= value <= 40 for value in rooms):
+            raise ControlError("En rumsgivare visar en orimlig inomhustemperatur (utanför 5–40 °C).")
+        return {"value": sum(rooms) / len(rooms), "rooms": list(selected), "skipped": [], "fallback": False}
+    values, skipped = read_rooms(selected, get)
+    fallback = False
+    if not values and config["priority_sensors"]:
+        others = [key for key in config["room_sensors"] if key not in selected]
+        values, more = read_rooms(others, get)
+        skipped += more
+        fallback = bool(values)
+    if not values:
+        if len(skipped) == 1:
+            raise ControlError(skipped[0]["error"])
+        raise ControlError("Ingen rumsgivare har ett aktuellt värde: " + " ".join(room["error"] for room in skipped))
+    return {"value": sum(values.values()) / len(values), "rooms": list(values), "skipped": skipped, "fallback": fallback}
+
+
+def indoor_temperature(config, get):
+    return indoor_reading(config, get)["value"]
 
 
 def current_readings(config, entities, now, peers):
@@ -656,16 +885,19 @@ def smoothed_indoor(samples, now):
     return sum(values) / len(values) if values else None
 
 
-def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False, indoor_samples=()):
+def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False, indoor_samples=(),
+             base_correction=0.0):
     """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule.
 
     indoor_samples: earlier (time, value) control averages; the room rule then uses their mean
     together with the current reading instead of the current reading alone.
+    base_correction: learned long-term addition to the base offset (automatic base correction).
     """
     states = {entity["entity_id"]: entity for entity in entities}
     peers = peers or {}
     get = lambda key: fresh_entity(states, key, config["max_age_minutes"], now, peers.get(key, ()))
-    indoor_now = indoor_temperature(config, get)
+    reading = indoor_reading(config, get)
+    indoor_now = reading["value"]
     indoor = smoothed_indoor([*indoor_samples, (now, indoor_now)], now)
     target_shift = max(-config["preheat_degrees"], min(config["preheat_degrees"], target_shift)) if config["preheat_enabled"] else 0.0
     error = config["target_temperature"] + target_shift - indoor
@@ -675,24 +907,43 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
     if config["weather_gain"]:
         outdoor = temperature(get(config["outdoor_entity"]))
         weather_adjustment = (config["weather_reference"] - outdoor) * config["weather_gain"]
-    price = None
+    price = rank = None
     price_unit = ""
+    price_error = None
     price_adjustment = 0
-    if config["cheap_boost"] or config["expensive_reduction"]:
-        price_entity = get(config["price_entity"])
-        price = number(price_entity["state"], "Elpris")
-        price_unit = price_entity.get("attributes", {}).get("unit_of_measurement", "")
-        price_adjustment = price_contribution(config, price, error)
+    price_rule = bool(config["cheap_boost"] or config["expensive_reduction"])
+    if config["price_entity"]:
+        # The price is shown even when it does not steer; only the price rule needs a valid one.
+        try:
+            price_entity = get(config["price_entity"])
+            price = number(price_entity["state"], "Elpris")
+            price_unit = price_entity.get("attributes", {}).get("unit_of_measurement", "")
+            if config["price_mode"] == "relative":
+                rank = price_rank(price_entity, now)
+                if rank is None:
+                    price_error = "Prisgivaren saknar dygnets priser; den relativa prisregeln gör inget just nu."
+        except ControlError as exc:
+            if price_rule:
+                raise
+            price_error = str(exc)
+    if price_rule:
+        price_adjustment = price_contribution(config, price, error, rank)
     fireplace_adjustment = fireplace_contribution(config, indoor_now, fireplace_active)
-    desired = config["base_offset"] + room_adjustment + weather_adjustment + price_adjustment + fireplace_adjustment
+    base_correction = round(base_correction, 3) + 0.0 if config["auto_base_enabled"] else 0.0
+    desired = (config["base_offset"] + base_correction + room_adjustment + weather_adjustment
+               + price_adjustment + fireplace_adjustment)
     requested = desired
     desired = max(config["min_offset"], min(config["max_offset"], desired))
     result = {
         "indoor": round(indoor, 2), "indoor_smoothed": round(indoor, 2), "indoor_now": indoor_now,
         "outdoor": outdoor, "price": price,
-        "price_unit": price_unit, "error": round(error, 2), "target_shift": round(target_shift, 2),
+        "price_unit": price_unit, "price_rank": None if rank is None else round(rank, 3),
+        "price_level": price_level(config, price, rank) if price is not None else None,
+        "price_error": price_error, "error": round(error, 2), "target_shift": round(target_shift, 2),
+        "indoor_rooms": reading["rooms"], "skipped_rooms": reading["skipped"], "indoor_fallback": reading["fallback"],
         "contributions": {"room": round(room_adjustment, 2), "weather": round(weather_adjustment, 2),
-                          "price": price_adjustment, "fireplace": fireplace_adjustment},
+                          "price": price_adjustment, "fireplace": fireplace_adjustment,
+                          "base_correction": base_correction},
         "desired_offset": round(desired, 3), "current_offset": None,
         "next_offset": None, "writable": False,
         "control_limit": (
@@ -724,6 +975,80 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
     result.update(current_offset=current, next_offset=next_value, writable=True,
                   offset_limits={"min": minimum, "max": maximum, "step": step})
     return result
+
+
+FIREPLACE_LABELS = {"idle": "Ingen", "learning": "Lär sig", "active": "Eldar", "cooldown": "Avsvalnar"}
+PRICE_LABELS = {"cheap": "Billigt", "expensive": "Dyrt"}
+
+
+def control_state(status, config):
+    """One word for what the control is doing right now."""
+    vacation = status.get("vacation") or {}
+    if status.get("stopped"):
+        return "Stoppad"
+    if not config["enabled"]:
+        return "Övervakning"
+    if status.get("error_message"):
+        return "Pausad"
+    if vacation.get("phase") in ("active", "restoring"):
+        return "Semester"
+    if status.get("outage_since") is not None:
+        return "Väntar på pumpen"
+    kind = (status.get("preheat") or {}).get("kind")
+    if kind == "preheat":
+        return "Förvärmer"
+    if kind == "coast":
+        return "Sparar"
+    if (status.get("fireplace") or {}).get("phase") == "active":
+        return "Kamin"
+    return "Styr"
+
+
+def sensor_states(status, config):
+    """Status sensors for Home Assistant as (entity_id, state, attributes).
+
+    They go through Home Assistant's state API, so they are recreated by the next control
+    round after a Home Assistant restart and have no entity registry entry.
+    """
+    def value(number_value):
+        return "unknown" if number_value is None else number_value
+
+    fireplace = status.get("fireplace") or {}
+    preheat = status.get("preheat") or {}
+    base = status.get("base_correction") or {}
+    target = None
+    if status.get("target_shift") is not None and not status.get("error_message"):
+        target = round(config["target_temperature"] + status["target_shift"], 2)
+    temperature_attrs = {"unit_of_measurement": "°C", "device_class": "temperature", "state_class": "measurement"}
+    sensors = [
+        ("status", control_state(status, config), {
+            "friendly_name": "NIBE Comfort status", "icon": "mdi:heat-pump",
+            "message": status.get("error_message") or status.get("message"),
+            "warnings": status.get("warnings") or [], "contributions": status.get("contributions"),
+            "preheat_until": preheat.get("until"), "checked_at": status.get("checked_at"),
+        }),
+        ("innetemp", value(None if status.get("error_message") else status.get("indoor_smoothed")),
+         {"friendly_name": "NIBE Comfort innetemp", **temperature_attrs}),
+        ("mal", value(target), {"friendly_name": "NIBE Comfort mål", **temperature_attrs}),
+        ("onskad_forskjutning", value(status.get("desired_offset")),
+         {"friendly_name": "NIBE Comfort önskad förskjutning", "icon": "mdi:plus-minus-variant", "state_class": "measurement"}),
+        ("nasta_forskjutning", value(status.get("next_offset")),
+         {"friendly_name": "NIBE Comfort nästa förskjutning", "icon": "mdi:arrow-right-bold"}),
+        ("kamin", FIREPLACE_LABELS.get(fireplace.get("phase"), fireplace.get("phase") or "unknown"), {
+            "friendly_name": "NIBE Comfort kamin", "icon": "mdi:fireplace",
+            "message": fireplace.get("message"), "learned": fireplace.get("learned"),
+        }),
+        ("elprisniva", PRICE_LABELS.get(status.get("price_level"), "Normalt" if status.get("price") is not None else "unknown"), {
+            "friendly_name": "NIBE Comfort elprisnivå", "icon": "mdi:cash-clock",
+            "price": status.get("price"), "rank": status.get("price_rank"), "mode": config["price_mode"],
+        }),
+    ]
+    if config["auto_base_enabled"]:
+        sensors.append(("baskorrigering", value(base.get("value")), {
+            "friendly_name": "NIBE Comfort baskorrigering", "icon": "mdi:tune-vertical", "state_class": "measurement",
+            "limit": base.get("limit"),
+        }))
+    return [(SENSOR_PREFIX + key, state, attrs) for key, state, attrs in sensors]
 
 
 class EventLog:
@@ -799,6 +1124,11 @@ class Controller:
                 saved.setdefault("fireplace_max_age_minutes", 15.0)
                 saved.setdefault("price_provider", "tibber")
                 saved.setdefault("energy_entity", "")
+                for key in ("skip_silent_rooms", "price_mode", "price_low_percent", "price_high_percent", "auto_base_enabled",
+                            "auto_base_limit", "publish_sensors", "pause_notify_minutes", "notify_service",
+                            "hot_water_price_enabled", "hot_water_mode_entity", "hot_water_cheap_option",
+                            "hot_water_normal_option", *SOURCE_ENTITIES, *AUX_LIMIT_KEYS):
+                    saved.setdefault(key, DEFAULTS[key])
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
         self.pending = None
@@ -822,6 +1152,7 @@ class Controller:
         self.events.add("startup", "Tillägget startat. Återläser värden; väntetid räknas från senaste sparade styrförsök.", settings=self.config)
         self.status = {"message": "Väntar på första avläsningen.", "error_message": None}
         self.peer_cache = (0, {})
+        self.myuplink_peers = {}
         # Recent control averages for smoothing; in memory only, so a restart starts from the current reading.
         self.indoor_rooms = ()
         self.indoor_samples = []
@@ -835,6 +1166,16 @@ class Controller:
                 if self.fireplace_path.exists() else empty_state()
         except (ValueError, TypeError) as exc:
             raise ControlError("Kunde inte läsa sparade kaminobservationer. Kontrollera fireplace-state.json.") from exc
+        self.manual_fireplace_path = Path(data_dir) / "fireplace-manual.json"
+        # A press not yet taken over by the fireplace observation (it needs fresh room values).
+        self.manual_fireplace = None
+        if self.manual_fireplace_path.exists():
+            try:
+                saved = json.loads(self.manual_fireplace_path.read_text())
+                if saved.get("requested") is not None:
+                    self.manual_fireplace = number(saved["requested"], "Eldning start")
+            except (ValueError, TypeError, KeyError, AttributeError, ControlError):
+                LOG.warning("Sparad manuell eldning kunde inte läsas; ignoreras.")
         self.thermostat_path = Path(data_dir) / "thermostat-state.json"
         self.thermostats = json.loads(self.thermostat_path.read_text()) if self.thermostat_path.exists() else {}
         if not isinstance(self.thermostats, dict):
@@ -848,14 +1189,75 @@ class Controller:
                     raise ControlError("Ogiltig tid för senaste termostatförsök.")
         self.vacation_path = Path(data_dir) / "vacation-state.json"
         self.vacation = validate_vacation(json.loads(self.vacation_path.read_text())) if self.vacation_path.exists() else None
+        self.base_path = Path(data_dir) / "base-correction.json"
+        self.base_correction = {"value": 0.0, "updated_at": None}
+        if self.base_path.exists():
+            try:
+                saved_base = json.loads(self.base_path.read_text())
+                self.base_correction = {"value": number(saved_base["value"], "Sparad baskorrigering"),
+                                        "updated_at": saved_base.get("updated_at")}
+            except (ValueError, TypeError, KeyError, ControlError):
+                LOG.warning("Sparad baskorrigering kunde inte läsas; börjar om från 0.")
+        self.base_saved_at = 0.0
+        self.base_seen_at = None
+        self.paused_since = None
+        self.pause_notified = False
+        self.report_error = None
+        self.hot_water_written = 0.0
+        self.hot_water_path = Path(data_dir) / "hot-water-control.json"
+        if self.hot_water_path.exists():
+            try:
+                state = json.loads(self.hot_water_path.read_text())
+                self.hot_water_written = number(state["last_attempt"], "Senaste varmvattenförsök")
+                if self.hot_water_written < 0:
+                    raise ValueError("invalid attempt time")
+            except (OSError, ValueError, TypeError, KeyError, ControlError) as exc:
+                raise ControlError("Kunde inte läsa senaste varmvattenförsök. Kontrollera hot-water-control.json.") from exc
+        self.aux_written = 0.0
+        # Set while our lower electric heater limit is in force, so it is lifted after errors and restarts.
+        self.aux_limit_path = Path(data_dir) / "aux-limit.json"
+        self.aux_limited = False
+        self.aux_restore = None
+        self.aux_restart_restore = False
+        if self.aux_limit_path.exists():
+            try:
+                saved = json.loads(self.aux_limit_path.read_text())
+                if not isinstance(saved, dict) or type(saved.get("limited")) is not bool:
+                    raise ValueError("invalid recovery state")
+                if saved.get("last_attempt") is not None:
+                    self.aux_written = number(saved["last_attempt"], "Senaste elpatronförsök")
+                    if self.aux_written < 0:
+                        raise ValueError("invalid attempt time")
+                if saved["limited"]:
+                    if (not isinstance(saved.get("entity_id"), str) or not saved["entity_id"].startswith("select.")
+                            or not isinstance(saved.get("normal"), str) or not saved["normal"]
+                            or not isinstance(saved.get("restricted"), str) or not saved["restricted"]
+                            or saved["normal"] == saved["restricted"]
+                            or saved.get("phase") not in ("lowering", "limited", "restoring")
+                            or saved.get("started_at") is None):
+                        raise ValueError("invalid recovery plan")
+                    for key in ("started_at", "restore_attempted_at"):
+                        if saved.get(key) is not None and number(saved[key], key) < 0:
+                            raise ValueError("invalid recovery time")
+                    self.aux_limited, self.aux_restore = True, saved
+                    self.aux_restart_restore = True
+                    self.aux_written = max(self.aux_written, number(saved["started_at"], "Senaste elpatronförsök"))
+            except (ValueError, TypeError, AttributeError, OSError, ControlError) as exc:
+                raise ControlError("Sparad återställning av elpatronen är ogiltig. Kontrollera pumpens max eltillsats och aux-limit.json.") from exc
 
     def peers(self):
         """Same-device entities per entity, refreshed every 5 minutes."""
         loaded_at, peers = self.peer_cache
         if time.time() - loaded_at >= 300:
-            peers = device_peers(self.ha.integration_registry())
+            registry = self.ha.integration_registry()
+            peers = device_peers(registry)
+            self.myuplink_peers = device_peers([item for item in registry if item.get("platform") == "myuplink"])
             self.peer_cache = (time.time(), peers)
         return peers
+
+    def pump_select(self, entity_id):
+        self.peers()
+        return entity_id in self.myuplink_peers.get(self.config["offset_entity"], ())
 
     def settings(self):
         # Published config/status objects are replaced, never edited in place.
@@ -863,23 +1265,54 @@ class Controller:
         return copy.deepcopy(self.config)
 
     def snapshot(self):
-        return {**copy.deepcopy(self.status), "vacation": copy.deepcopy(self.vacation)}
+        return {**copy.deepcopy(self.status), "vacation": copy.deepcopy(self.vacation),
+                "aux_recovery": copy.deepcopy(self.aux_restore)
+                if self.aux_restore and (self.aux_restore["phase"] == "restoring" or self.aux_restart_restore) else None}
 
     def fireplace_observations(self):
-        return fireplace_intervals(self.fireplace_state)
+        rows = fireplace_intervals(self.fireplace_state)
+        if self.manual_fireplace is not None:
+            # Heat the user reported is excluded from pump learning just like detected heat.
+            rows.append({"start": self.manual_fireplace, "end": None})
+        return rows
+
+    def start_manual_fireplace(self):
+        """The user says a fire is burning. The observation decides when the heat has faded."""
+        with self.lock:
+            if not self.config["fireplace_enabled"] or not self.config["fireplace_rooms"]:
+                raise ControlError("Slå på braskaminen och välj kaminens rum under Värme från kaminen först.")
+            if self.fireplace_state["active"]:
+                return {"requested": None, "already_active": True}
+            now = time.time()
+            if self.manual_fireplace is None:
+                atomic_json(self.manual_fireplace_path, {"requested": now})
+                self.manual_fireplace = now
+                self.events.add("fireplace_manual_start", "Du angav att du eldar. Kaminläget gäller tills kaminrummet "
+                                "inte längre är varmare än övriga rum.")
+            return {"requested": self.manual_fireplace, "already_active": False}
 
     def fireplace_step(self, entities, now, peers):
         # Longer limits are opt-in: quiet sensors and missed reports cannot be distinguished here.
         limit = min(self.config["fireplace_max_age_minutes"], self.config["max_age_minutes"])
         config = {**self.config, "max_age_minutes": limit}
         readings = current_readings(config, entities, now, peers)["rooms"] if config["fireplace_enabled"] else []
-        state, status, events = update_fireplace(self.fireplace_state, self.config, readings, now)
+        manual = self.manual_fireplace if config["fireplace_enabled"] else None
+        state, status, events = update_fireplace(self.fireplace_state, self.config, readings, now, manual_at=manual)
         if state != self.fireplace_state:
             atomic_json(self.fireplace_path, state)
             for event in events:
                 details = {k: v for k, v in event.items() if k not in ("kind", "message")}
                 self.events.add(event["kind"], event["message"], **details)
             self.fireplace_state = state
+        if self.manual_fireplace is not None and (state["active"] or manual is None
+                                                  or now - manual > MANUAL_FIREPLACE_PENDING_SECONDS):
+            if manual is not None and not state["active"]:
+                self.events.add("fireplace_manual_dropped", "Jag eldar nu släpptes: aktuella rumsvärden saknades i en halvtimme.")
+            atomic_json(self.manual_fireplace_path, {"requested": None})
+            self.manual_fireplace = None
+        elif self.manual_fireplace is not None and status["phase"] != "active":
+            status = {**status, "phase": "active", "manual": True,
+                      "message": "Du har angett att du eldar. Väntar på aktuella rumsvärden."}
         return status
 
     def save(self, config):
@@ -887,6 +1320,11 @@ class Controller:
         with self.lock:
             if self.vacation and config["offset_entity"] != self.config["offset_entity"]:
                 raise ControlError("Avsluta semesterperioden och invänta återställning innan du byter pumpanslutning.")
+            if self.aux_limited and (
+                    config["offset_entity"] != self.config["offset_entity"]
+                    or (config["aux_limit_entity"], config["aux_limit_option"], config["aux_normal_option"])
+                    != (self.config["aux_limit_entity"], self.config["aux_limit_option"], self.config["aux_normal_option"])):
+                raise ControlError("Vänta på bekräftad återställning av elpatronen innan pump eller elpatronens lägen byts.")
             if config["enabled"]:
                 entities = self.ha.states()
                 peers = self.peers()
@@ -900,10 +1338,366 @@ class Controller:
             changes = {key: {"from": self.config[key], "to": value} for key, value in config.items() if value != self.config[key]}
             event_id = self.events.add("settings_attempt", "Begäran att spara inställningar.", changes=changes)
             atomic_json(self.path, config)
+            if config["base_offset"] != self.config["base_offset"] and self.base_correction["value"]:
+                self.reset_base_correction("Grundvärdet ändrades för hand; den automatiska baskorrigeringen börjar om från 0.")
+            if self.aux_limited and (not config["aux_limit_enabled"] or not config["enabled"]):
+                error = self.lift_aux_limit("styrningen stängdes av")
+                if error:
+                    LOG.warning("%s", error)
             self.config = config
             self.status = {"message": "Inställningar sparade. Väntar på ny avläsning.", "error_message": None,
                            "enabled": config["enabled"]}
             self.events.add("settings_saved", "Inställningar sparade.", request_id=event_id, changes=changes)
+
+    def reset_base_correction(self, message):
+        previous = self.base_correction["value"]
+        self.base_correction = {"value": 0.0, "updated_at": time.time()}
+        atomic_json(self.base_path, self.base_correction)
+        self.events.add("base_correction_reset", message, previous=round(previous, 3))
+
+    def base_step(self, result, now, eligible):
+        """Integrate a lasting room deviation into the base offset.
+
+        The room rule alone leaves a steady deviation (whole pump steps, tolerance band). This
+        slowly moves the base instead, at most auto_base_limit steps either way. It stands still
+        during pre-heating, fireplace heat, tests, vacation, alarms and at the safety limits.
+        """
+        previous, self.base_seen_at = self.base_seen_at, now
+        limit = self.config["auto_base_limit"]
+        value = max(-limit, min(limit, self.base_correction["value"]))
+        if self.config["auto_base_enabled"] and eligible and previous is not None:
+            error = result["error"]
+            limit_hit = bool(result["control_limit"]) and ((result["control_limit"]["direction"] == "upper") == (error > 0))
+            if abs(error) >= AUTO_BASE_NOISE and not limit_hit:
+                value = max(-limit, min(limit, value + error * min(now - previous, AUTO_BASE_MAX_GAP) * AUTO_BASE_RATE))
+        if abs(value - self.base_correction["value"]) > 1e-9:
+            self.base_correction = {"value": value, "updated_at": now}
+            if now - self.base_saved_at >= AUTO_BASE_SAVE_SECONDS:
+                atomic_json(self.base_path, self.base_correction)
+                self.base_saved_at = now
+        return {"enabled": self.config["auto_base_enabled"], "value": round(value, 3) + 0.0, "limit": limit}
+
+    def warnings(self, result):
+        """Things worth knowing that do not stop control."""
+        names = {room["entity_id"]: room.get("name") or room["entity_id"] for room in result.get("rooms") or []}
+        notes = [f"{names.get(room['entity_id'], room['entity_id'])} hoppas över: {room['error']}"
+                 for room in result.get("skipped_rooms") or []]
+        if result.get("indoor_fallback"):
+            notes.append("Alla prioriterade rumsgivare är tysta; styr tillfälligt på dina övriga valda rum.")
+        if not self.config["thermostat_control_enabled"]:
+            controlling = control_rooms(self.config)
+            for key in self.config["room_sensors"]:
+                if key.startswith("climate."):
+                    notes.append(f"{names.get(key, key)} är en termostat som mäter nära elementet och kan visa för varmt; "
+                                 + ("den styr värmen." if key in controlling else "den räknas in i husets snitt."))
+        if result.get("price_error") and (self.config["cheap_boost"] or self.config["expensive_reduction"]):
+            notes.append(result["price_error"])
+        return notes
+
+    def tick(self):
+        try:
+            self.control_tick()
+        finally:
+            self.report(time.time())
+
+    def report(self, now):
+        """Tell Home Assistant about long pauses and publish status sensors. Never affects control."""
+        with self.lock:
+            status = self.snapshot()
+            config = copy.deepcopy(self.config)
+        error = status.get("error_message") if config["enabled"] else None
+        try:
+            if error:
+                if self.paused_since is None:
+                    self.paused_since = now
+                minutes = config["pause_notify_minutes"]
+                if minutes and not self.pause_notified and now - self.paused_since >= minutes * 60:
+                    message = (f"Styrningen har varit pausad i {round((now - self.paused_since) / 60)} minuter: {error} "
+                               "Pumpen behåller sin nuvarande kurvförskjutning.")
+                    self.notify("NIBE Comfort pausad", message, config, create=True)
+                    self.pause_notified = True
+                    self.events.add("pause_notified", "Avisering skickad om lång paus.", error=error)
+            else:
+                if self.pause_notified:
+                    self.notify("NIBE Comfort igång igen", "Giltiga mätvärden igen; styrningen fortsätter.", config, create=False)
+                self.paused_since = None
+                self.pause_notified = False
+            self.publish(status, config)
+            self.report_error = None
+        except Exception as exc:  # reporting is optional; control has already finished this round
+            if str(exc) != self.report_error:
+                LOG.warning("Kunde inte rapportera till Home Assistant: %s", exc)
+                self.report_error = str(exc)
+
+    def hot_water_step(self, entities, now, result, preheat, hold):
+        """Opt-in: the pump hot water mode follows the price. Leaves modes it does not manage alone."""
+        config = self.config
+        if not config["hot_water_price_enabled"]:
+            return {"enabled": False}
+        cheap, normal = config["hot_water_cheap_option"], config["hot_water_normal_option"]
+        reason = ("förvärmer före dyr el" if preheat.get("kind") == "preheat"
+                  else "billig el" if result.get("price_level") == "cheap" else None)
+        desired = cheap if reason else normal
+        report = {"enabled": True, "entity_id": config["hot_water_mode_entity"], "desired": desired,
+                  "reason": reason or "inte billig el", "current": None, "note": None, "error": None, "next_change_at": None}
+        peers = self.peers()
+        if not self.pump_select(config["hot_water_mode_entity"]):
+            report["error"] = "Varmvattenläget finns inte på samma pump och myUplink-integration som kurvförskjutningen."
+            return report
+        try:
+            state = fresh_entity({e["entity_id"]: e for e in entities}, config["hot_water_mode_entity"],
+                                 config["max_age_minutes"], now, peers.get(config["hot_water_mode_entity"], ()))
+        except ControlError as exc:
+            report["error"] = f"Pumpens varmvattenläge kan inte läsas: {exc}"
+            return report
+        current = report["current"] = state["state"]
+        options = (state.get("attributes") or {}).get("options") or []
+        missing = [option for option in (cheap, normal) if option not in options]
+        if missing:
+            offered = ", ".join(map(str, options))
+            report["error"] = f"Läget {missing[0]} finns inte. Pumpen erbjuder: {offered}."
+            return report
+        if current not in (cheap, normal):
+            report["note"] = f"Läget {current} är valt för hand och lämnas orört."
+            return report
+        if not config["enabled"] or hold:
+            report["note"] = "Övervakning eller paus: varmvattenläget ändras inte."
+            return report
+        if result.get("price") is None or result.get("price_error"):
+            report["note"] = "Elpriset är inte tillgängligt; varmvattenläget ändras inte."
+            return report
+        if current == desired:
+            return report
+        wait = HOT_WATER_MIN_SECONDS - (now - self.hot_water_written)
+        if wait > 0:
+            report["next_change_at"] = now + wait
+            return report
+        self.hot_water_written = now
+        atomic_json(self.hot_water_path, {"last_attempt": now, "entity_id": config["hot_water_mode_entity"],
+                                         "requested": desired})
+        try:
+            self.ha.set_select(config["hot_water_mode_entity"], desired)
+        except ControlError as exc:
+            report["error"] = f"Varmvattenläget kunde inte ändras: {exc}"
+            self.events.add("hot_water_failed", report["error"], entity_id=config["hot_water_mode_entity"], value=desired)
+            return report
+        self.events.add("hot_water_mode", f"Varmvatten {current} → {desired} begärd ({report['reason']}); inväntar återläsning.",
+                        entity_id=config["hot_water_mode_entity"], previous=current, value=desired)
+        report["note"] = "Ändring begärd; väntar på återläsning."
+        return report
+
+    def store_aux_limited(self, plan):
+        """plan is where to restore the full limit, or None once it is restored."""
+        atomic_json(self.aux_limit_path, {**plan, "last_attempt": self.aux_written} if plan
+                    else {"limited": False, "last_attempt": self.aux_written})
+        self.aux_limited = plan is not None
+        self.aux_restore = plan
+
+    def acknowledge_aux_recovery(self, entity_id, normal):
+        """Clear a recovery only after explicit user verification and current HA readback."""
+        with self.lock:
+            plan = self.aux_restore
+            if not plan or (entity_id, normal) != (plan["entity_id"], plan["normal"]):
+                raise ControlError("Återställningsläget har ändrats. Uppdatera sidan och kontrollera pumpen igen.")
+            now = time.time()
+            attempted = plan.get("restore_attempted_at")
+            if plan["phase"] != "restoring" or attempted is None or now - attempted < AUX_RESTORE_CONFIRM_SECONDS:
+                raise ControlError("Vänta minst två minuter efter återställningsförsöket och kontrollera pumpen igen.")
+            if not self.pump_select(entity_id):
+                raise ControlError("Elpatronens inställning finns inte längre på samma pump och myUplink-integration.")
+            states = {entity["entity_id"]: entity for entity in self.ha.states()}
+            current = fresh_entity(states, entity_id, self.config["max_age_minutes"], now,
+                                   self.peers().get(entity_id, ()))["state"]
+            if current != normal:
+                raise ControlError("Home Assistant visar inte det vanliga läget. Kontrollera pumpen och vänta på återläsning.")
+            self.events.add("aux_recovery_ack_attempt", "Användaren bekräftar kontroll av elpatronen.",
+                            entity_id=entity_id, value=normal)
+            config = validate({**self.config, "aux_limit_enabled": False})
+            atomic_json(self.path, config)
+            self.config = config
+            self.store_aux_limited(None)
+            self.aux_restart_restore = False
+            self.events.add("aux_recovery_ack", "Återställningen har kontrollerats av användaren; elpatronbegränsning är avstängd.",
+                            entity_id=entity_id, value=normal)
+            return {"message": "Kontrollen är noterad. Automatisk elpatronbegränsning är avstängd."}
+
+    def lift_aux_limit(self, reason, timeout=SERVICE_TIMEOUT_SECONDS, entities=None, now=None):
+        """Request restoration, retaining the durable plan until later readback."""
+        if not self.aux_limited:
+            return None
+        now = time.time() if now is None else now
+        plan = copy.deepcopy(self.aux_restore)
+        if plan["phase"] != "restoring":
+            plan["phase"] = "restoring"
+            self.store_aux_limited(plan)
+        try:
+            if not self.pump_select(plan["entity_id"]):
+                raise ControlError("Elpatronens inställning finns inte längre på samma pump och myUplink-integration.")
+            entities = self.ha.states() if entities is None else entities
+            states = {entity["entity_id"]: entity for entity in entities}
+            current = fresh_entity(states, plan["entity_id"], self.config["max_age_minutes"], now,
+                                   self.peers().get(plan["entity_id"], ()))["state"]
+        except ControlError as exc:
+            return f"Elpatronens återställning väntar: {exc} Kontrollera pumpens max eltillsats."
+        if current not in (plan["normal"], plan["restricted"]):
+            return f"Max eltillsats är {current}; ett annat manuellt läge ändras inte. Kontrollera pumpen."
+        last_attempt = plan.get("restore_attempted_at")
+        if plan["phase"] == "restoring" and last_attempt is not None and now - last_attempt < AUX_RESTORE_RETRY_SECONDS:
+            return "Återställning begärd; väntar på aktuell återläsning. Kontrollera pumpen om värdet inte ändras."
+        plan.update(phase="restoring", restore_attempted_at=now)
+        self.store_aux_limited(plan)
+        self.aux_restart_restore = False
+        try:
+            self.ha.set_select(plan["entity_id"], plan["normal"], timeout=timeout)
+        except ControlError as exc:
+            message = f"Återställningen av elpatronen kunde inte bekräftas: {exc} Kontrollera pumpens max eltillsats."
+            self.events.add("aux_limit_failed", message, entity_id=plan["entity_id"], value=plan["normal"])
+            return message
+        self.events.add("aux_limit_restore_sent", f"Återställning av max eltillsats till {plan['normal']} begärd ({reason}); väntar på återläsning.",
+                        entity_id=plan["entity_id"], value=plan["normal"])
+        return "Återställning begärd; väntar på aktuell återläsning. Kontrollera pumpen om värdet inte ändras."
+
+    def aux_limit_step(self, entities, now, result, preheat, hold):
+        """Opt-in: lower the pump's electric heater limit in expensive hours, never while the house is cold."""
+        config = self.config
+        if not config["aux_limit_enabled"] and not self.aux_limited:
+            return {"enabled": False}
+        entity_id, limited, normal = ((self.aux_restore["entity_id"], self.aux_restore["restricted"], self.aux_restore["normal"])
+                                     if self.aux_limited else
+                                     (config["aux_limit_entity"], config["aux_limit_option"], config["aux_normal_option"]))
+        reason = None
+        if preheat.get("kind") != "preheat":
+            reason = ("dyr period efter förvärmning" if preheat.get("kind") == "coast"
+                      else "dyr el" if result.get("price_level") == "expensive" else None)
+        guard = None
+        indoor, outdoor = result.get("indoor"), result.get("outdoor")
+        if reason and (result.get("price") is None or result.get("price_error")):
+            guard = "Elpriset saknas eller är osäkert: elpatronen begränsas inte."
+        elif reason and (indoor is None or indoor < config["target_temperature"] - config["aux_limit_max_drop"]):
+            guard = "För kallt inne: elpatronen får full effekt."
+        elif reason and outdoor is None:
+            guard = "Utetemperaturen saknas: elpatronen får full effekt."
+        elif reason and outdoor < config["aux_limit_min_outdoor"]:
+            guard = "För kallt ute: elpatronen får full effekt."
+        desired = limited if reason and not guard else normal
+        report = {"enabled": True, "entity_id": entity_id, "desired": desired, "limited": False,
+                  "reason": guard or reason or "inte dyr el", "current": None, "note": None, "error": None, "next_change_at": None}
+        peers = self.peers()
+        if not self.pump_select(entity_id):
+            if self.aux_limited and self.aux_restore["phase"] != "restoring":
+                self.store_aux_limited({**self.aux_restore, "phase": "restoring"})
+            report["error"] = "Elpatronens inställning finns inte på samma pump och myUplink-integration som kurvförskjutningen."
+            return report
+        try:
+            state = fresh_entity({e["entity_id"]: e for e in entities}, entity_id, config["max_age_minutes"],
+                                 now, peers.get(entity_id, ()))
+        except ControlError as exc:
+            if self.aux_limited and self.aux_restore["phase"] != "restoring":
+                self.store_aux_limited({**self.aux_restore, "phase": "restoring"})
+            report["error"] = f"Pumpens max eltillsats kan inte läsas: {exc} Kontrollera inställningen på pumpen."
+            return report
+        current = report["current"] = state["state"]
+        report["limited"] = current == limited
+        options = (state.get("attributes") or {}).get("options") or []
+        required_options = (normal,) if self.aux_limited else (limited, normal)
+        missing = [option for option in required_options if option not in options]
+        if missing:
+            if self.aux_limited and self.aux_restore["phase"] != "restoring":
+                self.store_aux_limited({**self.aux_restore, "phase": "restoring"})
+            report["error"] = f"Läget {missing[0]} finns inte. Pumpen erbjuder: {', '.join(map(str, options))}."
+            return report
+        if current not in (limited, normal):
+            report["note"] = f"Max eltillsats {current} är vald för hand och lämnas orörd."
+            if self.aux_limited:
+                if self.aux_restore["phase"] != "restoring":
+                    self.store_aux_limited({**self.aux_restore, "phase": "restoring"})
+                report["error"] = "Tidigare återställning är inte bekräftad. Kontrollera pumpens max eltillsats."
+            return report
+        if self.aux_limited:
+            plan = self.aux_restore
+            if plan["phase"] == "restoring":
+                attempted = plan.get("restore_attempted_at")
+                try:
+                    observed = now - entity_age(state, now)
+                except ControlError:
+                    observed = None
+                if (current == normal and attempted is not None and observed is not None
+                        and attempted <= observed <= now + 60
+                        and now - max(attempted, plan["started_at"]) >= AUX_RESTORE_CONFIRM_SECONDS):
+                    self.store_aux_limited(None)
+                    self.aux_restart_restore = False
+                    self.events.add("aux_limit_restored", "Återställningen av max eltillsats har återlästs från Home Assistant.",
+                                    entity_id=entity_id, value=normal)
+                    report["note"] = "Återställningen har återlästs från Home Assistant."
+                    return report
+                report["error"] = self.lift_aux_limit("väntar på återställning", entities=entities, now=now)
+                return report
+            if (self.aux_restart_restore or not config["aux_limit_enabled"] or not config["enabled"] or hold
+                    or desired == normal):
+                report["error"] = self.lift_aux_limit("styrningen behöver återställning", entities=entities, now=now)
+                return report
+            if current == limited and plan["phase"] == "lowering":
+                self.store_aux_limited({**plan, "phase": "limited"})
+            if current == normal:
+                report["note"] = "Begränsning begärd; väntar på återläsning."
+            return report
+        if not config["enabled"] or not config["aux_limit_enabled"] or hold:
+            report["note"] = "Övervakning eller paus: elpatronen begränsas inte."
+            return report
+        if current == desired:
+            return report
+        if desired == normal:
+            report["note"] = "Begränsningen är inte gjord av appen och lämnas orörd."
+            return report
+        if desired == limited:
+            wait = AUX_LIMIT_MIN_SECONDS - (now - self.aux_written)
+            if wait > 0:
+                report["next_change_at"] = now + wait
+                return report
+        self.aux_written = now
+        if desired == limited:
+            # A timed-out service call can still reach the pump. Persist the restore target first.
+            self.store_aux_limited({"limited": True, "entity_id": entity_id, "normal": normal,
+                                    "restricted": limited, "phase": "lowering", "started_at": now,
+                                    "restore_attempted_at": None})
+        try:
+            self.ha.set_select(entity_id, desired)
+        except ControlError as exc:
+            report["error"] = f"Max eltillsats kunde inte ändras: {exc}"
+            self.events.add("aux_limit_failed", report["error"], entity_id=entity_id, value=desired)
+            recovery = self.lift_aux_limit("osäkert styrförsök", entities=entities, now=now)
+            report["error"] += f" {recovery}"
+            return report
+        self.events.add("aux_limit", f"Max eltillsats {current} → {desired} begärd ({report['reason']}); väntar på återläsning.",
+                        entity_id=entity_id, previous=current, value=desired)
+        report["note"] = "Begränsning begärd; väntar på återläsning."
+        return report
+
+    def publish(self, status, config):
+        if config["publish_sensors"]:
+            for entity_id, state, attrs in sensor_states(status, config):
+                self.ha.request(f"/states/{entity_id}", {"state": state, "attributes": attrs})
+
+    def notify(self, title, message, config, create):
+        if create:
+            self.ha.request("/services/persistent_notification/create",
+                            {"notification_id": PAUSE_NOTIFICATION_ID, "title": title, "message": message})
+        else:
+            self.ha.request("/services/persistent_notification/dismiss", {"notification_id": PAUSE_NOTIFICATION_ID})
+        if config["notify_service"]:
+            domain, service = config["notify_service"].split(".", 1)
+            self.ha.request(f"/services/{domain}/{service}", {"title": title, "message": message})
+
+    def test_notify(self, service):
+        """Send a test message to a chosen, possibly unsaved, notify service."""
+        if not isinstance(service, str) or not re.fullmatch(r"notify\.[a-z0-9_]+", service):
+            raise ControlError("Välj en notify-tjänst först.")
+        if service not in [s["service"] for s in self.ha.notify_services()]:
+            raise ControlError(f"{service} finns inte i Home Assistant.")
+        self.ha.request(f"/services/notify/{service.split('.', 1)[1]}",
+                        {"title": "NIBE Comfort", "message": "Testavisering. Hit kommer meddelandet om styrningen pausas."},
+                        timeout=SERVICE_TIMEOUT_SECONDS)
+        return {"sent": service}
 
     def pause_alarm_thermostats(self):
         """Pause our limiter only; never reset the pump or open valves."""
@@ -1354,7 +2148,7 @@ class Controller:
                             request_id=test["request_id"], observed=current)
             self.save_test()
 
-    def tick(self):
+    def control_tick(self):
         schedule = self.preheat_schedule()
         with self.lock:
             now = time.time()
@@ -1382,6 +2176,10 @@ class Controller:
                     if self.outage_since is None:
                         self.outage_since = now
                     if now - self.outage_since < OUTAGE_GRACE_SECONDS and not self.last_error:
+                        if self.aux_limited:
+                            error = self.lift_aux_limit("pumpens värden saknas", entities=entities, now=now)
+                            if error:
+                                LOG.warning("%s", error)
                         self.status = {
                             **readings, "fireplace": fireplace, "outage_since": self.outage_since,
                             "message": OUTAGE_MESSAGE, "error_message": None, "checked_at": now,
@@ -1400,16 +2198,26 @@ class Controller:
                     except ControlError as exc:
                         schedule = {"error": str(exc)}
                 preheat = self.preheat(now, schedule)
-                rooms = tuple(control_rooms(self.config))
+                states = {entity["entity_id"]: entity for entity in entities}
+                rooms = tuple(indoor_reading(self.config, lambda key: fresh_entity(
+                    states, key, self.config["max_age_minutes"], now, peers.get(key, ())))["rooms"])
                 if rooms != self.indoor_rooms:
                     self.indoor_rooms, self.indoor_samples = rooms, []
                 self.indoor_samples = [(t, v) for t, v in self.indoor_samples if now - SMOOTHING_SECONDS < t < now]
                 result = evaluate(self.config, entities, now, peers, preheat["shift"],
-                                  fireplace_active=fireplace["phase"] == "active", indoor_samples=self.indoor_samples)
+                                  fireplace_active=fireplace["phase"] == "active", indoor_samples=self.indoor_samples,
+                                  base_correction=self.base_correction["value"])
                 self.indoor_samples.append((now, result.pop("indoor_now")))
                 result["preheat"] = preheat
                 result.update(readings)
                 vacation = self.vacation_paused()
+                testing_now = bool(self.test and self.test["phase"] in ("running", "restoring"))
+                result["base_correction"] = self.base_step(
+                    result, now, self.config["enabled"] and result["writable"]
+                    and not (testing_now or vacation or alarm["active"] is True)
+                    and not preheat["kind"] and fireplace["phase"] != "active"
+                    and not result["indoor_fallback"] and not result["skipped_rooms"])
+                result["warnings"] = self.warnings(result)
                 if alarm_hold and result["writable"]:
                     result["next_offset"] = result["current_offset"]
                 if vacation and result["writable"]:
@@ -1440,6 +2248,8 @@ class Controller:
                                "control_in_progress": True}
                 result["pump_alarm"] = alarm
                 result["thermostat_control"] = self.thermostat_step(entities, now, peers, testing or vacation, alarm_hold=alarm_hold)
+                result["hot_water"] = self.hot_water_step(entities, now, result, preheat, testing or vacation or alarm_hold)
+                result["aux_limit"] = self.aux_limit_step(entities, now, result, preheat, testing or vacation or alarm_hold)
                 if testing:
                     result["message"] = "Test av styrningen pågår: automatiken väntar tills testet är klart."
                 elif alarm_hold:

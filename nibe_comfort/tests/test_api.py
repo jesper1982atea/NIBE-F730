@@ -74,6 +74,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request("/api/status")[1]["vacation"]["end"], end)
         self.assertEqual(self.request("/api/vacation", "PUT", {"action": "cancel"}), (200, {"vacation": None}))
 
+    def test_aux_recovery_requires_authorization_and_explicit_confirmation(self):
+        body = {"confirmed": True, "entity_id": "select.pump", "normal": "7.1 kW"}
+        self.assertEqual(self.request("/api/aux-recovery", "PUT", body, token=False)[0], 401)
+        with patch.object(self.controller, "acknowledge_aux_recovery", return_value={"message": "ok"}) as acknowledge:
+            for invalid in ({**body, "confirmed": False}, {**body, "confirmed": 1}, {"confirmed": True},
+                            {**body, "normal": 7}, {**body, "extra": True}, []):
+                self.assertEqual(self.request("/api/aux-recovery", "PUT", invalid)[0], 400)
+            acknowledge.assert_not_called()
+            self.assertEqual(self.request("/api/aux-recovery", "PUT", body), (200, {"message": "ok"}))
+            acknowledge.assert_called_once_with("select.pump", "7.1 kW")
+
     def test_alarm_endpoint_requires_fresh_229_and_auth_without_generic_reset(self):
         from test_alarms import ALARM, CODE, REGISTRY
         from test_controller import entity
@@ -306,6 +317,21 @@ class ApiTests(unittest.TestCase):
         self.assertIsNone(entities[0]["energy_meter_error"])
         self.assertEqual(entities[0]["state_class"], "total_increasing")
         self.assertIn("Producerad", entities[1]["energy_meter_error"])
+
+    def test_select_entities_carry_their_modes_for_hot_water(self):
+        mode = {"entity_id": "select.f370_comfort_mode", "state": "Economy",
+                "attributes": {"friendly_name": "Komfortläge", "options": ["Economy", "Normal", "Lux"]}}
+        broken = {"entity_id": "select.broken", "state": "x", "attributes": {"options": "Economy"}}
+        light = {"entity_id": "light.kitchen", "state": "on", "attributes": {"options": ["a"]}}
+        self.ha.states.side_effect = lambda: [mode, broken, light, meter_rows()[0]]
+        status, entities = self.request("/api/entities")
+        self.assertEqual(status, 200)
+        by_id = {e["entity_id"]: e for e in entities}
+        self.assertEqual(by_id["select.f370_comfort_mode"]["options"], ["Economy", "Normal", "Lux"])
+        self.assertIsNone(by_id["select.broken"]["options"])
+        self.assertNotIn("light.kitchen", by_id)
+        self.assertIsNone(by_id[meter_rows()[0]["entity_id"]]["options"])
+        self.assertIsNotNone(by_id["select.f370_comfort_mode"]["energy_meter_error"])
 
     def test_version_comes_from_build(self):
         with patch.dict(os.environ, {"NIBE_COMFORT_VERSION": "9.9.9"}):

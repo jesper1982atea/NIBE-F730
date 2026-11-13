@@ -8,6 +8,7 @@ const advanced = [
   ["max_step", "Maximal ändring per gång", 0.1, 2, 0.1, "Måste vara minst entitetens steglängd."],
   ["min_interval_minutes", "Minst mellan ändringar · minuter", 10, 1440, 1, "Räknas från senaste sparade styrförsök, även efter timeout. Omstart börjar inte om väntetiden."],
   ["max_age_minutes", "Högsta ålder på mätvärden · minuter", 5, 1440, 1, "För gamla eller saknade värden pausar automatiken."],
+  ["auto_base_limit", "Automatisk baskorrigering högst · steg", 0.5, 5, 0.5, "Hur långt grundvärdet får flyttas automatiskt åt vardera hållet."],
 ];
 let settings;
 let entities = [];
@@ -118,6 +119,100 @@ function selectOptions(id, predicate, configured = settings[id]) {
     select.add(new Option(`${configured} (saknas / ej tillgänglig)`, configured));
   }
   select.value = configured;
+}
+
+// Pump settings chosen as a select entity plus two of its own options.
+const MODE_PICKERS = {
+  hot_water: {
+    entity: "hot_water_mode_entity", options: ["hot_water_cheap_option", "hot_water_normal_option"],
+    hint: /comfort_mode|hot_?water|varmvatten|dhw/i,
+    // NIBE's usual pair when a newly chosen select has neither current mode.
+    defaults: (options) => [options.includes("Normal") ? "Normal" : options[0], options.includes("Economy") ? "Economy" : options[1] ?? options[0]],
+  },
+  aux: {
+    entity: "aux_limit_entity", options: ["aux_limit_option", "aux_normal_option"],
+    hint: /electrical_add|eltillsats|add_heat/i,
+    // Smallest step above zero when expensive, and whatever the pump uses today as the usual limit.
+    defaults: (options, entity) => [options.find((o) => parseFloat(o) > 0) ?? options[0], entity?.state ?? options.at(-1)],
+  },
+};
+
+function renderModeSelects(picker, entityId, first, second) {
+  const { entity, hint } = MODE_PICKERS[picker];
+  const select = $(entity);
+  select.replaceChildren(new Option("Inte vald", ""));
+  // Likely selects first; every select stays available for other pumps.
+  const selects = entities.filter((e) => e.entity_id.startsWith("select."));
+  const likely = (e) => hint.test(`${e.entity_id} ${e.name}`) && !/schedul|schema/i.test(e.entity_id);
+  for (const item of [...selects.filter(likely), ...selects.filter((e) => !likely(e))]) {
+    select.add(new Option(`${item.name} · ${item.entity_id}`, item.entity_id));
+  }
+  if (entityId && !selects.some((e) => e.entity_id === entityId)) select.add(new Option(`${entityId} (saknas / ej tillgänglig)`, entityId));
+  select.value = entityId || "";
+  renderModes(picker, first, second);
+}
+
+function pickerChanged(picker) {
+  const { entity, options: ids, defaults } = MODE_PICKERS[picker];
+  const chosen = entities.find((e) => e.entity_id === $(entity).value);
+  const options = chosen?.options || [];
+  const fallback = defaults(options, chosen);
+  // A newly chosen select keeps the current modes if it has them.
+  renderModes(picker, ...ids.map((id, i) => options.includes($(id).value) ? $(id).value : fallback[i]));
+}
+
+function renderModes(picker, first, second) {
+  const { entity, options: ids, defaults } = MODE_PICKERS[picker];
+  const chosen = entities.find((e) => e.entity_id === $(entity).value);
+  const options = chosen?.options || [];
+  const fallback = defaults(options, chosen);
+  for (const [i, configured] of [first, second].entries()) {
+    const select = $(ids[i]);
+    select.replaceChildren(...options.map((option) => new Option(option, option)));
+    if (configured && !options.includes(configured)) {
+      select.add(new Option(options.length ? `${configured} (finns inte i pumpen)` : configured, configured));
+    }
+    select.value = configured || fallback[i] || "";
+  }
+}
+
+let notifyServices = null;
+
+function renderNotifyOptions(configured) {
+  const select = $("notify_service");
+  select.replaceChildren(new Option("Bara Home Assistants aviseringar", ""));
+  for (const service of notifyServices || []) select.add(new Option(service.name, service.service));
+  if (configured && !Array.from(select.options).some((option) => option.value === configured)) {
+    select.add(new Option(`${configured}${notifyServices ? " (saknas i Home Assistant)" : ""}`, configured));
+  }
+  select.value = configured || "";
+  // Without any phone or other notify service, explain how to get one instead of an empty list.
+  $("notify-help").hidden = !notifyServices || notifyServices.length > 0;
+  $("notify-test").disabled = !select.value;
+}
+
+async function refreshNotifyServices() {
+  try {
+    notifyServices = (await api("notify")).services;
+    $("notify-status").textContent = "";
+  } catch (error) {
+    $("notify-status").textContent = `Notify-tjänsterna kunde inte hämtas: ${error.message}`;
+  }
+  renderNotifyOptions($("notify_service").value || settings.notify_service);
+}
+
+async function testNotify() {
+  const service = $("notify_service").value;
+  $("notify-test").disabled = true;
+  $("notify-status").textContent = "Skickar…";
+  try {
+    await api("notify", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service }) });
+    $("notify-status").textContent = "Skickad. Kom den fram? Glöm inte att spara.";
+  } catch (error) {
+    $("notify-status").textContent = `Det gick inte: ${error.message}`;
+  } finally {
+    $("notify-test").disabled = !$("notify_service").value;
+  }
 }
 
 function entityHints() {
@@ -231,7 +326,15 @@ function renderSettings(formSettings = settings, preserveView = false) {
   selectOptions("price_entity", (entity) => entity.entity_id.startsWith("sensor."), formSettings.price_entity);
   selectOptions("forecast_entity", (entity) => entity.entity_id.startsWith("weather."), formSettings.forecast_entity);
   selectOptions("energy_entity", (entity) => entity.energy_meter_error === null, formSettings.energy_entity);
+  for (const id of ["grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity"]) {
+    selectOptions(id, (entity) => entity.entity_id.startsWith("sensor.") && ["kWh", "Wh", "MWh", "W", "kW"].includes(entity.unit), formSettings[id]);
+  }
+  renderNotifyOptions(formSettings.notify_service);
+  renderModeSelects("hot_water", formSettings.hot_water_mode_entity, formSettings.hot_water_cheap_option, formSettings.hot_water_normal_option);
+  renderModeSelects("aux", formSettings.aux_limit_entity, formSettings.aux_limit_option, formSettings.aux_normal_option);
   $("price_provider").value = formSettings.price_provider;
+  $("price_mode").value = formSettings.price_mode;
+  renderPriceMode();
   const rooms = entities.filter((entity) => isTemperature(entity) || entity.entity_id.startsWith("climate."));
   for (const id of formSettings.room_sensors) {
     if (!rooms.some((entity) => entity.entity_id === id)) rooms.push({ entity_id: id, name: id, state: "saknas", unit: "" });
@@ -309,6 +412,26 @@ async function findPump() {
   }
 }
 
+function renderPriceMode() {
+  const relative = $("price_mode").value === "relative";
+  $("price-relative-fields").hidden = $("price-relative-help").hidden = !relative;
+  for (const id of ["price_low", "price_high"]) $(id).closest("div").hidden = relative;
+}
+
+function renderStatusExtras(state) {
+  const warnings = state.warnings || [];
+  $("status-warnings").replaceChildren(...warnings.map((text) => {
+    const item = document.createElement("li");
+    item.textContent = text;
+    return item;
+  }));
+  $("status-warnings").hidden = !warnings.length;
+  const base = state.base_correction;
+  $("auto-base-status").textContent = base?.enabled
+    ? `Just nu ${base.value > 0 ? "+" : ""}${displayNumber(base.value)} steg av högst ±${displayNumber(base.limit)}.`
+    : base && base.value ? `Avstängd. Sparad korrigering ${displayNumber(base.value)} steg används inte.` : "";
+}
+
 function readSettings() {
   const result = { ...settings };
   for (const [key, value] of Object.entries(settings)) {
@@ -361,6 +484,63 @@ function featureTone(card, pill, tone, text) {
   $(pill).textContent = text;
 }
 
+let fireplaceManualBusy = false;
+
+async function manualFireplace() {
+  if (fireplaceManualBusy) return;
+  fireplaceManualBusy = true;
+  $("fireplace-manual-start").disabled = true;
+  try {
+    await api("fireplace", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "start" }) });
+  } catch (error) {
+    $("fireplace-manual-status").textContent = `Det gick inte: ${error.message}`;
+    return;
+  } finally {
+    fireplaceManualBusy = false;
+    $("fireplace-manual-start").disabled = false;
+  }
+  await refreshStatus();
+}
+
+function renderHotWaterControl() {
+  const state = lastStatus?.hot_water;
+  const text = !state?.enabled ? "" : state.error ? state.error
+    : `Varmvattenläge ${state.current ?? "okänt"} · önskat ${state.desired} (${state.reason}).${state.note ? ` ${state.note}` : ""}${state.next_change_at
+      ? ` Nästa ändring tidigast ${new Date(state.next_change_at * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.` : ""}`;
+  $("hw-control").textContent = text;
+  $("hw-control").hidden = !text;
+  $("hot-water-settings-status").textContent = text || (settings?.hot_water_price_enabled ? "Väntar på nästa avläsning." : "");
+}
+
+function renderAuxLimitControl() {
+  const state = lastStatus?.aux_limit;
+  const pending = lastStatus?.aux_recovery;
+  const text = !state?.enabled ? (pending ? `Återställningen av elpatronens max eltillsats har inte kunnat bekräftas. Kontrollera ${pending.entity_id} på pumpen.` : "") : state.error ? state.error
+    : `Max eltillsats ${state.current ?? "okänd"} · önskad ${state.desired} (${state.reason}).${state.note ? ` ${state.note}` : ""}${state.next_change_at
+      ? ` Nästa sänkning tidigast ${new Date(state.next_change_at * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.` : ""}`;
+  $("aux-limit-control").textContent = text;
+  $("aux-limit-control").hidden = !text;
+  $("aux-limit-settings-status").textContent = text || (settings?.aux_limit_enabled ? "Väntar på nästa avläsning." : "");
+  $("aux-recovery-ack").hidden = !pending;
+}
+
+async function acknowledgeAuxRecovery() {
+  const pending = lastStatus?.aux_recovery;
+  if (!pending) return;
+  if (!window.confirm(`Kontrollera direkt på pumpen att max eltillsats är ${pending.normal}. Fortsätt bara om du har kontrollerat värdet. Automatisk elpatronbegränsning stängs av.`)) return;
+  $("aux-recovery-ack").disabled = true;
+  try {
+    const result = await api("aux-recovery", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmed: true, entity_id: pending.entity_id, normal: pending.normal }) });
+    $("aux-recovery-status").textContent = result.message;
+    await refreshStatus();
+  } catch (error) {
+    $("aux-recovery-status").textContent = `Kontrollen kunde inte sparas: ${error.message}`;
+  } finally {
+    $("aux-recovery-ack").disabled = false;
+  }
+}
+
 function renderFireplace() {
   const state = lastStatus?.fireplace;
   $("fireplace-status").textContent = state?.message || (settings?.fireplace_enabled
@@ -375,6 +555,12 @@ function renderFireplace() {
   $("fireplace-learn-bar").style.width = `${Math.round(Math.min(1, completed / 3) * 100)}%`;
   if (state?.active_since != null) $("fireplace-status").textContent += ` Observerat förlopp från ${new Date(state.active_since * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.`;
   const enabled = state ? state.enabled : settings?.fireplace_enabled;
+  const active = state?.phase === "active";
+  // One press is enough; the observation decides when the extra heat has faded.
+  $("fireplace-manual").hidden = !enabled || active;
+  $("fireplace-manual-status").hidden = !enabled || active;
+  if (!fireplaceManualBusy) $("fireplace-manual-status").textContent =
+    "Starta kaminläget direkt i stället för att vänta på att extravärmen upptäcks. Det avslutas av sig självt när kaminrummet inte längre är varmare än övriga rum.";
   const [tone, text] = !enabled ? ["muted", "Av"]
     : state?.phase === "active" ? (state.contribution < 0 ? ["red", "Sänker värmen"] : ["amber", "Extravärme"])
     : state?.phase === "candidate" ? ["amber", "Misstänkt värme"]
@@ -615,6 +801,11 @@ function displayNumber(value) {
   return typeof value === "number" ? value.toLocaleString("sv-SE", { maximumFractionDigits: 2 }) : "—";
 }
 
+function duration(seconds) {
+  const minutes = Math.round(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ""}`;
+}
+
 let statusBusy = false;
 
 const vacationTime = (time) => new Date(time * 1000).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" });
@@ -766,12 +957,17 @@ async function refreshStatus() {
     lastStatus = state;
     renderVacation();
     renderFireplace();
+    renderHotWaterControl();
+    renderAuxLimitControl();
     renderRoomImpact();
     $("indoor").textContent = displayNumber(state.indoor);
     renderIndoorDiff();
     $("current-offset").textContent = displayNumber(state.current_offset);
     $("hero-offset").textContent = displayNumber(state.current_offset);
-    $("hero-offset-base").textContent = typeof settings?.base_offset === "number" ? ` · grundvärde ${displayNumber(settings.base_offset)}` : "";
+    const correction = state.base_correction?.enabled && state.base_correction.value ? state.base_correction.value : 0;
+    $("hero-offset-base").textContent = typeof settings?.base_offset === "number"
+      ? ` · grundvärde ${displayNumber(settings.base_offset)}${correction ? ` ${correction > 0 ? "+" : "−"} ${displayNumber(Math.abs(correction))} auto` : ""}` : "";
+    renderStatusExtras(state);
     $("outdoor-now").textContent = displayNumber(state.outdoor);
     $("outdoor-now").title = state.reading_errors?.outdoor || "";
     $("indoor").title = state.reading_errors?.indoor || "";
@@ -793,7 +989,7 @@ async function refreshStatus() {
       const shift = state.target_shift ? `${state.target_shift > 0 ? "Förvärmer före dyrt elpris" : "Dyrt elpris"}: målet är tillfälligt ${displayNumber(settings.target_temperature + state.target_shift)} °C. ` : "";
       const note = state.preheat?.note ? `${state.preheat.note} ` : "";
       const smoothed = typeof state.indoor_smoothed === "number" ? `Rumsregeln använder timmedel ${displayNumber(state.indoor_smoothed)} °C; aktuell temperatur visas ovan. ` : "";
-      $("explanation").textContent = `${shift}${note}${smoothed}Bas + rum (${displayNumber(c.room)}) + väder (${displayNumber(c.weather)}) + elpris (${displayNumber(c.price)}) + kamin (${displayNumber(c.fireplace ?? 0)}) → begränsat mål ${displayNumber(state.desired_offset)}. Nästa steg anpassas till pumpens steglängd och dina gränser.`;
+      $("explanation").textContent = `${shift}${note}${smoothed}Bas${c.base_correction ? ` + auto (${displayNumber(c.base_correction)})` : ""} + rum (${displayNumber(c.room)}) + väder (${displayNumber(c.weather)}) + elpris (${displayNumber(c.price)}) + kamin (${displayNumber(c.fireplace ?? 0)}) → begränsat mål ${displayNumber(state.desired_offset)}. Nästa steg anpassas till pumpens steglängd och dina gränser.`;
     } else {
       $("explanation").textContent = "Inget aktuellt förslag. Kontrollera inställningarna och statusmeddelandet.";
     }
@@ -803,6 +999,8 @@ async function refreshStatus() {
     lastStatus = null;
     renderVacation();
     renderFireplace();
+    renderHotWaterControl();
+    renderAuxLimitControl();
     renderRoomImpact();
     for (const id of ["indoor", "outdoor-now", "current-offset", "hero-offset", "desired-offset", "next-offset"]) $(id).textContent = "—";
     $("hero-offset-base").textContent = "";
@@ -835,11 +1033,12 @@ async function refreshSavedSettings() {
         if ((roomDraft && roomFields.includes(key)) || (priceDraft && priceFields.includes(key))
           || JSON.stringify(draft[key]) !== JSON.stringify(settings[key])) merged[key] = draft[key];
       }
-      const energyChanged = ["offset_entity", "energy_entity", "price_entity", "price_provider", "max_age_minutes"]
+      const energyChanged = ["offset_entity", "energy_entity", "price_entity", "price_provider", "max_age_minutes",
+        "grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity"]
         .some((key) => latest[key] !== settings[key]);
       settings = latest;
       renderSettings(merged, true);
-      if (energyChanged) { void refreshEnergy(); void refreshAuxiliary(); }
+      if (energyChanged) { void refreshEnergy(); void refreshAuxiliary(); void refreshSources(); }
     }
     renderSavedSettingsStatus();
   } catch (error) {
@@ -987,7 +1186,7 @@ async function save(config) {
     void refreshPlan();
     void refreshLearning();
     void refreshEnergy();
-    void refreshAuxiliary();
+    void refreshAuxiliary(); void refreshSources();
   } catch (error) {
     notice(`Kunde inte spara: ${error.message}`, true);
   } finally {
@@ -1042,6 +1241,7 @@ function drawChart(container, series, options) {
   values.push(...guides.map((guide) => guide.value));
   const pad = options.pad ?? 0.5;
   let minimum = Math.min(...values) - pad, maximum = Math.max(...values) + pad;
+  if (Math.min(...values) >= 0 && minimum < 0) minimum = 0;
   if (options.integer !== false) { minimum = Math.floor(minimum); maximum = Math.ceil(maximum); }
   if (maximum - minimum < 1e-9) { minimum -= 1; maximum += 1; }
   const width = chartWidth(container), narrow = width < 520;
@@ -1161,10 +1361,14 @@ function metric(item) {
   label.textContent = item.label;
   const value = document.createElement("strong");
   // Home Assistant states are raw strings ("36.8"); show numbers the Swedish way like the rest of the page.
-  const shown = typeof item.value === "string" && /^-?\d+(\.\d+)?$/.test(item.value) ? displayNumber(Number(item.value)) : item.value;
-  value.textContent = item.value === null ? "Okänt" : `${shown} ${item.unit || ""}`.trim();
+  const shown = typeof item.value === "string" && /^-?\d+(\.\d+)?$/.test(item.value) ? displayNumber(Number(item.value)) : operationText(item.value);
+  const latest = item.code != null ? (item.code_name ? `${item.code} · ${item.code_name}` : `Kod ${item.code}`) : null;
+  const cleared = item.code != null && item.active === false;
+  value.textContent = item.value === null ? "Okänt" : cleared ? "Inget aktivt larm" : latest ?? `${shown} ${item.unit || ""}`.trim();
   const detail = document.createElement("small");
-  detail.textContent = item.error || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE")}` : "");
+  const since = item.since ? ` · sedan ${new Date(item.since * 1000).toLocaleDateString("sv-SE", { day: "numeric", month: "short" })}` : "";
+  detail.textContent = item.error || (cleared ? (item.code ? `Senaste larmkod ${latest} är kvitterad` : "") : item.code != null ? `Senaste larmkod${since} · aktiv status saknas` : "")
+    || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE")}` : "");
   if (item.entity_id) block.title = item.entity_id;
   block.append(label, value, detail);
   return block;
@@ -1298,14 +1502,16 @@ async function refreshAlarms() {
     lastAlarm = data;
     $("alarm-status").textContent = data.error
       ? `Larmstatus är osäker: ${data.error}`
-      : data.active === true ? `Aktivt pumplarm${data.code !== null ? ` ${data.code}` : ""}`
+      : data.active === true ? `Aktivt pumplarm${data.code !== null ? ` ${data.code}${data.info ? ` ${data.info.name}` : ""}` : ""}`
       : data.active === false ? "Inget aktivt pumplarm rapporterat." : "Larmstatus är okänd.";
     $("alarm-explanation").textContent = data.explanation;
-    $("alarm-observations").replaceChildren(...data.observations.map(metric));
+    // Operating values and rooms help troubleshoot an active alarm; without one they repeat the pump card.
+    const active = data.active === true;
+    $("alarm-observations").replaceChildren(...(active ? data.observations.filter((item) => item.value !== null).map(metric) : []));
     $("alarm-pause").hidden = !data.can_pause;
-    $("alarm-rooms").replaceChildren(...data.rooms.map((room) => {
+    $("alarm-rooms").replaceChildren(...(active || data.can_pause ? data.rooms : []).map((room) => {
       const item = document.createElement("li");
-      item.textContent = `${room.name}: ${displayNumber(room.temperature)} °C · börvärde ${displayNumber(room.setpoint)} °C${room.error ? ` · ${room.error}` : ""}`;
+      item.textContent = `${room.name}: ${displayNumber(room.temperature)} °C${room.setpoint == null ? "" : ` · börvärde ${displayNumber(room.setpoint)} °C`}${room.error ? ` · ${room.error}` : ""}`;
       return item;
     }));
   } catch (error) {
@@ -1419,9 +1625,13 @@ function historyChangeText(change) {
 }
 
 function historyMarkers(changes) {
-  return changes.map((change) => ({
+  // A confirmed request and the pump readback of the same value are one change on the chart.
+  const confirmed = changes.filter((change) => change.status === "confirmed");
+  const shown = changes.filter((change) => change.status !== "observed" || !confirmed.some((other) =>
+    other.kind === change.kind && other.value === change.value && Math.abs(other.timestamp - change.timestamp) <= 900));
+  return shown.map((change) => ({
     time: change.timestamp,
-    label: `${change.kind === "offset" ? "K" : "T"} ${displayNumber(change.value)} · ${["confirmed", "observed"].includes(change.status) ? "återläst" : "begäran"}`,
+    label: `${change.kind === "offset" ? "K" : "T"} ${displayNumber(change.value)}${["confirmed", "observed"].includes(change.status) ? "" : " · begäran"}`,
     short: `${change.kind === "offset" ? "K" : "T"}${change.id}`,
     className: change.status === "confirmed" ? "done-auto" : "done-other",
     title: historyChangeText(change),
@@ -1444,10 +1654,11 @@ async function refreshEnergy() {
     const data = await api("energy");
     if (signature() !== requested) { pendingRefreshes.add("energy"); return; }
     const totals = data.totals;
+    showEnergySection(true);
     $("energy-data").hidden = false;
     const covered = totals.coverage_seconds / 3600;
     const priced = totals.priced_seconds / 3600;
-    $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name} · ${data.meter.entity_id}. ${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
+    $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name}. ${new Date(data.start * 1000).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" })}–${clock(data.end)}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
     $("energy-metrics").replaceChildren(
       metric({ label: `${data.method === "power" ? "Uppskattad el" : "Använd el"} · ${totals.kwh === null ? "endast täckt del" : "hela perioden"}`,
         value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
@@ -1497,10 +1708,68 @@ async function refreshEnergy() {
   } catch (error) {
     if (signature() !== requested) { pendingRefreshes.add("energy"); return; }
     $("energy-data").hidden = true;
+    // Without any electricity meter for the pump the card has nothing to show; the sources card says how to add one.
+    showEnergySection(!(!settings.energy_entity && /Ingen entydig/.test(error.message)));
     $("energy-status").textContent = `Kunde inte läsa elförbrukningen: ${error.message.replace(/[.!?]+\s*$/, "")}. Försöker igen automatiskt.`;
   } finally {
     energyBusy = false;
     if (pendingRefreshes.delete("energy")) void refreshEnergy();
+  }
+}
+
+function showEnergySection(visible) {
+  $("energy-section").hidden = !visible;
+  document.querySelector('.page-nav a[href="#energy-section"]').hidden = !visible;
+}
+
+let sourcesBusy = false;
+
+async function refreshSources() {
+  if (sourcesBusy) { pendingRefreshes.add("sources"); return; }
+  sourcesBusy = true;
+  const pill = $("sources-pill");
+  try {
+    if (!settings?.grid_import_entity) {
+      $("sources-data").hidden = true;
+      $("sources-status").textContent = "Välj husets elflöden under Inställningar → Husets el för att se andelen sol och batteri.";
+      pill.textContent = "Inte vald";
+      pill.dataset.tone = "muted";
+      return;
+    }
+    const data = await api("sources");
+    const t = data.house_totals;
+    const share = (part) => (t.house_kwh > 0 ? Math.round((100 * part) / t.house_kwh) : null);
+    $("sources-status").textContent = `${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}.${data.house_complete ? "" : " Vissa timmar saknar data och räknas inte."}`;
+    $("sources-metrics").replaceChildren(
+      metric({ label: "Huset använde", value: displayNumber(t.house_kwh), unit: "kWh" }),
+      metric({ label: `Från elnätet · ${share(t.grid_kwh) ?? "–"} %`, value: displayNumber(t.grid_kwh), unit: "kWh" }),
+      metric({ label: `Direkt från sol · ${share(t.solar_kwh) ?? "–"} %`, value: displayNumber(t.solar_kwh), unit: "kWh" }),
+      metric({ label: `Från batteri · ${share(t.battery_kwh) ?? "–"} %`, value: displayNumber(t.battery_kwh), unit: "kWh" }),
+    );
+    const local = share(t.solar_kwh + t.battery_kwh);
+    pill.textContent = local === null ? "Ingen data" : `${local} % sol och batteri`;
+    pill.dataset.tone = local >= 50 ? "green" : local > 0 ? "amber" : "muted";
+    drawChart($("sources-chart"), [
+      { name: "Elnät", points: data.house.map((h) => [h.start, h.grid_kwh]), until: data.end },
+      { name: "Sol", points: data.house.map((h) => [h.start, h.solar_kwh]), until: data.end },
+      { name: "Batteri", points: data.house.map((h) => [h.start, h.battery_kwh]), until: data.end },
+    ], { start: data.start, end: data.end, unit: " kWh", integer: false, pad: 0.1, left: 96,
+      empty: "Inga fullständiga timvärden.", label: "Husets el per timme" });
+    legend($("sources-legend"), [{ name: "Elnät" }, { name: "Sol" }, { name: "Batteri" }]);
+    const p = data.pump_totals;
+    $("sources-pump").textContent = p
+      ? `Pumpen · uppskattat: ${displayNumber(p.kwh)} kWh, varav ${displayNumber(p.solar_kwh)} från sol, ${displayNumber(p.battery_kwh)} från batteri och ${displayNumber(p.grid_kwh)} från elnätet.${p.grid_cost != null ? ` Uppskattat elpris för nätandel ${displayNumber(p.grid_cost)} ${data.currency || ""}; teoretiskt värde för lokal andel ${displayNumber(p.avoided_cost)} ${data.currency || ""}, före exempelvis ersättning för såld el.` : ""}${p.complete ? "" : " Alla timmar kunde inte fördelas; siffrorna för källor och kostnad gäller bara timmar med underlag."}`
+      : "Pumpens andel visas när en elmätare för pumpen är vald under Inställningar → Din värmepump.";
+    $("sources-pump").title = p ? "" : data.pump_error || "";
+    $("sources-data").hidden = false;
+  } catch (error) {
+    $("sources-data").hidden = true;
+    $("sources-status").textContent = `Kunde inte räkna husets elflöden: ${error.message}`;
+    pill.textContent = "Fel";
+    pill.dataset.tone = "red";
+  } finally {
+    sourcesBusy = false;
+    if (pendingRefreshes.delete("sources")) void refreshSources();
   }
 }
 
@@ -1521,18 +1790,20 @@ async function refreshAuxiliary() {
     if (signature() !== requested) { pendingRefreshes.add("auxiliary"); return; }
     const totals = data.totals;
     const covered = totals.coverage_seconds / 3600;
-    $("auxiliary-status").textContent = `${data.meter.name} · ${data.meter.entity_id}. ${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}.`;
+    $("auxiliary-status").textContent = `${data.meter.name} · ${new Date(data.start * 1000).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" })}–${clock(data.end)}.`;
+    $("auxiliary-status").title = data.meter.entity_id;
     $("auxiliary-current").textContent = data.current.error
       ? `Just nu: okänt. ${data.current.error}`
       : `Senast avläst ${new Date(data.checked_at * 1000).toLocaleString("sv-SE")}: elpatronen är ${data.current.active ? "i drift" : "av"} · ${displayNumber(data.current.kw)} kW.`;
     $("auxiliary-metrics").replaceChildren(
       metric({ label: "Observerade körperioder · täckt del", value: covered > 0 ? data.runs.length : null, unit: "st" }),
-      metric({ label: "Observerad drifttid · täckt del", value: covered > 0 ? displayNumber(data.runtime_seconds / 60) : null, unit: "min" }),
+      metric({ label: "Observerad drifttid · täckt del", value: covered > 0 ? duration(data.runtime_seconds) : null }),
       metric({ label: "Uppskattad el · täckt del", value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
       metric({ label: "Uppskattad kostnad · prissatt del", value: totals.priced_seconds > 0 ? displayNumber(totals.partial_cost) : null, unit: data.currency || "" }),
     );
     $("auxiliary-coverage").textContent = `Datatäckning ${displayNumber(covered)} av 24 timmar. ${data.observed_starts} ${data.observed_starts === 1 ? "start" : "starter"} med observerad övergång från av till på. ${data.skipped_intervals} intervall med lucka eller ogiltiga värden utelämnade. Perioder kan ha börjat före eller fortsatt efter den täckta delen.`;
-    $("auxiliary-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(totals.priced_seconds / 3600)} av 24 timmar. ${data.price_error || "Endast avgifter och moms som finns i prisgivaren ingår."}`;
+    $("auxiliary-price-status").title = data.price_entity || "";
+    $("auxiliary-price-status").textContent = `${data.price_entity ? (data.price_provider === "nordpool" ? "Nord Pool" : "Tibber") : "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(totals.priced_seconds / 3600)} av 24 timmar. ${data.price_error || "Endast avgifter och moms som finns i prisgivaren ingår."}`;
     drawChart($("auxiliary-chart"), [{
       name: "Elpatronens uppskattade el", points: data.hours.map((hour) => [hour.start, hour.kwh]), until: data.end,
     }], { start: data.start, end: data.end, unit: " kWh", integer: false, left: 96, pad: 0.1,
@@ -1554,7 +1825,7 @@ async function refreshAuxiliary() {
       const row = body.insertRow();
       for (const value of [
         `${new Date(run.start * 1000).toLocaleString("sv-SE")}–${clock(run.end)}. ${run.start_observed ? "Start observerad" : "Början okänd"}. ${run.end_observed ? "Stopp observerat" : "Slut okänt"}.`,
-        `${displayNumber(run.seconds / 60)} min`, `${displayNumber(run.max_kw)} kW`, `${displayNumber(run.kwh)} kWh`,
+        duration(run.seconds), `${displayNumber(run.max_kw)} kW`, `${displayNumber(run.kwh)} kWh`,
         `${displayNumber(run.cost)} ${data.currency || ""}${run.cost === null ? ` (prissatt del ${run.priced_seconds > 0 ? displayNumber(run.partial_cost) : "—"})` : ""}`,
         context,
       ]) row.insertCell().textContent = value;
@@ -1564,6 +1835,8 @@ async function refreshAuxiliary() {
       ? "Inga körperioder observerades i den täckta delen. Det säger inget om dataluckorna."
       : "Underlag saknas. Inga slutsatser om drifttid eller kostnad kan dras.";
     $("auxiliary-data").hidden = false;
+    // The chart was drawn while hidden, so redraw it at its real width.
+    chartRedraws.get($("auxiliary-chart"))?.();
     featureTone("auxiliary-section", "auxiliary-pill", data.current.error ? "muted" : data.current.active ? "amber" : "green",
       data.current.error ? "Okänt just nu" : data.current.active ? `I drift · ${displayNumber(data.current.kw)} kW` : "Av just nu");
   } catch (error) {
@@ -1574,7 +1847,7 @@ async function refreshAuxiliary() {
     featureTone("auxiliary-section", "auxiliary-pill", "muted", "Ingen data");
   } finally {
     auxiliaryBusy = false;
-    if (pendingRefreshes.delete("auxiliary")) void refreshAuxiliary();
+    if (pendingRefreshes.delete("auxiliary")) void refreshAuxiliary(); void refreshSources();
   }
 }
 
@@ -1883,6 +2156,8 @@ function drawTank(container, data) {
   const svg = svgElement("svg", { viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true" });
   svg.append(svgElement("rect", { x: inner.x - 6, y: inner.y - 8, width: inner.w + 12, height: inner.h + 16, rx: 26, class: "hw-shell" }));
   const level = typeof data.level === "number" ? data.level : null;
+  // Text over the coloured water is white; over the empty part it stays dark.
+  const onFill = (y) => (level !== null && y - 6 > inner.y + inner.h * (1 - level) ? " on-fill" : "");
   const clip = svgElement("clipPath", { id: "hw-clip" });
   clip.append(svgElement("rect", { x: inner.x, y: inner.y, width: inner.w, height: inner.h, rx: 20 }));
   svg.append(clip);
@@ -1891,12 +2166,12 @@ function drawTank(container, data) {
     const fill = inner.h * level;
     const tone = level >= 0.5 ? "hw-hot" : level >= 0.25 ? "hw-warm" : "hw-cold";
     svg.append(svgElement("rect", { x: inner.x, y: inner.y + inner.h - fill, width: inner.w, height: fill, class: `hw-fill ${tone}`, "clip-path": "url(#hw-clip)" }));
-    svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h / 2 + 8, "text-anchor": "middle", class: "hw-percent" }, `${Math.round(level * 100)}%`));
+    svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h / 2 + 8, "text-anchor": "middle", class: `hw-percent${onFill(inner.y + inner.h / 2 + 8)}` }, `${Math.round(level * 100)}%`));
   } else {
     svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h / 2 + 6, "text-anchor": "middle", class: "hw-percent small" }, "okänt"));
   }
-  if (typeof data.top === "number") svg.append(svgElement("text", { x: width / 2, y: inner.y + 22, "text-anchor": "middle", class: "hw-label" }, `topp ${displayNumber(data.top)}°`));
-  if (typeof data.charge === "number") svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h - 14, "text-anchor": "middle", class: "hw-label" }, `BT6 ${displayNumber(data.charge)}°`));
+  if (typeof data.top === "number") svg.append(svgElement("text", { x: width / 2, y: inner.y + 22, "text-anchor": "middle", class: `hw-label${onFill(inner.y + 22)}` }, `topp ${displayNumber(data.top)}°`));
+  if (typeof data.charge === "number") svg.append(svgElement("text", { x: width / 2, y: inner.y + inner.h - 14, "text-anchor": "middle", class: `hw-label${onFill(inner.y + inner.h - 14)}` }, `BT6 ${displayNumber(data.charge)}°`));
   if (data.charging) svg.append(svgElement("text", { x: width / 2, y: 16, "text-anchor": "middle", class: "hw-charging" }, "⚡ laddar"));
   container.append(svg);
 }
@@ -2048,7 +2323,7 @@ async function refreshLearning() {
     $("learn-message").textContent = [model?.message, data.prediction_note].filter(Boolean).join(" ");
     featureTone("learning-card", "learn-pill", { learning: "blue", rough: "amber", good: "green" }[model?.status] || "muted",
       { learning: "Lär sig", rough: "Preliminär", good: "Känner huset" }[model?.status] || "Ingen modell");
-    $("learn-meter-text").textContent = model ? `${displayNumber(model.days)} av 7 dygn` : "–";
+    $("learn-meter-text").textContent = model ? (model.days >= 7 ? `Klart · ${displayNumber(model.days)} dygn` : `${displayNumber(model.days)} av 7 dygn`) : "–";
     $("learn-meter-bar").style.width = `${model ? Math.round(Math.max(0, Math.min(1, model.hours / model.needed_hours)) * 100) : 0}%`;
     $("learn-message").hidden = !$("learn-message").textContent;
     $("learn-progress").replaceChildren(...(model ? [
@@ -2117,6 +2392,17 @@ const fieldLabels = {
   max_offset: "Högsta förskjutning", weather_gain: "Väderpåverkan", room_gain: "Rumspåverkan",
   price_low: "Lågprisgräns", price_high: "Högprisgräns", cheap_boost: "Höjning vid lågt pris",
   expensive_reduction: "Sänkning vid högt pris", deadband: "Toleransband",
+  skip_silent_rooms: "Styr vidare vid tyst givare", price_mode: "Prisnivå", price_low_percent: "Billigt (andel av dygnet)",
+  price_high_percent: "Dyrt (andel av dygnet)", auto_base_enabled: "Automatisk baskorrigering",
+  auto_base_limit: "Gräns för baskorrigering", publish_sensors: "Sensorer i Home Assistant",
+  pause_notify_minutes: "Meddela vid paus efter", notify_service: "Notify-tjänst",
+  hot_water_price_enabled: "Varmvatten på billig el", hot_water_mode_entity: "Varmvattenläge",
+  hot_water_cheap_option: "Läge vid billig el", hot_water_normal_option: "Vanligt varmvattenläge",
+  aux_limit_enabled: "Begränsa elpatronen vid dyr el", aux_limit_entity: "Max eltillsats-inställning",
+  aux_limit_option: "Max eltillsats vid dyr el", aux_normal_option: "Vanlig max eltillsats",
+  aux_limit_max_drop: "Släpp begränsning under målet", aux_limit_min_outdoor: "Ingen begränsning under utetemp",
+  grid_import_entity: "Köpt el", grid_export_entity: "Såld el", solar_entity: "Solproduktion",
+  battery_discharge_entity: "Batteri ur", battery_charge_entity: "Batteri in",
   min_interval_minutes: "Minsta ändringsintervall", max_step: "Största steg", max_age_minutes: "Högsta mätvärdesålder",
   preheat_enabled: "Förvärmning", preheat_degrees: "Förvärmning · grader",
 };
@@ -2297,7 +2583,7 @@ async function init() {
     const discovered = settings;
     settings = saved;
     renderSettings(discovered);
-    await refreshAreas();
+    await Promise.all([refreshAreas(), refreshNotifyServices()]);
     $("save").disabled = $("save-near").disabled = $("pause").disabled = false;
     $("notice").hidden = true;
   } catch (error) {
@@ -2377,6 +2663,12 @@ async function init() {
   $("fireplace_max_age_minutes").addEventListener("input", updateSaveState);
   $("refresh-alarms").addEventListener("click", () => { void refreshAlarms(); void refreshCloudAlarms(); });
   $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
+  $("aux-recovery-ack").addEventListener("click", () => void acknowledgeAuxRecovery());
+  $("fireplace-manual-start").addEventListener("click", () => void manualFireplace());
+  $("notify-test").addEventListener("click", () => void testNotify());
+  $("hot_water_mode_entity").addEventListener("change", () => pickerChanged("hot_water"));
+  $("aux_limit_entity").addEventListener("change", () => pickerChanged("aux"));
+  $("notify_service").addEventListener("change", () => { $("notify-test").disabled = !$("notify_service").value; $("notify-status").textContent = ""; });
   $("discover-cloud-devices").addEventListener("click", () => void discoverCloudDevices());
   $("save-cloud-device").addEventListener("click", () => void saveCloudDevice());
   $("cloud-device-choice").addEventListener("change", () => {
@@ -2407,8 +2699,10 @@ async function init() {
   $("outdoor_entity").addEventListener("change", entityHints);
   $("price_entity").addEventListener("change", entityHints);
   $("price_provider").addEventListener("change", changePriceProvider);
+  $("price_mode").addEventListener("change", renderPriceMode);
   $("refresh-history").addEventListener("click", () => void refreshHistory());
   $("refresh-energy").addEventListener("click", () => void refreshEnergy());
+  $("refresh-sources").addEventListener("click", () => void refreshSources());
   $("refresh-auxiliary").addEventListener("click", () => void refreshAuxiliary());
   $("history-entity").addEventListener("change", () => { if (historyData) renderHistory(); });
   $("refresh-plan").addEventListener("click", () => void refreshPlan());
@@ -2432,7 +2726,7 @@ async function init() {
   void refreshHotWater();
   void refreshLearning();
   void refreshEnergy();
-  void refreshAuxiliary();
+  void refreshAuxiliary(); void refreshSources();
   window.setInterval(refreshStatus, 15000);
   window.setInterval(refreshLearning, 900000);
   window.setInterval(refreshHotWater, 120000);
@@ -2440,6 +2734,7 @@ async function init() {
   window.setInterval(refreshHistory, 300000);
   window.setInterval(refreshEnergy, 300000);
   window.setInterval(refreshAuxiliary, 120000);
+  window.setInterval(refreshSources, 300000);
   window.setInterval(refreshForecast, 1800000);
   window.setInterval(refreshPlan, 300000);
   const resumeDashboard = () => {
@@ -2453,7 +2748,7 @@ async function init() {
     void refreshHotWater();
     void refreshTest();
     void refreshEnergy();
-    void refreshAuxiliary();
+    void refreshAuxiliary(); void refreshSources();
   };
   document.addEventListener("visibilitychange", resumeDashboard);
   window.addEventListener("pageshow", resumeDashboard);

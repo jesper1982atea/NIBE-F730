@@ -12,6 +12,9 @@ ENERGY_UNITS = {"Wh": 0.001, "kWh": 1, "MWh": 1000}
 POWER_UNITS = {"W": 0.001, "kW": 1}
 MAX_GAP_SECONDS = 7200
 MAX_POWER_GAP_SECONDS = 900
+# House flow counters often step 0.1 kWh at a time and can stand still for hours, so an
+# increase is spread evenly over the time since the previous step, up to a day.
+MAX_SOURCE_GAP_SECONDS = 86400
 
 
 def produced_energy(entity):
@@ -93,7 +96,7 @@ def price_unit(unit):
     return ("SEK" if currency.lower() == "kr" else currency.upper()), factor
 
 
-def samples(rows, entity_id, prices=False, power=False):
+def samples(rows, entity_id, prices=False, power=False, check_meter=True):
     attrs = {}
     result = {}
     currency = None
@@ -112,11 +115,11 @@ def samples(rows, entity_id, prices=False, power=False):
                 raise ControlError("Prisgivarens valuta har ändrats under perioden. Kostnaden kan inte summeras.")
             currency = current_currency
         else:
-            error = meter_error({"entity_id": entity_id, "attributes": attrs})
+            error = meter_error({"entity_id": entity_id, "attributes": attrs}) if check_meter else None
             if error:
                 raise ControlError(error)
             units = POWER_UNITS if power else ENERGY_UNITS
-            if attrs["unit_of_measurement"] not in units:
+            if attrs.get("unit_of_measurement") not in units:
                 raise ControlError("Givarens mätmetod har ändrats under perioden. Historiken kan inte kombineras.")
             scale = units[attrs["unit_of_measurement"]]
         value = None
@@ -224,6 +227,97 @@ def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, p
         "price_error": price_error, "skipped_intervals": skipped,
         "method": "power" if power else "counter",
     }
+
+
+def hourly_energy(rows, entity_id, start, end, power=False):
+    """kWh per whole hour for one of the house's electricity flows; None where an hour is not covered.
+
+    Counters such as solar yield stay unchanged for hours at night and step 0.1 kWh at a
+    time. Home Assistant then records no new rows, so an increase is spread over the time
+    since the previous step (at most a day), and the last value is held until ``end``.
+    """
+    meter, _ = samples(rows, entity_id, power=power, check_meter=False)
+    if not power and meter and meter[-1][0] < end and meter[-1][1] is not None:
+        meter = [*meter, (end, meter[-1][1])]
+    intervals = []
+    for (left, previous), (right, current) in zip(meter, meter[1:]):
+        if right <= start or left >= end or previous is None or current is None:
+            continue
+        if power:
+            if right - left > MAX_POWER_GAP_SECONDS:
+                continue
+            delta = previous * ((right - left) / 3600)
+        else:
+            delta = current - previous
+            if delta < 0 or right - left > MAX_SOURCE_GAP_SECONDS:
+                continue
+        intervals.append((max(start, left), min(end, right), delta / (right - left)))
+    hours = []
+    for stamp in range(int(start), int(end), 3600):
+        covered = kwh = 0.0
+        for left, right, rate in intervals:
+            low, high = max(left, stamp), min(right, stamp + 3600)
+            if high > low:
+                covered += high - low
+                kwh += rate * (high - low)
+        hours.append(kwh if math.isclose(covered, min(3600, end - stamp), abs_tol=0.01) else None)
+    return hours
+
+
+def split_sources(flows, start, end):
+    """Where the house's electricity came from each hour.
+
+    House use = bought + solar + battery out - sold - battery in. What was not bought came
+    from the battery (at most what it delivered) and the rest straight from the panels.
+    """
+    count = len(range(int(start), int(end), 3600))
+    get = lambda key, index: flows[key][index] if key in flows else 0.0
+    hours = []
+    for index, stamp in enumerate(range(int(start), int(end), 3600)):
+        hour = {"start": stamp, "end": min(end, stamp + 3600), "house_kwh": None, "grid_kwh": None,
+                "solar_kwh": None, "battery_kwh": None, "grid_share": None, "solar_share": None, "battery_share": None}
+        values = {key: get(key, index) for key in ("grid_import", "grid_export", "solar", "battery_discharge", "battery_charge")}
+        if any(value is None for value in values.values()):
+            hours.append(hour)
+            continue
+        house = (values["grid_import"] + values["solar"] + values["battery_discharge"]
+                 - values["grid_export"] - values["battery_charge"])
+        if house < -0.001:
+            hours.append(hour)
+            continue
+        if house <= 0.001:
+            hour.update(house_kwh=0.0, grid_kwh=0.0, solar_kwh=0.0, battery_kwh=0.0)
+            hours.append(hour)
+            continue
+        local = max(0.0, house - values["grid_import"])
+        battery = min(values["battery_discharge"], local)
+        hour.update(house_kwh=house, grid_kwh=house - local, solar_kwh=local - battery, battery_kwh=battery,
+                    grid_share=(house - local) / house, solar_share=(local - battery) / house, battery_share=battery / house)
+        hours.append(hour)
+    assert len(hours) == count
+    return hours
+
+
+def pump_sources(pump_hours, source_hours):
+    """The pump gets the same mix as the whole house in each hour (an estimate, not a measurement)."""
+    by_start = {hour["start"]: hour for hour in source_hours}
+    result = []
+    for pump in pump_hours:
+        house = by_start.get(pump["start"])
+        row = {"start": pump["start"], "end": pump["end"], "kwh": pump["kwh"], "grid_kwh": None, "solar_kwh": None,
+               "battery_kwh": None, "grid_cost": None, "avoided_cost": None}
+        if (pump["kwh"] is not None and house and house["grid_share"] is not None
+                and pump["kwh"] <= house["house_kwh"] + 0.001):
+            row.update(grid_kwh=pump["kwh"] * house["grid_share"], solar_kwh=pump["kwh"] * house["solar_share"],
+                       battery_kwh=pump["kwh"] * house["battery_share"])
+            if pump["cost"] is not None:
+                row.update(grid_cost=pump["cost"] * house["grid_share"], avoided_cost=pump["cost"] * (1 - house["grid_share"]))
+        result.append(row)
+    keys = ("kwh", "grid_kwh", "solar_kwh", "battery_kwh", "grid_cost", "avoided_cost")
+    totals = {key: sum(values) if values else None
+              for key in keys for values in [[row[key] for row in result if row[key] is not None]]}
+    totals["complete"] = all(row["grid_kwh"] is not None for row in result)
+    return result, totals
 
 
 def change_comparisons(hours, changes):

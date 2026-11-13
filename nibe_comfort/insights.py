@@ -11,10 +11,11 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from controller import ControlError, alarm_code, alarm_sources, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, temperature, text_status
+from controller import SOURCE_ENTITIES, ControlError, alarm_code, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
-from energy import POWER_UNITS, consumption_report, discover_meter, meter_error, produced_energy
+from energy import ENERGY_UNITS, POWER_UNITS, consumption_report, discover_meter, hourly_energy, meter_error, produced_energy, pump_sources, split_sources
 from auxiliary import heater_entities, heater_report
+from alarm_codes import alarm_info, alarm_label
 
 
 def discover_tibber(states, registry):
@@ -109,7 +110,11 @@ def alarm_reading(pump_states, label, max_age, now, peers):
         if item["value"] is not None:
             try:
                 code = alarm_code(by_id[codes[0]])
-                item["value"] = f"Senaste larmkod {code} · aktiv status saknas"
+                since = changed_at(by_id[codes[0]]) if code else None
+                item["since"] = since
+                item["code"] = code
+                item["code_name"] = (alarm_info(code) or {}).get("name")
+                item["value"] = f"Senaste larmkod {alarm_label(code)}{f' (åtminstone sedan {short_date(since)})' if since else ''} · aktiv status saknas"
             except ControlError as exc:
                 item.update(value=None, error=str(exc))
     else:
@@ -534,6 +539,16 @@ def price_end(prices):
     return prices[-1][0] + slot
 
 
+def relative_limits(prices, now, config):
+    """Today's price levels that the relative rule treats as cheap and expensive (for the chart)."""
+    day = datetime.fromtimestamp(now).date()
+    values = sorted(value for stamp, value in prices if datetime.fromtimestamp(stamp).date() == day)
+    if len(values) < 2:
+        return {}
+    pick = lambda percent: values[round(percent / 100 * (len(values) - 1))]
+    return {"low": pick(config["price_low_percent"]), "high": pick(config["price_high_percent"]), "relative": True}
+
+
 def planned_offsets(config, status, forecast, prices, now, end, use_prices, windows=None):
     """Simulate what the controller would write later, if the room stays as it is now.
 
@@ -552,6 +567,7 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
     fireplace_active = (status.get("fireplace") or {}).get("phase") == "active"
     fireplace = status["contributions"].get("fireplace", 0) if config["fireplace_enabled"] and fireplace_active else 0
     base_error = status["error"] - (status.get("target_shift") or 0)
+    base_correction = status["contributions"].get("base_correction", 0) or 0
 
     def desired_at(stamp):
         outdoor = price = None
@@ -570,8 +586,9 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
         if price_on:
             price = value_at(prices, stamp) if prices_until is not None and stamp < prices_until else None
             if price is not None:
-                price_adjustment = price_contribution(config, price, error)
-        value = config["base_offset"] + room + weather + price_adjustment + fireplace
+                rank = series_rank(prices, stamp, price) if config.get("price_mode") == "relative" else None
+                price_adjustment = price_contribution(config, price, error, rank)
+        value = config["base_offset"] + base_correction + room + weather + price_adjustment + fireplace
         reasons = []
         if window and window["kind"] == "preheat":
             reasons.append(f"förvärmer +{window['shift']:g}° före dyrt elpris")
@@ -719,6 +736,21 @@ def control_history(events, config, start, end):
     return sorted(result, key=lambda e: (e["timestamp"], e["id"]))
 
 
+def alarm_explanation(code, active):
+    """What a known alarm number means and what to do; the display remains the authority."""
+    info = alarm_info(code)
+    if active is False:
+        return (f"Inget aktivt larm enligt larmstatusgivaren. Senaste larmkod: {alarm_label(code)}. Kodnamnet är en möjlig F-serietolkning; kontrollera din pumps handbok."
+                if code else "Inget aktivt pumplarm.")
+    if info is None:
+        return (f"Larmkod {code} finns inte i Comforts lista. Följ pumpens instruktion." if code
+                else "Inget aktuellt larm 229 är bekräftat. Följ pumpens instruktion för andra larm.")
+    lead = f"Larm {code} {info['name']}" if active is True else f"Senaste larmkod {code} är {info['name']}"
+    tail = "" if active is True else " Om larmet fortfarande är aktivt syns på pumpens display."
+    return (f"Möjlig tolkning för F-serien, inte verifierad för din modell. Kontrollera pumpens display "
+            f"och handbok: {lead}: {info['meaning']} Föreslagen åtgärd: {info['action']}{tail}")
+
+
 class Insights:
     def __init__(self, ha, data_dir=None):
         self.ha = ha
@@ -849,7 +881,7 @@ class Insights:
             explanation=("229 betyder att kompressorn blockerats efter tre körningar kortare än fem minuter i rad. "
                          "Lågt flöde eller låg värmeöverföring är möjliga orsaker, inte en fastställd diagnos."
                          if alarm["active"] is True and alarm["code"] == 229 else
-                         "Inget aktuellt larm 229 är bekräftat. Följ pumpens instruktion för andra larm."),
+                         alarm_explanation(alarm.get("code") or alarm.get("latest_code"), alarm["active"])),
         )
         return alarm
 
@@ -898,6 +930,53 @@ class Insights:
             report["price_provider"] = config["price_provider"]
             report["checked_at"] = time.time()
             return report
+        return self.cached(key, 300, load)
+
+    def sources(self, config):
+        """Where the house's electricity came from per hour over the last day, and the pump's estimated share."""
+        key = ("sources", *(config[name] for name in SOURCE_ENTITIES), config["offset_entity"], config["energy_entity"],
+               config["price_entity"], config["price_provider"], config["max_age_minutes"])
+
+        def load():
+            if not config["grid_import_entity"]:
+                raise ControlError("Välj husets elflöden under inställningarna: minst köpt el, och sol eller batteri.")
+            now = time.time()
+            end = int(now // 3600) * 3600
+            start = end - 86400
+            states = {s["entity_id"]: s for s in self.ha.states()}
+            chosen = {name[:-len("_entity")]: config[name] for name in SOURCE_ENTITIES if config[name]}
+            power = {}
+            for flow, entity_id in chosen.items():
+                if entity_id not in states:
+                    raise ControlError(f"{entity_id} saknas i Home Assistant.")
+                unit = states[entity_id]["attributes"].get("unit_of_measurement")
+                if unit not in ENERGY_UNITS and unit not in POWER_UNITS:
+                    raise ControlError(f"{entity_id}: välj en energi- (kWh) eller effektgivare (W).")
+                power[flow] = unit in POWER_UNITS
+            query = urlencode({
+                "filter_entity_id": ",".join(chosen.values()),
+                "end_time": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+                "significant_changes_only": "0",
+            })
+            stamp = datetime.fromtimestamp(start - 3600, timezone.utc).isoformat()
+            groups = history_groups(self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query))
+            flows = {flow: hourly_energy(groups.get(entity_id, []), entity_id, start, end, power[flow])
+                     for flow, entity_id in chosen.items()}
+            house = split_sources(flows, start, end)
+            known = [hour for hour in house if hour["house_kwh"] is not None]
+            totals = {name: sum(hour[name] for hour in known) if known else None
+                      for name in ("house_kwh", "grid_kwh", "solar_kwh", "battery_kwh")}
+            result = {"start": start, "end": end, "house": house, "house_totals": totals,
+                      "house_complete": len(known) == len(house), "flows": chosen,
+                      "pump": None, "pump_totals": None, "pump_error": None, "currency": None, "checked_at": time.time()}
+            try:
+                report = self.energy(config)
+                result["pump"], result["pump_totals"] = pump_sources(report["hours"], house)
+                result["currency"] = report["currency"]
+                result["meter"] = report["meter"]
+            except ControlError as exc:
+                result["pump_error"] = str(exc)
+            return result
         return self.cached(key, 300, load)
 
     def auxiliary(self, config):
@@ -1181,6 +1260,8 @@ class Insights:
             except ControlError as exc:
                 result["prices"]["error"] = str(exc)
             result["prices"]["points"] = [p for p in prices if start - 3600 <= p[0] <= end]
+            if config.get("price_mode") == "relative":
+                result["prices"].update(relative_limits(prices, now, config))
             result["prices"]["end"] = price_end(prices)
             price_id = config["price_entity"]
             if price_id in states:

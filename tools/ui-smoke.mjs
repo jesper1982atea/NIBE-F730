@@ -1145,6 +1145,7 @@ async function cloudAlarmChecks() {
   });
   await cloudPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await cloudPage.waitForFunction(() => document.getElementById("cloud-alarm-status").textContent.includes("inte konfigurerat"));
+  await cloudPage.locator("#alarm-more > summary").click();
   await cloudPage.locator("#myuplink-setup-guide summary").click();
   assert.match(await cloudPage.locator("#myuplink-setup-guide").textContent(), /Ingen ny callback-server.*client credentials/s);
   assert.match(await cloudPage.locator("#myuplink-setup-guide").textContent(), /https:\/\/my\.home-assistant\.io\/redirect\/oauth/);
@@ -1256,7 +1257,7 @@ async function alarmChecks() {
   await alarmPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await alarmPage.waitForFunction(() => document.getElementById("alarm-status").textContent.includes("229"));
   assert.match(await alarmPage.locator("#alarm-rooms").textContent(), /Vardagsrum: 23.*börvärde 22/);
-  assert.match(await alarmPage.locator("#alarm-observations").textContent(), /Hot water/);
+  assert.match(await alarmPage.locator("#alarm-observations").textContent(), /Varmvatten/);
   assert.equal(await alarmPage.locator("#next-change").textContent(), "Pumplarm 229", "An old pending write must not conceal the alarm hold");
   await alarmPage.evaluate(() => pauseAlarmThermostats());
   assert.equal(alarmWrites, 0, "Cancelling confirmation cannot persist changes");
@@ -1427,6 +1428,19 @@ try {
   let auxiliaryFail = false, auxiliaryMissing = false, auxiliaryStale = false, auxiliaryEmpty = false, auxiliaryNoCoverage = false;
   let auxiliaryZeroDay = false;
   let auxiliaryHold = false, releaseAuxiliary, auxiliaryReads = 0, auxiliaryActive = 0, auxiliaryMaxActive = 0;
+  let recovery = { entity_id: "select.pump_max_electrical_add", normal: "7.1 kW", phase: "restoring" };
+  let recoveryWrites = 0, confirmRecovery = false;
+  auxiliaryPage.on("dialog", (dialog) => confirmRecovery ? dialog.accept() : dialog.dismiss());
+  await auxiliaryPage.route("**/api/status", (route) => route.fulfill({ json: {
+    checked_at: Date.now() / 1000, enabled: false, indoor: 21, house_indoor: 21, outdoor: 5,
+    current_offset: 3, next_offset: 3, desired_offset: 3, rooms: [], aux_recovery: recovery,
+  } }));
+  await auxiliaryPage.route("**/api/aux-recovery", (route) => {
+    recoveryWrites++;
+    assert.deepEqual(route.request().postDataJSON(), { confirmed: true, entity_id: recovery.entity_id, normal: recovery.normal });
+    recovery = null;
+    return route.fulfill({ json: { message: "Kontrollen är noterad. Automatisk elpatronbegränsning är avstängd." } });
+  });
   let auxiliarySettings = { ...defaults, offset_entity: offset, price_entity: price };
   await auxiliaryPage.route("**/api/settings", (route) => route.fulfill({ json: auxiliarySettings }));
   await auxiliaryPage.route("**/api/auxiliary", async (route) => {
@@ -1458,6 +1472,14 @@ try {
     } });
   });
   await auxiliaryPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await auxiliaryPage.locator("#aux-recovery-ack").waitFor({ state: "visible" });
+  await auxiliaryPage.locator("#aux-recovery-ack").click();
+  assert.equal(recoveryWrites, 0, "Cancellation must not acknowledge heater recovery");
+  confirmRecovery = true;
+  await auxiliaryPage.locator("#aux-recovery-ack").click();
+  await auxiliaryPage.waitForFunction(() => document.getElementById("aux-recovery-ack").hidden);
+  assert.equal(recoveryWrites, 1);
+  assert.match(await auxiliaryPage.locator("#aux-recovery-status").textContent(), /avstängd/);
   await auxiliaryPage.waitForFunction(() => !document.getElementById("auxiliary-data").hidden);
   assert.match(await auxiliaryPage.locator("#auxiliary-current").textContent(), /i drift.*3 kW/);
   assert.match(await auxiliaryPage.locator("#auxiliary-metrics").textContent(), /körperioder.*1 st.*10 min.*0,5 kWh.*1 SEK/);

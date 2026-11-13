@@ -36,6 +36,7 @@
         <span class="eyebrow">HEMMA JUST NU</span>
         <h2 id="status-title">Välkommen till enklare värme</h2>
         <p id="status-message">Välj rum och ställ in din temperatur.</p>
+        <ul id="status-warnings" class="hint warning" hidden></ul>
       </div>
       <div id="warm-room-warning" class="warm-room-warning" role="status" hidden>
         <strong>Andra rum är redan för varma</strong>
@@ -145,8 +146,7 @@
       </div>
       <div id="preheat-steps" class="preheat-steps" aria-hidden="true"></div>
       <p id="preheat-example" class="hint" role="status"></p>
-      <p class="hint">Måländringen är inte en garanti för rummens temperatur eller besparing. Huset reagerar långsamt; kurvgränser, tolerans och väntetid gäller fortfarande. Sparad termostatbegränsning kan bromsa förvärmningen eftersom den följer ditt vanliga mål.</p>
-      <details class="disclosure"><summary>Hur väljs tiderna?</summary><p>Kräver kommande priser från din sparade elpriskälla, inte bara priset just nu. Dyra perioder är minst en timme med pris minst 25 % över det kommande dygnets mittpris. Förvärmning planeras bara om timmarna före är minst 20 % billigare. Ett lägre mål kan planeras under dyrperioden även utan föregående förvärmning. Starttiden är normalt tre timmar före och anpassas till 1–6 timmar när husmodellen har tillräckligt underlag. Saknas prisunderlag används ditt vanliga mål och orsaken visas i planen.</p></details>
+      <details class="disclosure"><summary>Hur väljs tiderna?</summary><p>Kräver kommande priser från din sparade elpriskälla, inte bara priset just nu. Dyra perioder är minst en timme med pris minst 25 % över det kommande dygnets mittpris. Förvärmning planeras bara om timmarna före är minst 20 % billigare. Ett lägre mål kan planeras under dyrperioden även utan föregående förvärmning. Starttiden är normalt tre timmar före och anpassas till 1–6 timmar när husmodellen har tillräckligt underlag. Saknas prisunderlag används ditt vanliga mål och orsaken visas i planen.</p><p class="hint">Måländringen är inte en garanti för rummens temperatur eller besparing. Huset reagerar långsamt; kurvgränser, tolerans och väntetid gäller fortfarande. Sparad termostatbegränsning kan bromsa förvärmningen eftersom den följer ditt vanliga mål.</p></details>
       </div>
       <h3>Plan närmaste dygnet</h3>
       <div id="preheat-timeline" class="preheat-timeline" role="img" aria-label="Förvärmning och svalare perioder närmaste dygnet"></div>
@@ -201,6 +201,10 @@
         <p id="fireplace-status" role="status">Kaminobservation är av tills du väljer rum och sparar.</p>
         <p id="fireplace-control" class="feature-sub" role="status"></p>
       </div>
+      <div id="fireplace-manual" class="vacation-presets" role="group" aria-label="Jag eldar nu">
+        <button type="button" id="fireplace-manual-start"><span aria-hidden="true">🔥</span> Jag eldar nu</button>
+      </div>
+      <p id="fireplace-manual-status" class="hint" role="status"></p>
       <div class="feature-meter">
         <div class="feature-meter-head"><span>Inlärning av typiska förlopp</span><strong id="fireplace-learn-count">0 av 3</strong></div>
         <div class="feature-track"><i id="fireplace-learn-bar"></i></div>
@@ -228,6 +232,7 @@
         <p>Vi jämför kaminrummets snabba temperaturökning under ungefär en timme med övriga valda rum. Mönstret måste bestå innan en misstänkt period sparas. En långsam eller jämnt spridd värmeökning kan missas; sol kan ge falska träffar. Aktuella värden krävs i alla valda rum.</p>
         <p>Efter minst tre avslutade förlopp med samma rumsval visas typisk observerad varaktighet och temperaturökning i rummen. Det visar vad som hände samtidigt, inte hur mycket värme kaminen säkert gav eller hur länge glöden varar. Varaktigheten gäller tills den lokala temperaturskillnaden klingat av, inte tills hela huset svalnat.</p>
         <p>Kaminbidraget är en extra sänkning av det beräknade målet, inte ytterligare ett steg ned vid varje avläsning. När observationen tar slut, aktuella värden saknas eller det styrande snittet är för kallt tas bidraget bort och kurvan räknas om. Även då gäller minsta ändringsintervall. Huvudautomatiken måste vara på för att några ändringar ska skickas.</p>
+        <p>Högsta ålder på kaminens rumsvärden: Gäller alla valda rum i kaminanalysen, även jämförelserummen. Givare som bara rapporterar ändringar kan vara tysta länge, men tystnad kan också bero på batteri-, radio- eller integrationsfel. En högre gräns kan ge osäkrare kaminbedömning och extra värmesänkning. Höj bara efter att du kontrollerat givarens rapportering. Gränsen blir aldrig längre än Högsta ålder på mätvärden och ändrar inte den vanliga rumsregeln.</p>
         <p>Observationer sparas från aktiveringen och överlever omstart. Misstänkta perioder och sex timmar därefter undantas från pumpens inlärning. Temperaturprognosen pausas under en pågående observation; den inlärda varaktigheten används inte för att skicka framtida styrkommandon.</p>
       </details>
     </section>
@@ -243,9 +248,9 @@
           <div id="hw-metrics" class="live-grid"></div>
         </div>
       </div>
+      <p id="hw-control" class="explanation" hidden></p>
       <h3>När används varmvattnet?</h3>
       <p id="hw-pattern" class="explanation"></p>
-      <p class="hint">Varmvattenkortet visar bara information. Nivån är en uppskattning, inte uppmätta liter; tillägget ändrar inte varmvatteninställningarna.</p>
       <details class="disclosure" id="hot-water-details">
         <summary>Visa användning och temperaturhistorik</summary>
       <div id="hw-hours" class="chart" role="img" aria-label="Tappningar per timme på dygnet"></div>
@@ -256,6 +261,7 @@
       <p class="hint">Tappningar syns som snabba fall i laddgivaren BT6 längre ner i tanken när kallt vatten strömmar in. BT7 i toppen ändras mindre. Skuggade fält = pumpen laddar varmvatten.</p>
       <h3>Senaste tappningarna</h3>
       <ul id="hw-list" class="plan-changes"></ul>
+      <p class="hint">Nivån är en uppskattning, inte uppmätta liter. Varmvatteninställningen ändras endast om du själv aktiverar prisstyrning under Inställningar.</p>
       </details>
     </section>
 
@@ -276,14 +282,17 @@
       <h3 id="thermostat-charts-title">Rum för rum · Home Assistant-områden</h3>
       <p id="history-area-status" class="hint" role="status"></p>
       <div id="thermostat-charts" class="thermostat-charts"></div>
-      <p class="hint">Korten grupperas efter rummets område i Home Assistant. De visar temperaturförändringen under dygnet och termostatändringar som loggats i just det området. Kurvförskjutning är en gemensam ändring för hela huset och visas separat i styrhistoriken, inte som en ändring i ett enskilt rum. Om ett rum saknar område tilldelar du området till enheten eller entiteten i Home Assistant. Givare rapporterar bara när värdet ändras, så ett värde gäller tills nästa rapport. Luckor betyder att givaren var otillgänglig.</p>
-      <details class="disclosure"><summary>Avancerat · mätpunkter som tabell</summary><div id="history-table" class="table-scroll"></div></details>
+      <details class="disclosure"><summary>Om graferna · mätpunkter som tabell</summary>
+  <p class="hint">Korten grupperas efter rummets område i Home Assistant. De visar temperaturförändringen under dygnet och termostatändringar som loggats i just det området. Kurvförskjutning är en gemensam ändring för hela huset och visas separat i styrhistoriken, inte som en ändring i ett enskilt rum. Om ett rum saknar område tilldelar du området till enheten eller entiteten i Home Assistant. Givare rapporterar bara när värdet ändras, så ett värde gäller tills nästa rapport. Luckor betyder att givaren var otillgänglig.</p>
+        <div id="history-table" class="table-scroll"></div>
+      </details>
     </section>
 
     <section class="card dashboard" id="pump-card" data-tone="muted">
       <div class="feature-head"><div class="feature-icon icon-pump" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="3"/><circle cx="12" cy="11" r="4"/><path d="M12 7v1.5M12 13.5V15M8 11h1.5M14.5 11H16M8 18h8"/></svg></div><div><span class="section-number">PUMPEN JUST NU</span><h2>Värme, drift och el</h2></div><span id="pump-pill" class="feature-pill">Hämtar…</span></div>
       <p id="overview-status" role="status">Hämtar pumpstatus…</p>
       <p class="section-intro">Rapporterad drift och eventuella larm. Saknad information betyder inte att pumpen är avstängd.</p>
+      <p class="hint">Kodnamn är möjliga tolkningar för F-serien och kan skilja sig på andra modeller. Kontrollera pumpens handbok.</p>
       <div id="pump-metrics" class="live-grid pump-grid"></div>
       <p id="pump-missing" class="hint" hidden></p>
       <details class="disclosure" id="electricity-details">
@@ -303,34 +312,37 @@
       <div id="alarm-observations" class="live-grid"></div>
       <button type="button" id="alarm-pause" hidden>Pausa appens termostatbegränsning</button>
       <ul id="alarm-rooms"></ul>
-      <p class="hint">Temperatur vid eller över börvärdet kan innebära minskat värmebehov, men bevisar inte att ventilen är stängd eller att flödet är tillräckligt. En paus öppnar inte ventiler och ändrar inte befintliga börvärden. Återaktivering görs medvetet under Inställningar.</p>
-      <p class="hint">Driftvärdena är senaste rapporter, inte värden vid larmets start. Gles myUplink-historik kan missa korta kompressorkörningar. Cirkulationspumpens hastighet bevisar inte faktiskt flöde; vattenvolym, luft och ventiler måste kontrolleras på anläggningen.</p>
-      <p>Vid larm 229: kontrollera enligt NIBE att värmesystemet har tillräckligt flöde och är urluftat. Kontrollera även pumpens driftläge vid larmet — varmvatten kan kräva annan felsökning än rumsvärme. Vid återkommande larm, kontakta installatör eller NIBE-service. Appen kan inte garantera att larmet inte återkommer.</p>
-      <p>Home Assistant-anslutningen erbjuder ingen kvittering. Den separata myUplink-anslutningen nedan kan begära manuell kvittering av larm 229 när API:t ger ett verifierat numeriskt larm-ID. UUID spärras eftersom dokumentationen anger heltal för reset. Appen gissar aldrig att larmkod 229 är ett reset-ID.</p>
-      <h3>Direktanslutning till myUplink</h3>
-      <p class="hint">Ange bara client ID och client secret under tilläggets Konfiguration och starta om tillägget. Hämta sedan anläggningar nedan och spara rätt pumpval. System-/device-ID behöver inte letas upp manuellt. Anslutningen är separat från HA-pumpvalet. Hemligheten visas aldrig i webbsidan.</p>
-      <button type="button" id="discover-cloud-devices" class="secondary">Hämta mina anläggningar och pumpar</button>
-      <p id="cloud-discovery-status" role="status"></p>
-      <label for="cloud-device-choice">Anläggning och enhet från myUplink</label>
-      <select id="cloud-device-choice" disabled><option value="">Hämta anläggningar först</option></select>
-      <button type="button" id="save-cloud-device" disabled>Spara pumpval för larm</button>
-      <details id="myuplink-setup-guide">
-        <summary>Konfigurationsguide: callback-URL och befintlig HA-applikation</summary>
-        <p><strong>Ingen ny callback-server behövs.</strong> Direktanslutningen använder client credentials, inte webbinloggning. Den använder ingen callback-URL och har ingen egen OAuth callback-sökväg.</p>
-        <ol>
-          <li>Öppna <a href="https://dev.myuplink.com/apps" target="_blank" rel="noopener noreferrer">myUplink Developer → Applications</a>. Du kan prova Client ID och Client Secret från din befintliga Home Assistant-applikation om klienten tillåter client credentials och READSYSTEM/WRITESYSTEM. Det är inte verifierat för din klient.</li>
-          <li>Låt HA-applikationens callback vara oförändrad. Standard är <code>https://my.home-assistant.io/redirect/oauth</code>. Utan My Home Assistant: <code>&lt;HOME_ASSISTANT_URL&gt;/auth/external/callback</code>. Dessa adresser hör till HA, inte NIBE Comfort. Rotera inte hemligheten eller radera klienten för att testa.</li>
-          <li>Fyll i myuplink_client_id och myuplink_client_secret under tilläggets Konfiguration. Lämna myuplink_system_id och myuplink_device_id tomma. Spara och starta om bara NIBE Comfort.</li>
-          <li>Tryck Hämta mina anläggningar och pumpar ovan. Appen hämtar ID:n via API:t. En enda enhet visas direkt; flera kräver ditt val. Kontrollera anläggning, enhet och ID:n och tryck Spara pumpval för larm. Hämtning väljer eller sparar aldrig en pump åt dig. Developer-portalen visar klientuppgifter, inte nödvändigtvis pump-ID:n.</li>
-          <li>Kontrollera system/device i larmlistan nedan. Konfigurering och uppdatering kvitterar inga larm. UUID-larm kan fortfarande ha spärrad kvittering.</li>
-        </ol>
-        <p class="hint">En separat myUplink-applikation ger bättre isolering från HA. Kräver registreringen en callback kan HA-adressen ovan användas som registreringsvärde; tillägget använder den inte. Vid 401/403: kontrollera klientuppgifter, tillåtna tokenflöden, behörigheter och åtkomst till anläggningen. Fungerande HA-inloggning garanterar inte att client credentials fungerar. Vi återanvänder inte HA:s access-/refresh-token.</p>
-        <a href="https://www.home-assistant.io/integrations/myuplink/" target="_blank" rel="noopener noreferrer">Home Assistants officiella callback-guide</a>
-      </details>
-      <p id="cloud-alarm-status" role="status">Hämtar direktanslutningens status…</p>
       <p id="cloud-alarm-action" role="status"></p>
       <ul id="cloud-alarms"></ul>
-      <a href="https://www.nibe.eu/sv-se/support/vanliga-fragor/faq-items/min-produkt-larmar-for-korta-drifttider-vad-ska-jag-gora" target="_blank" rel="noopener noreferrer">NIBE:s råd om korta drifttider</a>
+      <details class="disclosure" id="alarm-more">
+        <summary>Mer om larm · kvittering och myUplink</summary>
+        <p>Vid larm 229: kontrollera enligt NIBE att värmesystemet har tillräckligt flöde och är urluftat. Kontrollera även pumpens driftläge vid larmet — varmvatten kan kräva annan felsökning än rumsvärme. Vid återkommande larm, kontakta installatör eller NIBE-service. Appen kan inte garantera att larmet inte återkommer.</p>
+        <a href="https://www.nibe.eu/sv-se/support/vanliga-fragor/faq-items/min-produkt-larmar-for-korta-drifttider-vad-ska-jag-gora" target="_blank" rel="noopener noreferrer">NIBE:s råd om korta drifttider</a>
+        <p class="hint">Temperatur vid eller över börvärdet kan innebära minskat värmebehov, men bevisar inte att ventilen är stängd eller att flödet är tillräckligt. En paus öppnar inte ventiler och ändrar inte befintliga börvärden. Återaktivering görs medvetet under Inställningar.</p>
+        <p class="hint">Driftvärdena är senaste rapporter, inte värden vid larmets start. Gles myUplink-historik kan missa korta kompressorkörningar. Cirkulationspumpens hastighet bevisar inte faktiskt flöde; vattenvolym, luft och ventiler måste kontrolleras på anläggningen.</p>
+        <p>Home Assistant-anslutningen erbjuder ingen kvittering. Den separata myUplink-anslutningen nedan kan begära manuell kvittering av larm 229 när API:t ger ett verifierat numeriskt larm-ID. UUID spärras eftersom dokumentationen anger heltal för reset. Appen gissar aldrig att larmkod 229 är ett reset-ID.</p>
+        <h3>Direktanslutning till myUplink</h3>
+        <p class="hint">Ange bara client ID och client secret under tilläggets Konfiguration och starta om tillägget. Hämta sedan anläggningar nedan och spara rätt pumpval. System-/device-ID behöver inte letas upp manuellt. Anslutningen är separat från HA-pumpvalet. Hemligheten visas aldrig i webbsidan.</p>
+        <button type="button" id="discover-cloud-devices" class="secondary">Hämta mina anläggningar och pumpar</button>
+        <p id="cloud-discovery-status" role="status"></p>
+        <label for="cloud-device-choice">Anläggning och enhet från myUplink</label>
+        <select id="cloud-device-choice" disabled><option value="">Hämta anläggningar först</option></select>
+        <button type="button" id="save-cloud-device" disabled>Spara pumpval för larm</button>
+        <details id="myuplink-setup-guide">
+          <summary>Konfigurationsguide: callback-URL och befintlig HA-applikation</summary>
+          <p><strong>Ingen ny callback-server behövs.</strong> Direktanslutningen använder client credentials, inte webbinloggning. Den använder ingen callback-URL och har ingen egen OAuth callback-sökväg.</p>
+          <ol>
+            <li>Öppna <a href="https://dev.myuplink.com/apps" target="_blank" rel="noopener noreferrer">myUplink Developer → Applications</a>. Du kan prova Client ID och Client Secret från din befintliga Home Assistant-applikation om klienten tillåter client credentials och READSYSTEM/WRITESYSTEM. Det är inte verifierat för din klient.</li>
+            <li>Låt HA-applikationens callback vara oförändrad. Standard är <code>https://my.home-assistant.io/redirect/oauth</code>. Utan My Home Assistant: <code>&lt;HOME_ASSISTANT_URL&gt;/auth/external/callback</code>. Dessa adresser hör till HA, inte NIBE Comfort. Rotera inte hemligheten eller radera klienten för att testa.</li>
+            <li>Fyll i myuplink_client_id och myuplink_client_secret under tilläggets Konfiguration. Lämna myuplink_system_id och myuplink_device_id tomma. Spara och starta om bara NIBE Comfort.</li>
+            <li>Tryck Hämta mina anläggningar och pumpar ovan. Appen hämtar ID:n via API:t. En enda enhet visas direkt; flera kräver ditt val. Kontrollera anläggning, enhet och ID:n och tryck Spara pumpval för larm. Hämtning väljer eller sparar aldrig en pump åt dig. Developer-portalen visar klientuppgifter, inte nödvändigtvis pump-ID:n.</li>
+            <li>Kontrollera system/device i larmlistan nedan. Konfigurering och uppdatering kvitterar inga larm. UUID-larm kan fortfarande ha spärrad kvittering.</li>
+          </ol>
+          <p class="hint">En separat myUplink-applikation ger bättre isolering från HA. Kräver registreringen en callback kan HA-adressen ovan användas som registreringsvärde; tillägget använder den inte. Vid 401/403: kontrollera klientuppgifter, tillåtna tokenflöden, behörigheter och åtkomst till anläggningen. Fungerande HA-inloggning garanterar inte att client credentials fungerar. Vi återanvänder inte HA:s access-/refresh-token.</p>
+          <a href="https://www.home-assistant.io/integrations/myuplink/" target="_blank" rel="noopener noreferrer">Home Assistants officiella callback-guide</a>
+        </details>
+        <p id="cloud-alarm-status" role="status">Hämtar direktanslutningens status…</p>
+      </details>
     </section>
 
     <section class="card dashboard" id="energy-section">
@@ -342,8 +354,6 @@
       <div id="energy-chart" class="chart" role="img" aria-label="Pumpens elanvändning per timme med styrmarkeringar"></div>
       <p id="energy-price-status" role="status"></p>
       <div id="energy-cost-chart" class="chart" role="img" aria-label="Beräknad kostnad per timme med styrmarkeringar"></div>
-      <p class="hint">K = kurvförskjutning, T = termostat, I = sparade inställningar. En begäran utan återläsning är inte en bekräftad ändring. Graferna visar bara fullständiga timmar; tabellen visar datatäckningen.</p>
-      <p class="hint">Timfördelningen är uppskattad: ökningen i elmätaren fördelas jämnt mellan dess rapporter (högst två timmar). Kostnaden beräknas med historiken från din sparade prisgivare, aldrig dagens pris för äldre timmar. Bara avgifter och moms som redan finns i givaren ingår; fast avgift ingår inte. Luckor, otillgängliga värden och räknaråterställningar räknas inte som noll. Producerad värme är inte använd el.</p>
       <details class="disclosure">
         <summary>Före och efter våra ändringar</summary>
         <p class="hint">Visar närmaste hela timmen före och efter ändringens timme. Mellantimmen hoppas över. Bekräftade ändringar avser HA:s återläsning, inte en oberoende fysisk mätning. Väder, varmvatten, kamin och värmesystemets tröghet påverkar också förbrukningen: skillnaden är en observation, inte bevisad effekt eller besparing.</p>
@@ -351,6 +361,8 @@
       </details>
       <details class="disclosure">
         <summary>Timvärden och datatäckning</summary>
+  <p class="hint">K = kurvförskjutning, T = termostat, I = sparade inställningar. En begäran utan återläsning är inte en bekräftad ändring. Graferna visar bara fullständiga timmar; tabellen visar datatäckningen.</p>
+  <p class="hint">Timfördelningen är uppskattad: ökningen i elmätaren fördelas jämnt mellan dess rapporter (högst två timmar). Kostnaden beräknas med historiken från din sparade prisgivare, aldrig dagens pris för äldre timmar. Bara avgifter och moms som redan finns i givaren ingår; fast avgift ingår inte. Luckor, otillgängliga värden och räknaråterställningar räknas inte som noll. Producerad värme är inte använd el.</p>
         <div id="energy-table" class="table-scroll"></div>
       </details>
       </div>
@@ -360,6 +372,9 @@
       <div class="feature-head"><div class="feature-icon icon-bolt" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 13h6l-1 8 8-10h-6l1-8Z"/></svg></div><div><span class="section-number">ELTILLSATS · SENASTE 24 AVSLUTADE TIMMARNA</span><h2>När går elpatronen?</h2></div><span id="auxiliary-pill" class="feature-pill">Hämtar…</span><button type="button" id="refresh-auxiliary" class="secondary">Uppdatera</button></div>
       <p class="section-intro">Se elpatronens egen effekt, observerade körperioder och uppskattad kostnad. Detta är en del av pumpens el, inte en extra kostnad att lägga ovanpå pumpens totalsiffra.</p>
       <p id="auxiliary-status" role="status">Hämtar elpatronens historik…</p>
+      <p id="aux-limit-control" class="explanation" role="status" hidden></p>
+      <button type="button" id="aux-recovery-ack" class="secondary" hidden>Jag har kontrollerat elpatronens max på pumpen</button>
+      <p id="aux-recovery-status" role="status"></p>
       <div id="auxiliary-data" hidden>
         <p id="auxiliary-current" role="status"></p>
         <div id="auxiliary-metrics" class="live-grid"></div>
@@ -370,10 +385,25 @@
           <summary>Körningar, kostnad och vad som hände samtidigt</summary>
           <p>En körperiod betyder att elpatronens rapporterade effekt var över noll. Effektsteg inom samma period räknas inte som nya starter. Dataluckor delar upp perioderna; okänd början eller slut är inte en bekräftad start eller ett stopp.</p>
           <p>Driftläge, gradminuter, ute- och varmvattentemperatur visas vid periodens början om färsk historik finns (högst 15 minuter gammal). Det är samtidiga observationer, inte en säker startorsak. Pumpens interna reglering kan exempelvis begära tillsats vid värmeunderskott eller varmvattenbehov; givarna här visar inte säkert vilket villkor som utlöste det.</p>
+                <p class="hint">kWh och kostnad uppskattas från elpatronens W/kW-historik med historiska priser från din valda elpriskälla. Registrerade 0 kW gäller till nästa tillstånd eller periodens slut. Över noll gäller högst 15 minuter mellan rapporter och ingen extrapolering efter sista rapporten. Okända, otillgängliga och ogiltiga värden bryter nollperioden. Saknad historik räknas aldrig som noll; avbrott som integrationen inte registrerat kan däremot inte upptäckas här. Visningen ändrar inga inställningar i pumpen.</p>
           <p class="hint">På liten skärm kan du rulla tabellen i sidled för att se alla uppgifter.</p>
           <div id="auxiliary-runs" class="table-scroll" tabindex="0" role="region" aria-label="Elpatronens körperioder och samtidiga observationer"></div>
         </details>
-        <p class="hint">kWh och kostnad uppskattas från elpatronens W/kW-historik med historiska priser från din valda elpriskälla. Registrerade 0 kW gäller till nästa tillstånd eller periodens slut. Över noll gäller högst 15 minuter mellan rapporter och ingen extrapolering efter sista rapporten. Okända, otillgängliga och ogiltiga värden bryter nollperioden. Saknad historik räknas aldrig som noll; avbrott som integrationen inte registrerat kan däremot inte upptäckas här. Visningen ändrar inga inställningar i pumpen.</p>
+      </div>
+    </section>
+
+    <section class="card dashboard" id="sources-section" data-tone="muted">
+      <div class="feature-head"><div class="feature-icon icon-bolt" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></div><div><span class="section-number">SOL OCH BATTERI · SENASTE 24 AVSLUTADE TIMMARNA</span><h2>Var kommer elen ifrån?</h2></div><span id="sources-pill" class="feature-pill">Hämtar…</span><button type="button" id="refresh-sources" class="secondary">Uppdatera</button></div>
+      <p class="section-intro">Husets el per timme fördelad på elnät, solpaneler och batteri. Med en elmätare på pumpen får pumpen samma fördelning som huset samma timme. Det är en uppskattning: elen i huset går inte att märka upp per apparat.</p>
+      <p id="sources-status" role="status">Hämtar husets elflöden…</p>
+      <div id="sources-data" hidden>
+        <div id="sources-metrics" class="live-grid"></div>
+        <div id="sources-chart" class="chart" role="img" aria-label="Husets el per timme från elnät, sol och batteri"></div>
+        <div id="sources-legend" class="chart-legend"></div>
+        <p id="sources-pump" role="status"></p>
+        <details class="disclosure"><summary>Så räknas det</summary>
+  <p class="hint">Husets förbrukning = köpt el + sol + batteri ur − såld el − batteri in. Ej valda flöden antas vara noll. Det som inte köptes räknas som batteri (högst vad det levererade) och resten som direkt sol. Batteriet kan ha laddats från elnätet. Räknare som ökar i små steg fördelas jämnt sedan förra steget; oförändrade räknare antas stå still. Det teoretiska värdet av lokal el beräknas till köppriset, utan hänsyn till exempelvis ersättning för såld el eller batteriets kostnad.</p>
+        </details>
       </div>
     </section>
 
@@ -403,6 +433,8 @@
           <label for="priority_sensors">Prioriterade rum · valfritt, högst 2 givare</label>
           <p class="hint" id="priority-help">Välj 1–2 av rummen ovan. Temperaturmålet gäller deras snitt (om du väljer två väger de lika); övriga rum visas men styr inte mot målet och kan ändå bli varmare. Ingen prioritering väljs automatiskt.</p>
           <div id="priority_sensors" class="sensor-list" role="group" aria-describedby="priority-help"></div>
+          <label class="toggle"><input type="checkbox" id="skip_silent_rooms"> Styr vidare när en rumsgivare är tyst</label>
+          <p class="hint">Batterigivare kan vara tysta i flera timmar. Påslaget hoppas en tyst eller orimlig givare över så länge något annat styrande rum rapporterar, och om alla prioriterade rum är tysta används dina övriga valda rum. Avslaget pausar styrningen tills alla styrande rum rapporterar igen; det hindrar att ett saknat kallt eller varmt rum snedvrider snittet.</p>
           <label for="nearest_thermostat">Termostat närmast värmepumpen</label>
           <select id="nearest_thermostat"><option value="">Inte markerad</option></select>
           <p class="hint">Endast en informationsmarkering. Avstånd används inte för styrning och den undantas inte från begränsning.</p>
@@ -494,6 +526,16 @@
           <details id="fixed-price-settings" class="disclosure">
           <summary>Avancerat · extra kurvpåverkan från priset just nu</summary>
           <p>Detta är en separat regel utan framförhållning: höj vid lågt pris och sänk vid högt. Den kan läggas ovanpå förvärmningen. Sätt båda stegvärdena till 0 om du bara vill använda förvärmningen; det stänger inte av förvärmningen.</p>
+          <label for="price_mode">Vad räknas som billigt och dyrt?</label>
+          <select id="price_mode" name="price_mode">
+            <option value="absolute">Fasta prisgränser</option>
+            <option value="relative">Jämfört med dygnets egna priser</option>
+          </select>
+          <div class="field-pair" id="price-relative-fields">
+            <div><label for="price_low_percent">Billigt · dygnets billigaste %</label><input id="price_low_percent" name="price_low_percent" type="number" min="0" max="100" step="1" required></div>
+            <div><label for="price_high_percent">Dyrt · från denna andel av dygnet %</label><input id="price_high_percent" name="price_high_percent" type="number" min="0" max="100" step="1" required></div>
+          </div>
+          <p class="hint" id="price-relative-help">25 och 75 betyder: dygnets billigaste fjärdedel är billig och den dyraste fjärdedelen dyr, oavsett prisnivå. Kräver att prisgivaren har dygnets priser (Tibbers <code>intraday_price_ranking</code> eller Nord Pools <code>raw_today</code>).</p>
           <div class="field-pair">
             <div><label for="price_low">Billigt vid eller under</label><input id="price_low" name="price_low" type="number" min="-10000" max="10000" step="any" required></div>
             <div><label for="price_high">Dyrt vid eller över</label><input id="price_high" name="price_high" type="number" min="-10000" max="10000" step="any" required></div>
@@ -520,8 +562,61 @@
         <details>
           <summary>Säkerhet och finjustering</summary>
           <p>En förskjutningsenhet är inte samma sak som en grads rumstemperatur. Golvvärme och radiatorer reagerar långsamt. Ändra lite och följ resultatet över tid.</p>
+          <label class="toggle"><input type="checkbox" id="auto_base_enabled"> Justera grundvärdet automatiskt</label>
+          <p class="hint">Rumsregeln ensam lämnar ofta en kvarstående avvikelse, eftersom pumpen bara tar hela steg och toleransbandet ger noll påverkan. Påslaget flyttas grundvärdet långsamt: en grads bestående avvikelse ger ett steg per dygn, högst gränsen nedan åt vardera hållet. Står still vid förvärmning, kamin, test, semester, larm och vid säkerhetsgränserna. Nollställs när du själv ändrar basförskjutningen.</p>
+          <p class="hint" id="auto-base-status" role="status"></p>
           <div class="advanced-grid" id="advanced-fields"></div>
         </details>
+      </section>
+      <section class="card">
+        <h2>Husets el · sol och batteri</h2>
+        <p class="hint">Valfritt. Välj husets räknare (kWh) eller effektgivare (W) för varje flöde. Köpt el krävs; övriga kan lämnas tomma. Välj gärna alla från samma växelriktare eller elmätare så att de stämmer mot varandra.</p>
+        <label for="grid_import_entity">Köpt el från elnätet</label><select id="grid_import_entity" name="grid_import_entity"></select>
+        <label for="grid_export_entity">Såld el till elnätet</label><select id="grid_export_entity" name="grid_export_entity"></select>
+        <label for="solar_entity">Solproduktion</label><select id="solar_entity" name="solar_entity"></select>
+        <label for="battery_discharge_entity">Batteri · urladdning</label><select id="battery_discharge_entity" name="battery_discharge_entity"></select>
+        <label for="battery_charge_entity">Batteri · laddning</label><select id="battery_charge_entity" name="battery_charge_entity"></select>
+      </section>
+      <section class="card">
+        <h2>Varmvatten på billig el</h2>
+        <label class="toggle"><input type="checkbox" id="hot_water_price_enabled"> Ladda varmvattnet när elen är billig</label>
+        <p class="hint">Av från början. Pumpens varmvattenläge sätts till läget vid billig el när elpriset är billigt eller före dyra timmar, annars till det vanliga läget. Högst en ändring i timmen. Ett annat läge som du valt för hand lämnas orört. Kräver att automatiken är på.</p>
+        <label for="hot_water_mode_entity">Pumpens inställning för varmvattenläge</label>
+        <select id="hot_water_mode_entity"></select>
+        <div class="field-pair">
+          <div><label for="hot_water_cheap_option">Läge vid billig el</label><select id="hot_water_cheap_option"></select></div>
+          <div><label for="hot_water_normal_option">Vanligt läge</label><select id="hot_water_normal_option"></select></div>
+        </div>
+        <p id="hot-water-settings-status" class="hint" role="status"></p>
+      </section>
+      <section class="card">
+        <h2>Begränsa elpatronen vid dyr el</h2>
+        <label class="toggle"><input type="checkbox" id="aux_limit_enabled"> Sänk pumpens max eltillsats under dyra timmar</label>
+        <p class="hint">Av från början. Under dyra timmar, och under den svalare perioden efter en förvärmning, sätts pumpens max eltillsats till det begränsade läget. Tillägget försöker återställa det vanliga läget vid kyla, paus, fel eller stopp. Återställningen kan misslyckas vid avbrott i Home Assistant, myUplink eller nätverket; kontrollera pumpens inställning om ett fel visas. Högst en sänkning i timmen. Kräver att automatiken är på.</p>
+        <label for="aux_limit_entity">Pumpens inställning för max eltillsats</label>
+        <select id="aux_limit_entity"></select>
+        <div class="field-pair">
+          <div><label for="aux_limit_option">Max eltillsats vid dyr el</label><select id="aux_limit_option"></select></div>
+          <div><label for="aux_normal_option">Vanlig max eltillsats</label><select id="aux_normal_option"></select></div>
+          <div><label for="aux_limit_max_drop">Släpp begränsningen när det är kallare än målet minus · °C</label><input id="aux_limit_max_drop" type="number" min="0.1" max="2" step="0.1" required></div>
+          <div><label for="aux_limit_min_outdoor">Begränsa aldrig när det är kallare ute än · °C</label><input id="aux_limit_min_outdoor" type="number" min="-30" max="15" step="1" required></div>
+        </div>
+        <p id="aux-limit-settings-status" class="hint" role="status"></p>
+      </section>
+      <section class="card">
+        <h2>Home Assistant</h2>
+        <label class="toggle"><input type="checkbox" id="publish_sensors"> Visa status som sensorer i Home Assistant</label>
+        <p class="hint">Skapar <code>sensor.nibe_comfort_status</code>, <code>_innetemp</code>, <code>_mal</code>, <code>_onskad_forskjutning</code>, <code>_nasta_forskjutning</code>, <code>_kamin</code>, <code>_elprisniva</code> och vid automatisk baskorrigering <code>_baskorrigering</code>, för kort och automationer. De uppdateras varje minut och kommer tillbaka inom en minut efter en omstart av Home Assistant.</p>
+        <div class="field-pair">
+          <div><label for="pause_notify_minutes">Meddela när styrningen pausat längre än · minuter</label><input id="pause_notify_minutes" name="pause_notify_minutes" type="number" min="0" max="1440" step="1" required></div>
+          <div><label for="notify_service">Skicka även till · valfritt</label><select id="notify_service" name="notify_service" aria-describedby="notify-help"><option value="">Bara Home Assistants aviseringar</option></select></div>
+        </div>
+        <div class="notify-test">
+          <button type="button" id="notify-test" class="secondary">Skicka testavisering</button>
+          <span id="notify-status" class="hint" role="status"></span>
+        </div>
+        <p id="notify-help" class="settings-guide" hidden>Vill du få meddelandet i telefonen? Installera appen <strong>Home Assistant</strong> från App Store eller Google Play, logga in på ditt Home Assistant och tillåt aviseringar. Då dyker telefonen upp i listan ovan inom någon minut. Välj den, tryck på <em>Skicka testavisering</em> och spara.</p>
+        <p class="hint">0 stänger av. Meddelandet visas i Home Assistants aviseringar och tas bort när styrningen fortsätter. Med en notify-tjänst skickas det även dit, till exempel till mobilappen.</p>
       </section>
       <section class="card actions">
         <div><label class="toggle"><input type="checkbox" id="enabled" name="enabled"> Aktivera automatisk styrning</label><p class="hint">Avmarkerat = övervakning. Att stänga av återställer inte pumpens senaste förskjutning.</p></div>
