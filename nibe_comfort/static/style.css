@@ -337,3 +337,7 @@ button.chip:hover{border-color:var(--tone);color:var(--tone);filter:none}
 .feature-row #fireplace_max_age_minutes{max-width:140px}
 @media(max-width:600px){.page-nav{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}.page-nav::-webkit-scrollbar{display:none}.page-nav a{flex:none}}
 #alarm-more a{color:var(--green)}
+/* "Jag eldar nu" is the one action people look for on the fireplace card: warm, large, unmistakable. */
+#fireplace-manual-start,:root[data-theme=dark] #fireplace-manual-start{background:#d9622b;color:#fff;font-size:16px;font-weight:700;padding:14px 28px;box-shadow:0 6px 18px -6px rgba(217,98,43,.75)}
+#fireplace-manual{margin:12px 0 4px}
+@media(max-width:480px){#fireplace-manual-start{width:100%}}
