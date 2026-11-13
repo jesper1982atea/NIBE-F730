@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import handler_for, run_control_loop
-from controller import ControlError, Controller, control_state, evaluate
+from controller import ControlError, Controller, HomeAssistant, control_state, evaluate
 from test_controller import config, entity, fixtures
 
 
@@ -290,3 +290,74 @@ class HotWaterPriceTests(unittest.TestCase):
         self.ha.set_select.assert_not_called()
         self.ha.set_select.side_effect = ControlError("timeout")
         self.assertIn("kunde inte ändras", self.step("Economy", level="cheap")["error"])
+
+
+class NotifyServiceTests(unittest.TestCase):
+    SERVICES = [
+        {"domain": "light", "services": {"turn_on": {}}},
+        {"domain": "notify", "services": {"send_message": {}, "persistent_notification": {}, "notify": {},
+                                          "mobile_app_peters_iphone": {}, "mobile_app_ipad": {}, "Bad-Name": {}}},
+    ]
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.ha = HomeAssistant("token")
+        self.calls = []
+
+        def request(path, data=None, timeout=15):
+            self.calls.append((path, data))
+            return self.SERVICES if path == "/services" else {}
+
+        self.ha.request = request
+
+    def test_lists_pickable_services_with_readable_names_phones_first(self):
+        self.assertEqual(self.ha.notify_services(), [
+            {"service": "notify.mobile_app_ipad", "name": "Mobilappen · Ipad"},
+            {"service": "notify.mobile_app_peters_iphone", "name": "Mobilappen · Peters iphone"},
+            {"service": "notify.notify", "name": "Notify"},
+        ])
+
+    def test_no_notify_domain_gives_an_empty_list_and_bad_replies_are_errors(self):
+        self.ha.request = lambda path, data=None, timeout=15: [{"domain": "light", "services": {}}]
+        self.assertEqual(self.ha.notify_services(), [])
+        self.ha.request = lambda path, data=None, timeout=15: {"x": 1}
+        with self.assertRaises(ControlError):
+            self.ha.notify_services()
+
+    def test_test_message_goes_only_to_a_listed_service(self):
+        controller = Controller(self.ha, self.temp.name)
+        self.assertEqual(controller.test_notify("notify.mobile_app_ipad"), {"sent": "notify.mobile_app_ipad"})
+        path, data = self.calls[-1]
+        self.assertEqual(path, "/services/notify/mobile_app_ipad")
+        self.assertEqual(data["title"], "NIBE Comfort")
+        for bad in ("", None, "notify.mobile_app_gone", "light.turn_on", "notify.x/../y"):
+            with self.assertRaises(ControlError):
+                controller.test_notify(bad)
+        self.assertEqual(self.calls[-1][0], "/services")
+
+    def test_api_lists_and_tests_services(self):
+        controller = Controller(self.ha, self.temp.name)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(controller, "a" * 32))
+        server.daemon_threads = True
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join()))
+
+        def call(path, method="GET", body=None):
+            request = Request(f"http://127.0.0.1:{server.server_port}{path}", method=method,
+                              data=None if body is None else json.dumps(body).encode(),
+                              headers={"Authorization": "Bearer " + "a" * 32, "Content-Type": "application/json"})
+            try:
+                with urlopen(request, timeout=3) as response:
+                    return response.status, json.load(response)
+            except HTTPError as exc:
+                with exc:
+                    return exc.code, json.load(exc)
+
+        code, body = call("/api/notify")
+        self.assertEqual(code, 200)
+        self.assertEqual(len(body["services"]), 3)
+        self.assertEqual(call("/api/notify", "PUT", {"service": "notify.mobile_app_ipad"}), (200, {"sent": "notify.mobile_app_ipad"}))
+        self.assertEqual(call("/api/notify", "PUT", {"service": "notify.gone"})[0], 400)
+        self.assertEqual(call("/api/notify", "PUT", {"x": 1})[0], 400)

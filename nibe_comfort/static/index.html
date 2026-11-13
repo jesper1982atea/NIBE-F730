@@ -591,8 +591,13 @@
         <p class="hint">Skapar <code>sensor.nibe_comfort_status</code>, <code>_innetemp</code>, <code>_mal</code>, <code>_onskad_forskjutning</code>, <code>_nasta_forskjutning</code>, <code>_kamin</code>, <code>_elprisniva</code> och vid automatisk baskorrigering <code>_baskorrigering</code>, för kort och automationer. De uppdateras varje minut och kommer tillbaka inom en minut efter en omstart av Home Assistant.</p>
         <div class="field-pair">
           <div><label for="pause_notify_minutes">Meddela när styrningen pausat längre än · minuter</label><input id="pause_notify_minutes" name="pause_notify_minutes" type="number" min="0" max="1440" step="1" required></div>
-          <div><label for="notify_service">Skicka även till · valfritt</label><input id="notify_service" name="notify_service" type="text" placeholder="notify.mobile_app_telefon" pattern="(notify\.[a-z0-9_]+)?"></div>
+          <div><label for="notify_service">Skicka även till · valfritt</label><select id="notify_service" name="notify_service" aria-describedby="notify-help"><option value="">Bara Home Assistants aviseringar</option></select></div>
         </div>
+        <div class="notify-test">
+          <button type="button" id="notify-test" class="secondary">Skicka testavisering</button>
+          <span id="notify-status" class="hint" role="status"></span>
+        </div>
+        <p id="notify-help" class="settings-guide" hidden>Vill du få meddelandet i telefonen? Installera appen <strong>Home Assistant</strong> från App Store eller Google Play, logga in på ditt Home Assistant och tillåt aviseringar. Då dyker telefonen upp i listan ovan inom någon minut. Välj den, tryck på <em>Skicka testavisering</em> och spara.</p>
         <p class="hint">0 stänger av. Meddelandet visas i Home Assistants aviseringar och tas bort när styrningen fortsätter. Med en notify-tjänst skickas det även dit, till exempel till mobilappen.</p>
       </section>
       <section class="card actions">

@@ -121,6 +121,45 @@ function selectOptions(id, predicate, configured = settings[id]) {
   select.value = configured;
 }
 
+let notifyServices = null;
+
+function renderNotifyOptions(configured) {
+  const select = $("notify_service");
+  select.replaceChildren(new Option("Bara Home Assistants aviseringar", ""));
+  for (const service of notifyServices || []) select.add(new Option(service.name, service.service));
+  if (configured && !Array.from(select.options).some((option) => option.value === configured)) {
+    select.add(new Option(`${configured}${notifyServices ? " (saknas i Home Assistant)" : ""}`, configured));
+  }
+  select.value = configured || "";
+  // Without any phone or other notify service, explain how to get one instead of an empty list.
+  $("notify-help").hidden = !notifyServices || notifyServices.length > 0;
+  $("notify-test").disabled = !select.value;
+}
+
+async function refreshNotifyServices() {
+  try {
+    notifyServices = (await api("notify")).services;
+    $("notify-status").textContent = "";
+  } catch (error) {
+    $("notify-status").textContent = `Notify-tjänsterna kunde inte hämtas: ${error.message}`;
+  }
+  renderNotifyOptions($("notify_service").value || settings.notify_service);
+}
+
+async function testNotify() {
+  const service = $("notify_service").value;
+  $("notify-test").disabled = true;
+  $("notify-status").textContent = "Skickar…";
+  try {
+    await api("notify", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service }) });
+    $("notify-status").textContent = "Skickad. Kom den fram? Glöm inte att spara.";
+  } catch (error) {
+    $("notify-status").textContent = `Det gick inte: ${error.message}`;
+  } finally {
+    $("notify-test").disabled = !$("notify_service").value;
+  }
+}
+
 function entityHints() {
   const offset = entities.find((entity) => entity.entity_id === $("offset_entity").value);
   $("pump-connection").textContent = offset
@@ -235,6 +274,7 @@ function renderSettings(formSettings = settings, preserveView = false) {
   for (const id of ["grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity"]) {
     selectOptions(id, (entity) => entity.entity_id.startsWith("sensor.") && ["kWh", "Wh", "MWh", "W", "kW"].includes(entity.unit), formSettings[id]);
   }
+  renderNotifyOptions(formSettings.notify_service);
   $("price_provider").value = formSettings.price_provider;
   $("price_mode").value = formSettings.price_mode;
   renderPriceMode();
@@ -2449,7 +2489,7 @@ async function init() {
     const discovered = settings;
     settings = saved;
     renderSettings(discovered);
-    await refreshAreas();
+    await Promise.all([refreshAreas(), refreshNotifyServices()]);
     $("save").disabled = $("save-near").disabled = $("pause").disabled = false;
     $("notice").hidden = true;
   } catch (error) {
@@ -2530,6 +2570,8 @@ async function init() {
   $("refresh-alarms").addEventListener("click", () => { void refreshAlarms(); void refreshCloudAlarms(); });
   $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
   $("fireplace-manual-start").addEventListener("click", () => void manualFireplace());
+  $("notify-test").addEventListener("click", () => void testNotify());
+  $("notify_service").addEventListener("change", () => { $("notify-test").disabled = !$("notify_service").value; $("notify-status").textContent = ""; });
   $("discover-cloud-devices").addEventListener("click", () => void discoverCloudDevices());
   $("save-cloud-device").addEventListener("click", () => void saveCloudDevice());
   $("cloud-device-choice").addEventListener("change", () => {

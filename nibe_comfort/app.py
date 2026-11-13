@@ -217,6 +217,8 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                     self.respond(200, entities)
                 elif path == "/api/areas":
                     self.respond(200, controller.ha.entity_areas(controller.settings()["room_sensors"]))
+                elif path == "/api/notify":
+                    self.respond(200, {"services": controller.ha.notify_services()})
                 elif api_token is None and path in ("/", "/index.html", "/app.js", "/theme.js", "/style.css"):
                     name = "index.html" if path == "/" else path[1:]
                     mime = {"html": "text/html", "js": "text/javascript", "css": "text/css"}[name.rsplit(".", 1)[1]]
@@ -248,6 +250,15 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
             if not self.authorized():
                 return
             path = urlsplit(self.path).path
+            if path == "/api/notify":
+                try:
+                    body = read_json(self)
+                    if not isinstance(body, dict) or set(body) != {"service"}:
+                        raise ControlError("Ange service.")
+                    self.respond(200, controller.test_notify(body["service"]))
+                except (ValueError, ControlError) as exc:
+                    self.respond(400, {"error": str(exc) or "Ogiltig begäran."})
+                return
             if path == "/api/fireplace":
                 try:
                     body = read_json(self)

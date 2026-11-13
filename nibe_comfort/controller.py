@@ -325,6 +325,24 @@ class HomeAssistant:
     def set_select(self, entity_id, option):
         self.request("/services/select/select_option", {"entity_id": entity_id, "option": option}, timeout=SERVICE_TIMEOUT_SECONDS)
 
+    def notify_services(self):
+        """Notify services a person can pick, e.g. the mobile app on a phone, with a readable name."""
+        domains = self.request("/services")
+        if not isinstance(domains, list):
+            raise ControlError("Home Assistant returnerade ett ogiltigt tjänstesvar.")
+        names = next((d.get("services") for d in domains if isinstance(d, dict) and d.get("domain") == "notify"), None) or {}
+        if not isinstance(names, dict):
+            raise ControlError("Home Assistant returnerade ett ogiltigt tjänstesvar.")
+        services = []
+        # send_message needs a notify entity, and persistent_notification is always used anyway.
+        for name in names:
+            if name in ("send_message", "persistent_notification") or not re.fullmatch(r"[a-z0-9_]+", name):
+                continue
+            label = name.removeprefix("mobile_app_").replace("_", " ").strip().capitalize() or name
+            services.append({"service": f"notify.{name}",
+                             "name": f"Mobilappen · {label}" if name.startswith("mobile_app_") else label})
+        return sorted(services, key=lambda s: (not s["service"].startswith("notify.mobile_app_"), s["name"]))
+
     def integration_registry(self):
         template = (
             "{% set ns = namespace(items=[]) %}"
@@ -1359,6 +1377,17 @@ class Controller:
         if config["notify_service"]:
             domain, service = config["notify_service"].split(".", 1)
             self.ha.request(f"/services/{domain}/{service}", {"title": title, "message": message})
+
+    def test_notify(self, service):
+        """Send a test message to a chosen, possibly unsaved, notify service."""
+        if not isinstance(service, str) or not re.fullmatch(r"notify\.[a-z0-9_]+", service):
+            raise ControlError("Välj en notify-tjänst först.")
+        if service not in [s["service"] for s in self.ha.notify_services()]:
+            raise ControlError(f"{service} finns inte i Home Assistant.")
+        self.ha.request(f"/services/notify/{service.split('.', 1)[1]}",
+                        {"title": "NIBE Comfort", "message": "Testavisering. Hit kommer meddelandet om styrningen pausas."},
+                        timeout=SERVICE_TIMEOUT_SECONDS)
+        return {"sent": service}
 
     def pause_alarm_thermostats(self):
         """Pause our limiter only; never reset the pump or open valves."""
