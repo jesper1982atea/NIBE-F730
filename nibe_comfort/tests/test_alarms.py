@@ -216,3 +216,38 @@ class AlarmTextTests(unittest.TestCase):
         self.assertTrue(alarm_explanation(63, True).startswith("Larm 63 Lågt luftflöde:"))
         self.assertIn("finns inte i Comforts lista", alarm_explanation(4711, None))
         self.assertIn("Inget aktuellt larm 229", alarm_explanation(None, None))
+
+
+class AcknowledgedAlarmTests(CodeOnlyAlarmTests):
+    """myUplink's open notification count tells whether the latest alarm number is still open."""
+    NOTES = "sensor.pump_notifications"
+
+    def with_notes(self, value):
+        self.registry = [*self.registry, {"entity_id": self.NOTES, "device_id": "pump", "platform": "myuplink"}]
+        self.states = [*self.states, entity(self.NOTES, value, self.now)]
+
+    def test_no_open_notifications_means_no_active_alarm(self):
+        self.with_notes("0")
+        alarm = self.alarm()
+        self.assertEqual((alarm["active"], alarm["error"], alarm["latest_code"]), (False, None, 184))
+        self.assertEqual(alarm["info"]["name"], "Filterlarm")
+        item = next(i for i in overview(self.states, self.registry, self.cfg, self.now)["pump"] if i["key"] == "alarm")
+        self.assertEqual(item["active"], False)
+        self.assertEqual(item["value"], "Inget aktivt larm · senaste larmkod 184 Filterlarm är kvitterad")
+        from insights import alarm_explanation
+        self.assertIn("kvitterad", alarm_explanation(184, False))
+        self.assertNotIn("Gör så här", alarm_explanation(184, False))
+
+    def test_open_or_unreadable_notifications_keep_the_status_unknown(self):
+        for value in ("2", "unknown", "1.5"):
+            with self.subTest(value=value):
+                self.setUp()
+                self.with_notes(value)
+                alarm = self.alarm()
+                self.assertIsNone(alarm["active"])
+                self.assertIn("184 Filterlarm", alarm["error"])
+        # A code 229 that is acknowledged never holds control either.
+        self.setUp()
+        self.with_notes("0")
+        self.states[-3]["state"] = "229"
+        self.assertEqual((self.alarm()["active"], self.alarm()["code"]), (False, None))

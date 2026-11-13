@@ -1343,9 +1343,12 @@ function metric(item) {
   const value = document.createElement("strong");
   // Home Assistant states are raw strings ("36.8"); show numbers the Swedish way like the rest of the page.
   const shown = typeof item.value === "string" && /^-?\d+(\.\d+)?$/.test(item.value) ? displayNumber(Number(item.value)) : operationText(item.value);
-  value.textContent = item.value === null ? "Okänt" : item.code != null ? (item.code_name ? `${item.code} · ${item.code_name}` : `Kod ${item.code}`) : `${shown} ${item.unit || ""}`.trim();
+  const latest = item.code != null ? (item.code_name ? `${item.code} · ${item.code_name}` : `Kod ${item.code}`) : null;
+  const cleared = item.code != null && item.active === false;
+  value.textContent = item.value === null ? "Okänt" : cleared ? "Inget aktivt larm" : latest ?? `${shown} ${item.unit || ""}`.trim();
   const detail = document.createElement("small");
-  detail.textContent = item.error || (item.code != null ? `Senaste larmkod${item.since ? ` · sedan ${new Date(item.since * 1000).toLocaleDateString("sv-SE", { day: "numeric", month: "short" })}` : ""} · aktiv status saknas` : "")
+  const since = item.since ? ` · sedan ${new Date(item.since * 1000).toLocaleDateString("sv-SE", { day: "numeric", month: "short" })}` : "";
+  detail.textContent = item.error || (cleared ? (item.code ? `Senaste larmkod ${latest} är kvitterad` : "") : item.code != null ? `Senaste larmkod${since} · aktiv status saknas` : "")
     || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE")}` : "");
   if (item.entity_id) block.title = item.entity_id;
   block.append(label, value, detail);

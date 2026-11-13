@@ -569,6 +569,18 @@ def alarm_sources(ids):
             sorted(key for key in ids if key.startswith("sensor.") and entity_base(key).endswith("_alarms")))
 
 
+def open_notifications(states, ids, max_age, now):
+    """Open myUplink notifications for one pump (sensor.x_notifications), or None when not readable."""
+    keys = [key for key in ids if key.startswith("sensor.") and entity_base(key).endswith("_notifications")]
+    if len(keys) != 1:
+        return None
+    try:
+        count = number(fresh_entity(states, keys[0], max_age, now, ids)["state"], "Meddelanden")
+    except ControlError:
+        return None
+    return int(count) if count == int(count) and count >= 0 else None
+
+
 def short_date(stamp):
     moment = datetime.fromtimestamp(stamp)
     return f"{moment.day} {MONTHS[moment.month - 1]}"
@@ -616,6 +628,10 @@ def pump_alarm(entities, config, peers, now):
             since = changed_at(entity) if code else None
             result.update(latest_code=code or None, since=since, info=alarm_info(code) if code else None,
                           reported_at=entity.get("last_reported") or entity.get("last_updated"))
+            if open_notifications(states, ids, config["max_age_minutes"], now) == 0:
+                # myUplink counts open notifications; none means the latest alarm was acknowledged or cleared.
+                result["active"] = False
+                return result
             raise ControlError("Pumpen har ingen larmstatus i myUplink, bara senaste larmkod"
                                + (f" ({alarm_label(code)}{f', oförändrad åtminstone sedan {short_date(since)}' if since else ''})" if code else "")
                                + ". Se pumpens display för om larmet är aktivt.")

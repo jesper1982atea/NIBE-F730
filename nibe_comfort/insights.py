@@ -11,7 +11,7 @@ from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
-from controller import SOURCE_ENTITIES, ControlError, alarm_code, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
+from controller import SOURCE_ENTITIES, ControlError, alarm_code, alarm_sources, open_notifications, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 from energy import ENERGY_UNITS, POWER_UNITS, consumption_report, discover_meter, hourly_energy, meter_error, produced_energy, pump_sources, split_sources
 from auxiliary import heater_entities, heater_report
@@ -115,6 +115,9 @@ def alarm_reading(pump_states, label, max_age, now, peers):
                 item["code"] = code
                 item["code_name"] = (alarm_info(code) or {}).get("name")
                 item["value"] = f"Senaste larmkod {alarm_label(code)}{f' (åtminstone sedan {short_date(since)})' if since else ''} · aktiv status saknas"
+                if open_notifications(by_id, list(by_id), max_age, now) == 0:
+                    item["active"] = False
+                    item["value"] = f"Inget aktivt larm · senaste larmkod {alarm_label(code)} är kvitterad" if code else "Inget aktivt larm"
             except ControlError as exc:
                 item.update(value=None, error=str(exc))
     else:
@@ -739,6 +742,9 @@ def control_history(events, config, start, end):
 def alarm_explanation(code, active):
     """What a known alarm number means and what to do; the display remains the authority."""
     info = alarm_info(code)
+    if active is False:
+        return (f"Inget aktivt larm. Senaste larmkod {alarm_label(code)} är kvitterad eller har gått över; "
+                "myUplink visar inga öppna meddelanden." if code else "Inget aktivt pumplarm.")
     if info is None:
         return (f"Larmkod {code} finns inte i Comforts lista. Följ pumpens instruktion." if code
                 else "Inget aktuellt larm 229 är bekräftat. Följ pumpens instruktion för andra larm.")
