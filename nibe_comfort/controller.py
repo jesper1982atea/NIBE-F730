@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from alarm_codes import alarm_info, alarm_label
 from fireplace import empty_state, intervals as fireplace_intervals, update as update_fireplace, validate_state as validate_fireplace_state
 
 
@@ -592,7 +593,7 @@ def pump_alarm(entities, config, peers, now):
     """Only read alarm entities associated with the configured pump."""
     states = {e["entity_id"]: e for e in entities}
     ids = set(peers.get(config["offset_entity"], ()))
-    result = {"active": None, "code": None, "latest_code": None, "since": None, "error": None, "reported_at": None}
+    result = {"active": None, "code": None, "latest_code": None, "info": None, "since": None, "error": None, "reported_at": None}
     alarms, codes = alarm_sources(ids)
     try:
         if len(alarms) == 1:
@@ -604,6 +605,7 @@ def pump_alarm(entities, config, peers, now):
             if len(codes) == 1:
                 code = alarm_code(fresh_entity(states, codes[0], config["max_age_minutes"], now, ids))
                 result["code"] = code if result["active"] else None
+                result["info"] = alarm_info(result["code"])
             elif result["active"]:
                 raise ControlError("Aktivt larm, men ingen entydig kodgivare hittades.")
         elif not alarms and len(codes) == 1:
@@ -612,10 +614,10 @@ def pump_alarm(entities, config, peers, now):
             entity = fresh_entity(states, codes[0], config["max_age_minutes"], now, ids)
             code = alarm_code(entity)
             since = changed_at(entity) if code else None
-            result.update(latest_code=code or None, since=since,
+            result.update(latest_code=code or None, since=since, info=alarm_info(code) if code else None,
                           reported_at=entity.get("last_reported") or entity.get("last_updated"))
             raise ControlError("Pumpen har ingen larmstatus i myUplink, bara senaste larmkod"
-                               + (f" ({code}{f', oförändrad åtminstone sedan {short_date(since)}' if since else ''})" if code else "")
+                               + (f" ({alarm_label(code)}{f', oförändrad åtminstone sedan {short_date(since)}' if since else ''})" if code else "")
                                + ". Se pumpens display för om larmet är aktivt.")
         else:
             raise ControlError("Ingen entydig larmgivare hittades på vald pump.")

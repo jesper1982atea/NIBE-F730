@@ -15,6 +15,7 @@ from controller import SOURCE_ENTITIES, ControlError, alarm_code, alarm_sources,
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 from energy import ENERGY_UNITS, POWER_UNITS, consumption_report, discover_meter, hourly_energy, meter_error, produced_energy, pump_sources, split_sources
 from auxiliary import heater_entities, heater_report
+from alarm_codes import alarm_info, alarm_label
 
 
 def discover_tibber(states, registry):
@@ -112,7 +113,8 @@ def alarm_reading(pump_states, label, max_age, now, peers):
                 since = changed_at(by_id[codes[0]]) if code else None
                 item["since"] = since
                 item["code"] = code
-                item["value"] = f"Senaste larmkod {code}{f' (åtminstone sedan {short_date(since)})' if since else ''} · aktiv status saknas"
+                item["code_name"] = (alarm_info(code) or {}).get("name")
+                item["value"] = f"Senaste larmkod {alarm_label(code)}{f' (åtminstone sedan {short_date(since)})' if since else ''} · aktiv status saknas"
             except ControlError as exc:
                 item.update(value=None, error=str(exc))
     else:
@@ -734,6 +736,17 @@ def control_history(events, config, start, end):
     return sorted(result, key=lambda e: (e["timestamp"], e["id"]))
 
 
+def alarm_explanation(code, active):
+    """What a known alarm number means and what to do; the display remains the authority."""
+    info = alarm_info(code)
+    if info is None:
+        return (f"Larmkod {code} finns inte i Comforts lista. Följ pumpens instruktion." if code
+                else "Inget aktuellt larm 229 är bekräftat. Följ pumpens instruktion för andra larm.")
+    lead = f"Larm {code} {info['name']}" if active is True else f"Senaste larmkod {code} är {info['name']}"
+    tail = "" if active is True else " Om larmet fortfarande är aktivt syns på pumpens display."
+    return f"{lead}: {info['meaning']} Gör så här: {info['action']}{tail}"
+
+
 class Insights:
     def __init__(self, ha, data_dir=None):
         self.ha = ha
@@ -864,7 +877,7 @@ class Insights:
             explanation=("229 betyder att kompressorn blockerats efter tre körningar kortare än fem minuter i rad. "
                          "Lågt flöde eller låg värmeöverföring är möjliga orsaker, inte en fastställd diagnos."
                          if alarm["active"] is True and alarm["code"] == 229 else
-                         "Inget aktuellt larm 229 är bekräftat. Följ pumpens instruktion för andra larm."),
+                         alarm_explanation(alarm.get("code") or alarm.get("latest_code"), alarm["active"])),
         )
         return alarm
 

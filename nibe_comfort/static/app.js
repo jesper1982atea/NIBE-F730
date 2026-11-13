@@ -1343,7 +1343,7 @@ function metric(item) {
   const value = document.createElement("strong");
   // Home Assistant states are raw strings ("36.8"); show numbers the Swedish way like the rest of the page.
   const shown = typeof item.value === "string" && /^-?\d+(\.\d+)?$/.test(item.value) ? displayNumber(Number(item.value)) : operationText(item.value);
-  value.textContent = item.value === null ? "Okänt" : item.code != null ? `Kod ${item.code}` : `${shown} ${item.unit || ""}`.trim();
+  value.textContent = item.value === null ? "Okänt" : item.code != null ? (item.code_name ? `${item.code} · ${item.code_name}` : `Kod ${item.code}`) : `${shown} ${item.unit || ""}`.trim();
   const detail = document.createElement("small");
   detail.textContent = item.error || (item.code != null ? `Senaste larmkod${item.since ? ` · sedan ${new Date(item.since * 1000).toLocaleDateString("sv-SE", { day: "numeric", month: "short" })}` : ""} · aktiv status saknas` : "")
     || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE")}` : "");
@@ -1480,7 +1480,7 @@ async function refreshAlarms() {
     lastAlarm = data;
     $("alarm-status").textContent = data.error
       ? `Larmstatus är osäker: ${data.error}`
-      : data.active === true ? `Aktivt pumplarm${data.code !== null ? ` ${data.code}` : ""}`
+      : data.active === true ? `Aktivt pumplarm${data.code !== null ? ` ${data.code}${data.info ? ` ${data.info.name}` : ""}` : ""}`
       : data.active === false ? "Inget aktivt pumplarm rapporterat." : "Larmstatus är okänd.";
     $("alarm-explanation").textContent = data.explanation;
     // Operating values and rooms help troubleshoot an active alarm; without one they repeat the pump card.
