@@ -7,6 +7,8 @@ from statistics import median
 SAMPLE_SECONDS = 300
 MAX_GAP = 900
 MAX_DURATION = 18 * 3600
+# A reported fire that never warms the fireplace room is dropped after this long.
+MANUAL_NO_HEAT_SECONDS = 3 * 3600
 KEEP_SECONDS = 180 * 86400
 
 
@@ -43,6 +45,8 @@ def validate_state(state):
         if not set(value["arrival"]) <= set(value["scope"]):
             return False
         if value.get("settled_at") is not None and not finite(value["settled_at"]):
+            return False
+        if any(key in value and type(value[key]) is not bool for key in ("manual", "warmed")):
             return False
         return not completed or (finite(value.get("end")) and value["end"] >= value["start"]
                                  and type(value.get("complete")) is bool)
@@ -92,6 +96,7 @@ def summary(state, config, now, phase, message):
     active = state["active"]
     return {"enabled": config["fireplace_enabled"], "phase": phase, "message": message,
             "rooms": config["fireplace_rooms"], "active_since": active["start"] if active else None,
+            "manual": bool(active and active.get("manual")),
             "completed": len(matching), "learned": learned,
             "duration_hours": round(median(durations), 1) if learned else None,
             "room_effects": room_effects if learned else [],
@@ -99,8 +104,12 @@ def summary(state, config, now, phase, message):
                        for e in state["episodes"] if e["rooms"] == sorted(config["fireplace_rooms"])][-5:]}
 
 
-def update(state, config, readings, now):
-    """Return a replacement state, UI summary and auditable transitions. No physical commands."""
+def update(state, config, readings, now, manual_at=None):
+    """Return a replacement state, UI summary and auditable transitions. No physical commands.
+
+    manual_at is when the user reported a fire. It opens an episode at once, and the episode
+    then ends like a detected one: when the fireplace room is no warmer than the others.
+    """
     state = copy.deepcopy(state)
     events = []
     scope, rooms = sorted(config["room_sensors"]), sorted(config["fireplace_rooms"])
@@ -141,6 +150,13 @@ def update(state, config, readings, now):
     if sampled:
         samples.append({"at": now, "values": {e: values[e] for e in scope}})
         state["samples"] = samples = [s for s in samples if s["at"] >= now - 24 * 3600]
+    if manual_at is not None and not state["active"]:
+        before = [s for s in samples if s["at"] <= manual_at]
+        state["active"] = {"scope": scope, "rooms": rooms, "start": min(manual_at, now),
+                           "baseline": dict((before[-1] if before else samples[-1])["values"]),
+                           "peaks": {e: values[e] for e in scope}, "arrival": {}, "settled_at": None,
+                           "manual": True, "warmed": False}
+        state["candidate"] = None
     active = state["active"]
     if active and sampled:
         for key in scope:
@@ -149,7 +165,13 @@ def update(state, config, readings, now):
                 active["arrival"][key] = now - active["start"]
         local = sum(values[e] - active["baseline"][e] for e in rooms) / len(rooms)
         other = sum(values[e] - active["baseline"][e] for e in references) / len(references)
-        if local - other <= 0.2:
+        if active.get("manual") and local - other >= 0.3 - 1e-6:
+            active["warmed"] = True
+        if active.get("manual") and not active["warmed"]:
+            # Settling only counts once the reported fire has actually warmed the room.
+            if now - active["start"] >= MANUAL_NO_HEAT_SECONDS:
+                finish(now, False, "Ingen extravärme märktes i kaminrummet inom 3 timmar efter Jag eldar nu.")
+        elif local - other <= 0.2:
             if active["settled_at"] is None:
                 active["settled_at"] = now
             if now - active["settled_at"] >= 1800 and now - active["start"] >= 2700:
@@ -185,7 +207,11 @@ def update(state, config, readings, now):
                                    "start": baseline["at"], "rooms": rooms})
             else:
                 state["candidate"] = None
-    if state["active"]:
+    if state["active"] and state["active"].get("manual"):
+        phase, message = "active", ("Du har angett att du eldar. Kaminläget gäller tills kaminrummet inte längre är varmare än övriga rum."
+                                    if state["active"]["warmed"] else
+                                    "Du har angett att du eldar. Väntar på att kaminrummet blir varmare än övriga rum.")
+    elif state["active"]:
         phase, message = "active", "Misstänkt extravärme i kaminrum. Det kan vara eldning, sol eller annan lokal värme."
     elif state["candidate"] is not None:
         phase, message = "candidate", "Kaminrummet värms snabbare än övriga rum. Väntar på ett bestående mönster."

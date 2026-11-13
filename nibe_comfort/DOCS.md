@@ -79,6 +79,8 @@ pumpens display. Larmkoder från tillbehörsmoduler (t.ex. EB100-EP14) används 
 gamla eller tvetydiga givare visas som osäkra; andra pumpars larm används inte.
 Vyn visar också senaste rapporterade driftvärden samt valda rums temperaturer
 och termostatbörvärden. Dessa är inte ögonblicksbilder vid larmets start.
+Kodnamn och åtgärdsförslag är möjliga tolkningar för F-serien, inte
+verifierade för den valda modellen; kontrollera pumpens display och handbok.
 
 NIBEs **larm 229** blockerar kompressorn efter tre körningar kortare än fem
 minuter i rad. Kontrollera värmeupptagning, öppna termostater och eventuell
@@ -1015,8 +1017,79 @@ komfortbandet, eller höja när den ligger över. Säkerhetsgränserna gäller a
 Sätt båda stegvärdena till 0 för att stänga av enbart denna extra
 kurvpåverkan; förvärmningen stängs av med sin egen kryssruta.
 Framtida priser används bara av
-förvärmningen (se *Ditt hus lär sig och förvärmning*). Varmvattenstyrning och
-faktisk besparingsberäkning ingår inte.
+förvärmningen (se *Ditt hus lär sig och förvärmning*). Varmvattenstyrning
+är ett separat, valfritt tillval. Faktisk besparingsberäkning ingår inte.
+
+## Nytt i 0.2.46
+
+**Styr vidare när en rumsgivare är tyst** (Vilka rum räknas?). Batterigivare kan
+vara tysta i flera timmar. Påslaget hoppas en tyst eller orimlig givare över så
+länge något annat styrande rum rapporterar. Är alla prioriterade rum tysta styr
+dina övriga valda rum tillfälligt. Statusen visar vilka givare som hoppades
+över. Av som standard, eftersom ett saknat kallt eller varmt rum annars kan
+snedvrida snittet.
+
+**Justera grundvärdet automatiskt** (Säkerhet och finjustering). Rumsregeln
+ensam lämnar ofta en kvarstående avvikelse: pumpen tar hela steg och inom
+toleransbandet ger rummet ingen påverkan. Baskorrigeringen räknar ihop
+avvikelsen över tid, en grad i ett dygn ger ett steg, och lägger den på
+grundvärdet. Avvikelser under 0,1 °C räknas inte. Den står still vid
+förvärmning, kamin, test, semester, larm, reservgivare och när en
+säkerhetsgräns redan är nådd, och den sparas mellan omstarter. Den nollställs
+när du själv ändrar basförskjutningen.
+
+**Billigt och dyrt jämfört med dygnet** (Elpris, avancerat). I stället för fasta
+kronor räknas dygnets billigaste andel (standard 25 %) som billigt och den
+dyraste andelen (från 75 %) som dyrt. Tibbers `intraday_price_ranking` eller
+Nord Pools `raw_today` används. En ofullständig eller mot aktuellt pris
+oförenlig prislista används inte; då gör den relativa regeln ingenting.
+
+**Varmvatten och elpatron vid elpris.** Båda funktionerna är av som
+standard och kräver aktiverad automatik, aktuell prisgivare och valda
+`select`-entiteter från samma myUplink-pump som kurvförskjutningen.
+Varmvattenläget ändras högst en gång per timme; fördröjningen består efter
+omstart och osäkra skrivförsök. Andra manuellt valda lägen lämnas orörda.
+
+Elpatronbegränsning kräver även en aktuell utegivare samt två numeriska
+effektlägen i kW där båda är större än noll och det begränsade är lägre än
+det vanliga. Vid kyla, paus, fel eller omstart försöker appen återställa
+det vanliga läget. En återställningsplan sparas innan en begränsning skickas
+och behålls tills Home Assistant senare läser tillbaka normalvärdet.
+Ett accepterat anrop eller timeout bevisar inte att pumpen har ändrats.
+Automatiska återställningsförsök fortsätter även när styrloopen stoppats
+av upprepade interna fel, så länge tillägget och kontakten fungerar.
+Ingen återställning kan garanteras vid avbrott i Home Assistant, myUplink,
+nätverk eller själva tillägget. Kontrollera alltid pumpen vid varning.
+
+Om en oförändrad HA-entitet aldrig får en ny tidsstämpel kan återställningen
+förbli obekräftad. Kontrollera då **direkt på pumpen** att max eltillsats
+är det vanliga värdet och använd bekräftelseknappen vid elpatronkortet.
+Den kräver även normalvärde från HA och en väntetid efter senaste försök;
+den skickar inget nytt pumpkommando och stänger av automatisk
+elpatronbegränsning innan återställningsplanen tas bort. Sena fördröjda
+kommandon kan ändå inte uteslutas; följ upp inställningen på pumpen.
+
+**Home Assistant.** Påslaget publiceras `sensor.nibe_comfort_status`
+(Styr, Pausad, Förvärmer, Sparar, Kamin, Semester, Väntar på pumpen,
+Övervakning), `_innetemp`, `_mal`, `_onskad_forskjutning`,
+`_nasta_forskjutning`, `_kamin`, `_elprisniva` och `_baskorrigering`.
+De skrivs via Home Assistants state-API varje minut och har därför inget
+unikt id i entitetsregistret. Pausas styrningen längre än inställd tid
+(standard 60 minuter, 0 stänger av) skapas en avisering i Home Assistant,
+och om en notify-tjänst är angiven skickas samma text dit.
+
+**Var kommer elen ifrån?** Välj husets räknare eller effektgivare för köpt
+el, såld el, solproduktion och batteriets urladdning och laddning (köpt el
+krävs). Varje timme räknas husets förbrukning som köpt + sol + batteri ur −
+såld − batteri in. Det som inte köptes räknas som batteri, högst vad batteriet
+levererade, och resten som direkt sol. Har pumpen en elmätare får den samma
+fördelning som huset samma timme. Ovalda flöden antas vara noll. Köpt del
+prissätts med elpriset och lokal del visas till samma teoretiska värde, inte
+som verifierad besparing: ersättning för såld el och batterikostnader ingår
+inte. Batteriet kan ha laddats från elnätet. Räknare som ökar i steg om
+0,1 kWh fördelas jämnt sedan förra steget, högst ett dygn bakåt; en
+oförändrad sista avläsning antas fortsätta oförändrad. Motstridiga eller
+saknade timvärden kan inte fördelas och visas inte som noll.
 
 ## Skydd och fel
 
