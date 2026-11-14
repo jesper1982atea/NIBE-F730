@@ -633,12 +633,12 @@ function roomTrend(room) {
   const previous = line?.points.findLast((point) => point[0] <= stamp)?.[1];
   if (room.temperature == null || typeof previous !== "number") return "Timförändring saknas";
   const delta = Math.round((room.temperature - previous) * 100) / 100;
-  return `${delta > 0 ? "+" : ""}${displayNumber(delta)} °C senaste timmen`;
+  return `${delta > 0 ? "+" : ""}${oneDecimal(delta)} °C senaste timmen`;
 }
 
 function renderRoomImpact() {
   $("indoor-label").textContent = settings?.priority_sensors.length ? "Prioriterade rum nu" : "Inne nu";
-  $("house-indoor").textContent = displayNumber(lastStatus?.house_indoor);
+  $("house-indoor").textContent = oneDecimal(lastStatus?.house_indoor);
   const rooms = lastStatus?.rooms || [];
   const groups = groupRooms(rooms, (room) => room.entity_id);
   $("room-area-status").textContent = areaError
@@ -679,7 +679,7 @@ function renderRoomImpact() {
     : "";
   $("warm-room-list").replaceChildren(...warm.map((room) => {
     const item = document.createElement("li");
-    item.textContent = `${room.name}: ${displayNumber(room.temperature)} °C · ${displayNumber(room.temperature - settings.target_temperature)}° över målet · ${roomTrend(room)}`;
+    item.textContent = `${room.name}: ${oneDecimal(room.temperature)} °C · ${oneDecimal(room.temperature - settings.target_temperature)}° över målet · ${roomTrend(room)}`;
     return item;
   }));
   renderComfort();
@@ -801,6 +801,19 @@ function displayNumber(value) {
   return typeof value === "number" ? value.toLocaleString("sv-SE", { maximumFractionDigits: 2 }) : "—";
 }
 
+// Temperatures and offsets in running text: one decimal is what the sensors can really tell apart.
+function oneDecimal(value) {
+  return typeof value === "number" ? value.toLocaleString("sv-SE", { maximumFractionDigits: 1 }) : "—";
+}
+
+// Axis steps of 1, 2, 2.5 or 5 times a power of ten, so labels read 20°, 22°, 24° instead of 21,75°.
+function niceStep(span, count) {
+  const raw = span / count, power = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 2.5, 5, 10].map((factor) => factor * power).find((step) => step >= raw) ?? 10 * power;
+}
+
+const dayAndTime = (time) => new Date(time * 1000).toLocaleString("sv-SE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
 function duration(seconds) {
   const minutes = Math.round(seconds / 60);
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ""}`;
@@ -813,6 +826,58 @@ const vacationDay = (time) => new Date(time * 1000).toLocaleString("sv-SE", { we
 let vacationBusy = false;
 let vacationDraft = false;
 let vacationRendered;
+
+// Day and time as two dropdowns that behave like a datetime-local input (value "YYYY-MM-DDTHH:MM", "" = empty).
+// The native picker follows the phone's locale and is unreliable inside the Home Assistant app.
+function whenPicker(box) {
+  const pad = (number) => String(number).padStart(2, "0");
+  const isoDay = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const days = document.createElement("select"), times = document.createElement("select");
+  days.setAttribute("aria-label", `${box.dataset.label}, dag`);
+  times.setAttribute("aria-label", `${box.dataset.label}, klockslag`);
+  let disabled = false;
+  const fillDays = (keep) => {
+    const today = new Date(), first = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    days.replaceChildren(new Option(box.dataset.empty, ""));
+    for (let index = 0; index < 366; index++) {
+      const day = new Date(first);
+      day.setDate(first.getDate() + index);
+      const label = day.toLocaleDateString("sv-SE", { weekday: "short", day: "numeric", month: "short",
+        year: day.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+      days.append(new Option(index === 0 ? `i dag (${label})` : index === 1 ? `i morgon (${label})` : label, isoDay(day)));
+    }
+    if (keep && ![...days.options].some((option) => option.value === keep)) days.append(new Option(keep, keep));
+  };
+  const fillTimes = (keep) => {
+    times.replaceChildren();
+    for (let minutes = 0; minutes < 1440; minutes += 15) {
+      const text = `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+      times.append(new Option(text, text));
+    }
+    if (keep && ![...times.options].some((option) => option.value === keep)) {
+      times.append(new Option(keep, keep));
+      [...times.options].sort((a, b) => a.value.localeCompare(b.value)).forEach((option) => times.append(option));
+    }
+  };
+  const sync = () => { days.disabled = disabled; times.disabled = disabled || !days.value; };
+  fillDays(); fillTimes();
+  times.value = "12:00";
+  days.addEventListener("change", sync);
+  Object.defineProperty(box, "value", {
+    get: () => (days.value ? `${days.value}T${times.value}` : ""),
+    set: (text) => {
+      const [day = "", time = ""] = String(text || "").split("T");
+      fillDays(day);
+      fillTimes(time.slice(0, 5));
+      days.value = day;
+      times.value = time.slice(0, 5) || "12:00";
+      sync();
+    },
+  });
+  Object.defineProperty(box, "disabled", { get: () => disabled, set: (value) => { disabled = !!value; sync(); } });
+  box.replaceChildren(days, times);
+  sync();
+}
 
 function vacationInputTime(stamp) {
   const date = new Date(stamp * 1000);
@@ -966,7 +1031,7 @@ async function refreshStatus() {
     $("hero-offset").textContent = displayNumber(state.current_offset);
     const correction = state.base_correction?.enabled && state.base_correction.value ? state.base_correction.value : 0;
     $("hero-offset-base").textContent = typeof settings?.base_offset === "number"
-      ? ` · grundvärde ${displayNumber(settings.base_offset)}${correction ? ` ${correction > 0 ? "+" : "−"} ${displayNumber(Math.abs(correction))} auto` : ""}` : "";
+      ? ` · grundvärde ${displayNumber(settings.base_offset)}${correction ? ` ${correction > 0 ? "+" : "−"} ${oneDecimal(Math.abs(correction))} auto` : ""}` : "";
     renderStatusExtras(state);
     $("outdoor-now").textContent = displayNumber(state.outdoor);
     $("outdoor-now").title = state.reading_errors?.outdoor || "";
@@ -978,7 +1043,7 @@ async function refreshStatus() {
     $("status-message").textContent = state.error_message || state.message;
     if (summaryPlan) renderSummary(summaryPlan);
     else renderLiveAdjustment();
-    const checked = state.checked_at ? new Date(state.checked_at * 1000).toLocaleTimeString("sv-SE") : "väntar";
+    const checked = state.checked_at ? new Date(state.checked_at * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" }) : "väntar";
     $("updated").textContent = `${stale ? "Avläsningen är inte aktuell. " : ""}Senast avläst: ${checked} · Uppdateras automatiskt${state.wait_seconds ? ` · Nästa ändring tidigast om ${Math.ceil(state.wait_seconds / 60)} min` : ""}`;
     if (stale) {
       $("status-title").textContent = "Väntar på aktuell avläsning";
@@ -1104,7 +1169,7 @@ function renderControlLimit() {
   $("adjust-offset-limits").hidden = !limited;
   if (!limited) return;
   $("next-change").textContent = limit.direction === "upper" ? "Övre gränsen nådd" : "Nedre gränsen nådd";
-  $("next-change-why").textContent = `Beräknad förskjutning ${displayNumber(limit.requested)}, men din sparade gräns är ${displayNumber(limit.value)}. Automatiken stannar vid gränsen. Du kan ändra tillåtet intervall i inställningarna.`;
+  $("next-change-why").textContent = `Beräknad förskjutning ${oneDecimal(limit.requested)}, men din sparade gräns är ${displayNumber(limit.value)}. Automatiken stannar vid gränsen. Du kan ändra tillåtet intervall i inställningarna.`;
 }
 
 function confirmedShortRuntimeAlarm() {
@@ -1244,6 +1309,9 @@ function drawChart(container, series, options) {
   if (Math.min(...values) >= 0 && minimum < 0) minimum = 0;
   if (options.integer !== false) { minimum = Math.floor(minimum); maximum = Math.ceil(maximum); }
   if (maximum - minimum < 1e-9) { minimum -= 1; maximum += 1; }
+  const step = niceStep(maximum - minimum, 4);
+  minimum = Math.floor(minimum / step + 1e-9) * step;
+  maximum = Math.ceil(maximum / step - 1e-9) * step;
   const width = chartWidth(container), narrow = width < 520;
   const height = options.height ?? (narrow ? 220 : 280);
   const left = options.left ?? (narrow ? 46 : 56), right = narrow ? 8 : 20, top = markers.length ? 40 : 16, bottom = 30;
@@ -1251,10 +1319,9 @@ function drawChart(container, series, options) {
   const x = (time) => left + (Math.max(start, Math.min(end, time)) - start) / (end - start) * (width - left - right);
   const y = (value) => top + (maximum - value) / (maximum - minimum) * (height - top - bottom);
   const svg = svgElement("svg", { viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true" });
-  for (let index = 0; index <= 4; index++) {
-    const value = minimum + (maximum - minimum) * index / 4;
+  for (let value = minimum; value <= maximum + step / 1000; value += step) {
     svg.append(svgElement("line", { x1: left, x2: width - right, y1: y(value), y2: y(value), class: "chart-grid" }));
-    svg.append(svgElement("text", { x: left - 6, y: y(value) + 4, "text-anchor": "end" }, `${displayNumber(value)}${unit}`));
+    svg.append(svgElement("text", { x: left - 6, y: y(value) + 4, "text-anchor": "end" }, `${displayNumber(Math.round(value / step) * step)}${unit}`));
   }
   for (let index = 0; index <= ticks; index++) {
     const time = start + (end - start) * index / ticks;
@@ -1368,7 +1435,7 @@ function metric(item) {
   const detail = document.createElement("small");
   const since = item.since ? ` · sedan ${new Date(item.since * 1000).toLocaleDateString("sv-SE", { day: "numeric", month: "short" })}` : "";
   detail.textContent = item.error || (cleared ? (item.code ? `Senaste larmkod ${latest} är kvitterad` : "") : item.code != null ? `Senaste larmkod${since} · aktiv status saknas` : "")
-    || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE")}` : "");
+    || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "");
   if (item.entity_id) block.title = item.entity_id;
   block.append(label, value, detail);
   return block;
@@ -1445,7 +1512,7 @@ async function refreshCloudAlarms() {
     const data = await api("myuplink/alarms");
     cloudAlarmReport = data;
     $("cloud-alarm-status").textContent = data.configured
-      ? `Direkt myUplink · system ${data.system_id} · device ${data.device_id}. ${data.alarms.length} larm för denna enhet. Lästa ${new Date(data.checked_at * 1000).toLocaleTimeString("sv-SE")}; läsningen kan återanvändas i en minut. Detta pumpval är separat från HA-valet.`
+      ? `Direkt myUplink · system ${data.system_id} · device ${data.device_id}. ${data.alarms.length} larm för denna enhet. Lästa ${new Date(data.checked_at * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}; läsningen kan återanvändas i en minut. Detta pumpval är separat från HA-valet.`
       : "Direkt myUplink är inte konfigurerat. Fyll i anslutningsuppgifterna under tilläggets Konfiguration.";
     $("cloud-alarms").replaceChildren(...data.alarms.map((alarm) => {
       const row = document.createElement("li");
@@ -1583,7 +1650,7 @@ async function refreshOverview() {
       label: "Pumpens elförbrukning", value: null, error: "Ingen separat förbrukningsmätare hittades.",
     }));
     $("electricity-note").textContent = data.electricity_note;
-    $("overview-status").textContent = `Senast hämtat ${new Date(data.checked_at * 1000).toLocaleTimeString("sv-SE")}.`;
+    $("overview-status").textContent = `Senast hämtat ${new Date(data.checked_at * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.`;
   } catch (error) {
     if (provider !== settings.price_provider) return;
     $("pump-metrics").replaceChildren();
@@ -1658,7 +1725,7 @@ async function refreshEnergy() {
     $("energy-data").hidden = false;
     const covered = totals.coverage_seconds / 3600;
     const priced = totals.priced_seconds / 3600;
-    $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name}. ${new Date(data.start * 1000).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" })}–${clock(data.end)}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
+    $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name}. ${dayAndTime(data.start)} – ${clock(data.end)}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
     $("energy-metrics").replaceChildren(
       metric({ label: `${data.method === "power" ? "Uppskattad el" : "Använd el"} · ${totals.kwh === null ? "endast täckt del" : "hela perioden"}`,
         value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
@@ -1739,7 +1806,7 @@ async function refreshSources() {
     const data = await api("sources");
     const t = data.house_totals;
     const share = (part) => (t.house_kwh > 0 ? Math.round((100 * part) / t.house_kwh) : null);
-    $("sources-status").textContent = `${new Date(data.start * 1000).toLocaleString("sv-SE")}–${new Date(data.end * 1000).toLocaleString("sv-SE")}.${data.house_complete ? "" : " Vissa timmar saknar data och räknas inte."}`;
+    $("sources-status").textContent = `${dayAndTime(data.start)} – ${dayAndTime(data.end)}.${data.house_complete ? "" : " Vissa timmar saknar data och räknas inte."}`;
     $("sources-metrics").replaceChildren(
       metric({ label: "Huset använde", value: displayNumber(t.house_kwh), unit: "kWh" }),
       metric({ label: `Från elnätet · ${share(t.grid_kwh) ?? "–"} %`, value: displayNumber(t.grid_kwh), unit: "kWh" }),
@@ -1790,11 +1857,11 @@ async function refreshAuxiliary() {
     if (signature() !== requested) { pendingRefreshes.add("auxiliary"); return; }
     const totals = data.totals;
     const covered = totals.coverage_seconds / 3600;
-    $("auxiliary-status").textContent = `${data.meter.name} · ${new Date(data.start * 1000).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" })}–${clock(data.end)}.`;
+    $("auxiliary-status").textContent = `${data.meter.name} · ${dayAndTime(data.start)} – ${clock(data.end)}.`;
     $("auxiliary-status").title = data.meter.entity_id;
     $("auxiliary-current").textContent = data.current.error
       ? `Just nu: okänt. ${data.current.error}`
-      : `Senast avläst ${new Date(data.checked_at * 1000).toLocaleString("sv-SE")}: elpatronen är ${data.current.active ? "i drift" : "av"} · ${displayNumber(data.current.kw)} kW.`;
+      : `Senast avläst ${dayAndTime(data.checked_at)}: elpatronen är ${data.current.active ? "i drift" : "av"} · ${displayNumber(data.current.kw)} kW.`;
     $("auxiliary-metrics").replaceChildren(
       metric({ label: "Observerade körperioder · täckt del", value: covered > 0 ? data.runs.length : null, unit: "st" }),
       metric({ label: "Observerad drifttid · täckt del", value: covered > 0 ? duration(data.runtime_seconds) : null }),
@@ -1903,7 +1970,7 @@ function renderHistory() {
       if (!readings.length) return `${line.name}: ingen temperaturhistorik`;
       const first = readings[0][1], current = readings.at(-1)[1];
       const change = current - first;
-      return `${line.name}: ${displayNumber(current)} °C nu · ${change >= 0 ? "+" : ""}${displayNumber(change)} °C under dygnet`;
+      return `${line.name}: ${oneDecimal(current)} °C nu · ${change >= 0 ? "+" : ""}${oneDecimal(change)} °C under dygnet`;
     }).join(" · ");
     const chart = document.createElement("div");
     chart.className = "chart";
@@ -1947,7 +2014,7 @@ function renderHistory() {
   const last = (points) => [...(points || [])].reverse().find((point) => point[1] !== null)?.[1] ?? null;
   const count = lines.reduce((sum, line) => sum + line.points.filter((point) => point[1] !== null).length, 0);
   let status = count
-    ? `${lines.length} rumsgivare · senaste 24 timmarna · uppdaterad ${new Date(data.end * 1000).toLocaleTimeString("sv-SE")}`
+    ? `${lines.length} rumsgivare · senaste 24 timmarna · uppdaterad ${new Date(data.end * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}`
     : "Ingen temperaturhistorik hittades. Kontrollera att valda givare sparas av Home Assistants Recorder.";
   if (single) {
     status = `${single.name}: uppmätt ${displayNumber(last(single.points))} °C`;
@@ -2022,7 +2089,7 @@ async function refreshForecast() {
     const start = points[0].timestamp;
     const end = Math.max(start + 3600, points.at(-1).timestamp);
     drawChart($("forecast-chart"), [{ name: "Prognos", points: points.map((point) => [point.timestamp, point.temperature]), step: false }], { start, end });
-    $("forecast-status").textContent = `${data.name} · ${data.type === "hourly" ? "timprognos" : "dygnsprognos"} · hämtad ${new Date(data.fetched_at * 1000).toLocaleTimeString("sv-SE")}`;
+    $("forecast-status").textContent = `${data.name} · ${data.type === "hourly" ? "timprognos" : "dygnsprognos"} · hämtad ${new Date(data.fetched_at * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}`;
     $("forecast-note").textContent = data.note;
     $("forecast-points").replaceChildren(...points.filter((_, index) => data.type !== "hourly" || index % 4 === 0).map((point) => {
       const text = document.createElement("span");
@@ -2124,7 +2191,7 @@ async function refreshPlan() {
     $("plan-curve-status").textContent = data.curve.error || (fit
       ? `Vid förskjutning ${displayNumber(fit.offset)} ger pumpen ungefär ${displayNumber(fit.intercept + fit.slope * 0)} °C framledning vid 0 °C ute och ${displayNumber(fit.intercept + fit.slope * -10)} °C vid −10 °C (${fit.count} punkter, senaste 7 dygnen, ${displayNumber(fit.min_outdoor)} till ${displayNumber(fit.max_outdoor)} °C ute).${outside}`
       : "");
-    $("plan-status").textContent = `Uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE")}`;
+    $("plan-status").textContent = `Uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}`;
   } catch (error) {
     for (const id of ["plan-outdoor", "plan-price", "plan-offset", "plan-curve", "plan-changes"]) $(id).replaceChildren();
     $("plan-status").textContent = `Kunde inte hämta värmeplanen: ${error.message}`;
@@ -2286,7 +2353,7 @@ async function refreshHotWater() {
       item.append(strong, ` · BT6 ${displayNumber(event.from)} → ${displayNumber(event.to)} °C`);
       return item;
     }) : [Object.assign(document.createElement("li"), { className: "muted", textContent: "Inga tappningar hittade." })]));
-    $("hw-status").textContent = `Uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE")}. Bedömningen bygger på pumpens givare och är ungefärlig.`;
+    $("hw-status").textContent = `Uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}. Bedömningen bygger på pumpens givare och är ungefärlig.`;
   } catch (error) {
     $("hw-status").textContent = `Kunde inte läsa varmvattnet: ${error.message}`;
   } finally {
@@ -2319,7 +2386,7 @@ async function refreshLearning() {
     const data = await api("learning");
     const model = data.model;
     const titles = { learning: "Lär sig fortfarande", rough: "Preliminär husmodell", good: "Känner huset väl" };
-    $("learn-status").textContent = data.error || (model ? `${titles[model.status]} · uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE")}` : "Ingen modell ännu.");
+    $("learn-status").textContent = data.error || (model ? `${titles[model.status]} · uppdaterad ${new Date(data.now * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "Ingen modell ännu.");
     $("learn-message").textContent = [model?.message, data.prediction_note].filter(Boolean).join(" ");
     featureTone("learning-card", "learn-pill", { learning: "blue", rough: "amber", good: "green" }[model?.status] || "muted",
       { learning: "Lär sig", rough: "Preliminär", good: "Känner huset" }[model?.status] || "Ingen modell");
@@ -2713,7 +2780,10 @@ async function init() {
   $("test-stop").addEventListener("click", () => void testAction("stop"));
   $("older-events").addEventListener("click", () => void refreshEvents(true));
   $("vacation-save").addEventListener("click", saveVacation);
-  for (const id of ["vacation-start", "vacation-end"]) $(id).addEventListener("input", () => { vacationDraft = true; renderVacationDuration(); });
+  for (const id of ["vacation-start", "vacation-end"]) {
+    whenPicker($(id));
+    $(id).addEventListener("change", () => { vacationDraft = true; renderVacationDuration(); });
+  }
   for (const chip of document.querySelectorAll("#vacation-presets [data-days]")) chip.addEventListener("click", () => vacationPreset(Number(chip.dataset.days)));
   $("vacation-cancel").addEventListener("click", () => void vacationAction({ action: "cancel" }));
   await refreshStatus();

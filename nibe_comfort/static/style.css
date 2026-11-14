@@ -342,3 +342,6 @@ button.chip:hover{border-color:var(--tone);color:var(--tone);filter:none}
 #fireplace-manual{margin:12px 0 4px}
 @media(max-width:480px){#fireplace-manual-start{width:100%}}
 .notify-test{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:12px 0 4px}.notify-test .hint{margin:0}
+
+.when-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.when-picker select{width:100%}
+.hero .now-tile a{color:#cfe8dc;font-size:13px;text-decoration:underline;text-decoration-color:rgba(207,232,220,.5);text-underline-offset:3px}.hero .now-tile a:hover{color:#fff}

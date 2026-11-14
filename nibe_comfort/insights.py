@@ -663,7 +663,7 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
             break
         stamp = min(candidates)
     plan["notes"].append("Planen antar att rumstemperaturen ligger kvar där den är nu. Automatiken räknar om varje minut, "
-                         "följer pumpens steglängd och väntar minst " + f"{config['min_interval_minutes']} minuter mellan ändringar.")
+                         "följer pumpens steglängd och väntar minst " + f"{config['min_interval_minutes']:g} minuter mellan ändringar.")
     return plan
 
 
