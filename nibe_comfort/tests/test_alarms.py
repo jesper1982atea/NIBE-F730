@@ -251,3 +251,96 @@ class AcknowledgedAlarmTests(CodeOnlyAlarmTests):
         self.with_notes("0")
         self.states[-3]["state"] = "229"
         self.assertEqual((self.alarm()["active"], self.alarm()["code"]), (None, None))
+
+
+class CloudAlarmTests(CodeOnlyAlarmTests):
+    """myUplink's own active alarm list decides for pumps without a status entity, for the same device only."""
+    DEVICE = "emmy-r-1"
+
+    def cloud(self, codes=(), device=None, age=10, configured=True):
+        return {"configured": configured, "system_id": "sys", "device_id": device or self.DEVICE,
+                "alarms": [{"id": str(i + 1), "code": c, "status": "Active"} for i, c in enumerate(codes)],
+                "checked_at": self.now - age}
+
+    def insights(self, identifiers=None):
+        ha = Mock()
+        ha.states.return_value = self.states
+        ha.integration_registry.return_value = self.registry
+        ha.device_identifiers.return_value = [["myuplink", self.DEVICE]] if identifiers is None else identifiers
+        return Insights(ha)
+
+    def tile(self, cloud, **kwargs):
+        return next(i for i in self.insights(**kwargs).overview(self.cfg, cloud)["pump"] if i["key"] == "alarm")
+
+    def test_empty_cloud_list_means_no_active_alarm(self):
+        alarm = self.insights().alarms(self.cfg, self.cloud())
+        self.assertEqual((alarm["active"], alarm["code"], alarm["latest_code"], alarm["error"]), (False, None, 184, None))
+        self.assertEqual(alarm["source"], "myUplink")
+        self.assertIn("Inget aktivt larm enligt myUplink", alarm["explanation"])
+        item = self.tile(self.cloud())
+        self.assertEqual((item["active"], item["code"], item["value"], item["source"]), (False, 184, "Inget aktivt larm", "myUplink"))
+
+    def test_listed_code_is_active_but_never_allows_pause(self):
+        self.states[-2]["state"] = "229"
+        self.cfg["thermostat_control_enabled"] = True
+        alarm = self.insights().alarms(self.cfg, self.cloud([229]))
+        self.assertEqual((alarm["active"], alarm["code"], alarm["error"]), (True, 229, None))
+        self.assertFalse(alarm["can_pause"])
+        item = self.tile(self.cloud([229]))
+        self.assertEqual((item["active"], item["code"]), (True, 229))
+        self.assertIn("229", item["value"])
+
+    def test_other_active_code_is_shown_instead_of_the_stale_latest_code(self):
+        alarm = self.insights().alarms(self.cfg, self.cloud([229]))
+        self.assertEqual((alarm["active"], alarm["code"]), (True, 229))
+
+    def test_unproven_cloud_lists_are_ignored(self):
+        cases = {
+            "other device": (self.cloud(device="emmy-r-2"), None),
+            "stale": (self.cloud(age=301), None),
+            "future": (self.cloud(age=-120), None),
+            "not configured": (self.cloud(configured=False), None),
+            "no cloud": (None, None),
+            "no identifiers": (self.cloud(), []),
+            "other integration": (self.cloud(), [["zha", self.DEVICE]]),
+        }
+        for name, (cloud, identifiers) in cases.items():
+            with self.subTest(name):
+                alarm = self.insights(identifiers).alarms(self.cfg, cloud)
+                self.assertIsNone(alarm["active"])
+                self.assertIn("184 Filterlarm", alarm["error"])
+                self.assertNotIn("source", alarm)
+                self.assertIn("aktiv status saknas", self.tile(cloud, identifiers=identifiers)["value"])
+
+    def test_identity_failure_keeps_the_ha_view(self):
+        insights = self.insights()
+        insights.ha.device_identifiers.side_effect = ControlError("nere")
+        self.assertIsNone(insights.alarms(self.cfg, self.cloud())["active"])
+
+    def test_ha_status_entity_still_decides(self):
+        registry = [*self.registry, {"entity_id": ALARM, "device_id": "pump", "platform": "myuplink"}]
+        self.registry = registry
+        self.states += [entity(ALARM, "on", self.now)]
+        alarm = self.insights().alarms(self.cfg, self.cloud())
+        self.assertTrue(alarm["active"])
+        self.assertNotIn("source", alarm)
+
+    def test_control_never_uses_the_cloud_list(self):
+        # pump_alarm (used by the control loop) is unchanged: only HA entities decide holds.
+        self.assertIsNone(self.alarm()["active"])
+
+
+class DeviceIdentifierTests(unittest.TestCase):
+    def test_identifiers_are_validated_and_entity_ids_never_reach_the_template_unchecked(self):
+        from controller import HomeAssistant
+        ha = HomeAssistant("token")
+        ha.request = Mock(return_value=[["myuplink", "emmy-r-1"]])
+        self.assertEqual(ha.device_identifiers("number.f370_offset_47011"), [["myuplink", "emmy-r-1"]])
+        self.assertIn("device_id('number.f370_offset_47011')", ha.request.call_args.args[1]["template"])
+        for bad in ("number.x') }}{{ 1", "", None, "Number.X"):
+            with self.subTest(bad=bad), self.assertRaises(ControlError):
+                ha.device_identifiers(bad)
+        for invalid in ({}, [["myuplink"]], [[1, 2]], "x"):
+            ha.request.return_value = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ControlError):
+                ha.device_identifiers("number.offset")

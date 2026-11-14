@@ -131,6 +131,14 @@ System-ID och device-ID hämtas från dina system i API:t:
 som verifierats tillhöra rätt anläggning; namn eller larmkod är inte ID.
 Publicera aldrig client secret i GitHub eller ändringsloggen.
 
+När direktanslutningen är konfigurerad använder larmkortet myUplinks lista
+över aktiva larm för pumpar som saknar larmstatusgivare i HA (t.ex. F370):
+ingen kod i listan visas som "Inget aktivt larm", en listad kod som aktiv.
+Listan används bara om den är högst 5 minuter gammal och gäller samma
+myUplink-enhet som HA-enheten bakom kurvförskjutningen. En larmstatusgivare
+i HA bestämmer fortfarande, och styrningen (larmspärr, paus vid 229) läser
+aldrig molnlistan.
+
 #### Snabbguide: befintlig HA-applikation och callback-URL
 
 **Du behöver ingen ny callback-server för NIBE Comfort 0.2.41.**

@@ -1367,7 +1367,8 @@ function metric(item) {
   value.textContent = item.value === null ? "Okänt" : cleared ? "Inget aktivt larm" : latest ?? `${shown} ${item.unit || ""}`.trim();
   const detail = document.createElement("small");
   const since = item.since ? ` · sedan ${new Date(item.since * 1000).toLocaleDateString("sv-SE", { day: "numeric", month: "short" })}` : "";
-  detail.textContent = item.error || (cleared ? (item.code ? `Senaste larmkod ${latest} är kvitterad` : "") : item.code != null ? `Senaste larmkod${since} · aktiv status saknas` : "")
+  const via = item.source ? ` enligt ${item.source}` : "";
+  detail.textContent = item.error || (cleared ? (item.code ? `Senaste larmkod ${latest} är kvitterad${via}` : item.source ? `Enligt ${item.source}` : "") : item.active === true && item.key === "alarm" ? `Aktivt larm${via}` : item.code != null ? `Senaste larmkod${since} · aktiv status saknas` : "")
     || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE")}` : "");
   if (item.entity_id) block.title = item.entity_id;
   block.append(label, value, detail);

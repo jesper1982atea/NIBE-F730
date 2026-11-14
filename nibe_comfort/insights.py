@@ -736,11 +736,51 @@ def control_history(events, config, start, end):
     return sorted(result, key=lambda e: (e["timestamp"], e["id"]))
 
 
-def alarm_explanation(code, active):
+# A myUplink alarm list older than this is not used to decide whether the latest code is still active.
+CLOUD_ALARM_MAX_AGE = 300
+
+
+def cloud_alarm_status(cloud, identifiers, now):
+    """Active alarm codes straight from myUplink, only for the pump that owns the offset entity and only when fresh."""
+    if not isinstance(cloud, dict) or cloud.get("configured") is not True:
+        return None
+    device, checked, alarms = cloud.get("device_id"), cloud.get("checked_at"), cloud.get("alarms")
+    if (not isinstance(device, str) or not device or not isinstance(alarms, list)
+            or type(checked) not in (int, float) or not 0 <= now - checked <= CLOUD_ALARM_MAX_AGE
+            or ["myuplink", device] not in identifiers):
+        return None
+    if any(not isinstance(a, dict) or type(a.get("code")) is not int for a in alarms):
+        return None
+    # The list comes from /notifications/active, so every listed alarm counts as active.
+    return {"codes": sorted({a["code"] for a in alarms}), "checked_at": checked}
+
+
+def with_cloud_alarm(alarm, status):
+    """Decide active/inactive for pumps without an alarm status entity (F370); an HA status entity still decides."""
+    if status is None or alarm.get("active") is not None:
+        return alarm
+    latest = alarm.get("latest_code", alarm.get("code"))
+    if status["codes"]:
+        code = latest if latest in status["codes"] else status["codes"][0]
+        alarm.update(active=True, code=code, error=None, source="myUplink")
+        if "latest_code" in alarm:
+            alarm.update(latest_code=code, info=alarm_info(code))
+        else:
+            alarm.update(code_name=(alarm_info(code) or {}).get("name"), value=f"Larm aktivt · {alarm_label(code)}")
+    else:
+        alarm.update(active=False, error=None, source="myUplink")
+        if "latest_code" in alarm:
+            alarm["code"] = None
+        else:
+            alarm["value"] = "Inget aktivt larm"
+    return alarm
+
+
+def alarm_explanation(code, active, source="larmstatusgivaren"):
     """What a known alarm number means and what to do; the display remains the authority."""
     info = alarm_info(code)
     if active is False:
-        return (f"Inget aktivt larm enligt larmstatusgivaren. Senaste larmkod: {alarm_label(code)}. Kodnamnet är en möjlig F-serietolkning; kontrollera din pumps handbok."
+        return (f"Inget aktivt larm enligt {source}. Senaste larmkod: {alarm_label(code)}. Kodnamnet är en möjlig F-serietolkning; kontrollera din pumps handbok."
                 if code else "Inget aktivt pumplarm.")
     if info is None:
         return (f"Larmkod {code} finns inte i Comforts lista. Följ pumpens instruktion." if code
@@ -846,15 +886,32 @@ class Insights:
     def registry(self):
         return self.cached("registry", 300, self.ha.integration_registry)
 
-    def overview(self, config):
-        key = ("overview", config["offset_entity"], config["price_entity"], config["price_provider"], config["max_age_minutes"])
-        return self.cached(key, 60, lambda: overview(self.ha.states(), self.registry(), config, time.time()))
+    def cloud_alarm_status(self, config, cloud, now):
+        """myUplink's own active list, used only when it is for the same device as the HA offset entity."""
+        if not isinstance(cloud, dict) or cloud.get("configured") is not True:
+            return None
+        try:
+            identifiers = self.cached(("identifiers", config["offset_entity"]), 300,
+                                      lambda: self.ha.device_identifiers(config["offset_entity"]))
+        except ControlError as exc:
+            logging.getLogger("nibe_comfort").warning("Pumpens enhetsidentitet kunde inte läsas: %s", exc)
+            return None
+        return cloud_alarm_status(cloud, identifiers, now)
 
-    def alarms(self, config):
+    def overview(self, config, cloud=None):
+        key = ("overview", config["offset_entity"], config["price_entity"], config["price_provider"], config["max_age_minutes"])
+        result = self.cached(key, 60, lambda: overview(self.ha.states(), self.registry(), config, time.time()))
+        status = self.cloud_alarm_status(config, cloud, time.time())
+        for item in result.get("pump", []):
+            if item.get("key") == "alarm":
+                with_cloud_alarm(item, status)
+        return result
+
+    def alarms(self, config, cloud=None):
         states = self.ha.states()
         now = time.time()
         peers = device_peers(self.registry())
-        alarm = pump_alarm(states, config, peers, now)
+        alarm = with_cloud_alarm(pump_alarm(states, config, peers, now), self.cloud_alarm_status(config, cloud, now))
         readings = current_readings(config, states, now, peers)
         pump_ids = set(peers.get(config["offset_entity"], ()))
         pump_states = [s for s in states if s["entity_id"] in pump_ids]
@@ -875,13 +932,15 @@ class Insights:
         alarm.update(
             checked_at=now, rooms=rooms, observations=observations,
             thermostat_control_enabled=config["thermostat_control_enabled"],
+            # Pausing still requires the pump's own status entity in HA; the myUplink list only informs the view.
             can_pause=alarm["active"] is True and alarm["code"] == 229 and not alarm["error"]
-                      and config["thermostat_control_enabled"],
+                      and alarm.get("source") is None and config["thermostat_control_enabled"],
             reset_supported=False,
             explanation=("229 betyder att kompressorn blockerats efter tre körningar kortare än fem minuter i rad. "
                          "Lågt flöde eller låg värmeöverföring är möjliga orsaker, inte en fastställd diagnos."
                          if alarm["active"] is True and alarm["code"] == 229 else
-                         alarm_explanation(alarm.get("code") or alarm.get("latest_code"), alarm["active"])),
+                         alarm_explanation(alarm.get("code") or alarm.get("latest_code"), alarm["active"],
+                                           alarm.get("source") or "larmstatusgivaren")),
         )
         return alarm
 

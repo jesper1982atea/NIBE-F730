@@ -105,6 +105,14 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
     if insights is None:
         insights = Insights(controller.ha, getattr(controller, "data_dir", None))
     insights.fireplace_provider = controller.fireplace_observations
+
+    def cloud_alarms():
+        """The optional direct myUplink alarm list, or None; a cloud failure never breaks the HA-based view."""
+        try:
+            return myuplink.report()
+        except (ControlError, OSError, ValueError) as exc:
+            LOG.warning("myUplink-larm kunde inte läsas: %s", exc)
+            return None
     if getattr(controller, "preheat_provider", 1) is None:
         controller.preheat_provider = insights.control_preheat
 
@@ -158,9 +166,9 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                 elif path == "/api/discovery":
                     self.respond(200, controller.ha.discover())
                 elif path == "/api/overview":
-                    self.respond(200, insights.overview(controller.settings()))
+                    self.respond(200, insights.overview(controller.settings(), cloud_alarms()))
                 elif path == "/api/alarms":
-                    self.respond(200, insights.alarms(controller.settings()))
+                    self.respond(200, insights.alarms(controller.settings(), cloud_alarms()))
                 elif path == "/api/myuplink/alarms":
                     self.respond(200, myuplink.report())
                 elif path == "/api/myuplink/discovery":

@@ -413,6 +413,19 @@ class HomeAssistant:
         validate_registry(registry)
         return registry
 
+    def device_identifiers(self, entity_id):
+        """Integration identifiers of the device that owns entity_id, e.g. [["myuplink", "<device id>"]]."""
+        if not isinstance(entity_id, str) or not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", entity_id):
+            raise ControlError("Ogiltig entitet för enhetsidentitet.")
+        template = ("{% set did = device_id('" + entity_id + "') %}"
+                    "{{ ((device_attr(did, 'identifiers') | list) if did else []) | to_json }}")
+        identifiers = self.request("/template", {"template": template})
+        if (not isinstance(identifiers, list) or len(identifiers) > 20
+                or any(not isinstance(i, list) or len(i) != 2 or not all(isinstance(p, str) for p in i)
+                       for i in identifiers)):
+            raise ControlError("Home Assistant lämnade ogiltiga enhetsidentiteter.")
+        return identifiers
+
     def entity_areas(self, entity_ids):
         """Resolve Home Assistant area assignments for the supplied entity IDs."""
         if (not isinstance(entity_ids, list) or len(entity_ids) > 100

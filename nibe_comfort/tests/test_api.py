@@ -129,6 +129,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body)[0], 400)
         self.ha.set_offset.assert_not_called()
 
+    def test_alarm_views_survive_a_failing_cloud_list(self):
+        cloud = Mock()
+        cloud.report.side_effect = ControlError("myUplink svarade inte")
+        self.server.RequestHandlerClass = handler_for(self.controller, self.token, myuplink=cloud)
+        for path in ("/api/alarms", "/api/overview"):
+            with self.subTest(path), self.assertLogs("nibe_comfort", "WARNING"):
+                self.assertEqual(self.request(path)[0], 200)
+        self.ha.device_identifiers.assert_not_called()
+
     def test_myuplink_discovery_auth_validation_and_explicit_save(self):
         cloud = Mock()
         cloud.discovery.return_value = {"credentials_configured": True, "choices": []}
