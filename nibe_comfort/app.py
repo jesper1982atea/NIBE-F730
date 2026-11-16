@@ -198,7 +198,10 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                 elif path == "/api/status":
                     self.respond(200, controller.snapshot())
                 elif path == "/api/discovery":
-                    self.respond(200, controller.ha.discover())
+                    selected = parse_qs(urlsplit(self.path).query, keep_blank_values=True).get("offset_entity")
+                    if selected is not None and len(selected) != 1:
+                        raise ControlError("Ange högst en kurvförskjutningsentitet.")
+                    self.respond(200, controller.ha.discover(selected[0] if selected and selected[0] else None))
                 elif path == "/api/overview":
                     self.respond(200, insights.overview(controller.settings(), cloud_alarms.get()))
                 elif path == "/api/alarms":

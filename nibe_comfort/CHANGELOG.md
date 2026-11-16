@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 0.2.48
+
+- Föreslår entydigt identifierade inställningsentiteter för varmvatten och
+  max eltillsats på den valda myUplink-pumpen. Förslag används först efter
+  ditt val och sparas eller aktiverar inte styrning automatiskt.
+- Behåller manuella val och visar när entiteten saknas eller är tvetydig.
+
 ## 0.2.47
 
 - Peters molnlarmlista kan visa aktiv status för samma myUplink-pump när

@@ -496,6 +496,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request("/api/discovery"), (200, result))
         self.assertFalse(self.controller.settings()["offset_entity"])
         self.ha.set_offset.assert_not_called()
+        self.ha.set_select.assert_not_called()
+        self.assertEqual(self.request("/api/discovery?offset_entity=number.manually_renamed"), (200, result))
+        self.ha.discover.assert_called_with("number.manually_renamed")
+        self.assertEqual(self.request("/api/discovery?offset_entity=number.a&offset_entity=number.b")[0], 502)
         self.assertEqual(self.request("/api/discovery", token=False)[0], 401)
 
     def test_discovery_failure_is_visible(self):

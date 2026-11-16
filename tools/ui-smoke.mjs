@@ -84,7 +84,7 @@ const server = createServer(async (request, response) => {
     data = settings;
   } else if (path === "/api/settings") data = settings;
   else if (path === "/api/entities") data = entities;
-  else if (path === "/api/discovery") data = {
+  else if (path === "/api/discovery" || path.startsWith("/api/discovery?")) data = {
     offset_entity: offset, outdoor_entity: outdoor, price_entity: price,
     message: "NIBE hittad", price_message: "Tibbers aktuella elpris hittades automatiskt.",
   };
@@ -561,7 +561,7 @@ async function dashboardChecks() {
   await nordpoolPage.route("**/api/entities", (route) => route.fulfill({ json: [
     ...entities, { entity_id: nordpoolId, name: "Nord Pool SE3 Aktuellt pris", state: "0.5", unit: "SEK/kWh" },
   ] }));
-  await nordpoolPage.route("**/api/discovery", (route) => route.fulfill({ json: {
+  await nordpoolPage.route("**/api/discovery**", (route) => route.fulfill({ json: {
     offset_entity: offset, outdoor_entity: outdoor, price_entity: price,
     message: "NIBE hittad", price_message: "Tibbers aktuella elpris hittades automatiskt.",
     price_sources: {
@@ -1306,8 +1306,71 @@ async function alarmChecks() {
   await alarmPage.close();
 }
 
+async function modeDiscoveryChecks() {
+  const page = await browser.newPage();
+  page.on("pageerror", (error) => errors.push(error.message));
+  const otherOffset = "number.other_heating_offset_climate_system_1";
+  const hot = "select.pump_hot_water_amount_47041";
+  const aux = "select.pump_max_electrical_add_47100";
+  const modeEntities = [...entities,
+    { entity_id: otherOffset, name: "Annan pump", state: "2", min: -10, max: 10, step: 1 },
+    { entity_id: hot, name: "Varmvatten", state: "Normal", options: ["Normal", "Economy", "Luxury"] },
+    { entity_id: aux, name: "Max eltillsats", state: "7 kW", options: ["2 kW", "7 kW"] },
+  ];
+  let modeWrites = 0;
+  let modeSettings = { ...defaults, offset_entity: offset, outdoor_entity: outdoor };
+  page.on("request", (request) => { if (!["GET", "HEAD"].includes(request.method())) modeWrites++; });
+  await page.route("**/api/settings", (route) => {
+    return route.fulfill({ json: modeSettings });
+  });
+  await page.route("**/api/entities", (route) => route.fulfill({ json: modeEntities }));
+  await page.route("**/api/discovery**", async (route) => {
+    const selected = new URL(route.request().url()).searchParams.get("offset_entity") || offset;
+    if (selected === otherOffset) await new Promise((resolve) => setTimeout(resolve, 200));
+    const pumpModes = selected === otherOffset
+      ? { offset_entity: selected, hot_water_mode_entity: "", aux_limit_entity: "",
+        hot_water_mode_entity_message: "Flera möjliga entiteter hittades på pumpen. Välj manuellt.",
+        aux_limit_entity_message: "Ingen entydig tillgänglig entitet hittades på pumpen. Välj manuellt." }
+      : { offset_entity: selected, hot_water_mode_entity: hot, aux_limit_entity: aux };
+    await route.fulfill({ json: { offset_entity: offset, outdoor_entity: outdoor, message: "NIBE hittad", pump_modes: pumpModes } });
+  });
+  await page.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await page.waitForFunction(() => document.getElementById("hot-water-discovery").textContent.includes("Förslag:"));
+  await page.locator("#settings-panel").evaluate((element) => { element.open = true; });
+  await page.locator("#manual-pump").evaluate((element) => { element.open = true; });
+  assert.equal(await page.locator("#hot_water_mode_entity").inputValue(), "");
+  assert.equal(await page.locator("#aux_limit_entity").inputValue(), "");
+  assert.equal(await page.locator("#hot_water_price_enabled").isChecked(), false);
+  assert.equal(await page.locator("#aux_limit_enabled").isChecked(), false);
+  await page.locator("#hot-water-suggestion").click();
+  assert.equal(await page.locator("#hot_water_mode_entity").inputValue(), hot);
+  assert.equal(await page.locator("#aux_limit_entity").inputValue(), "");
+  await page.selectOption("#offset_entity", otherOffset);
+  await page.waitForFunction(() => document.getElementById("hot-water-discovery").textContent.includes("Flera möjliga"));
+  assert.equal(await page.locator("#hot_water_mode_entity").inputValue(), hot, "Changing pumps never replaces a draft choice");
+  assert.equal(await page.locator("#aux-suggestion").isHidden(), true);
+  await page.selectOption("#offset_entity", offset);
+  await page.waitForFunction(() => document.getElementById("aux-discovery").textContent.includes("Förslag:"));
+  await page.locator("#aux-suggestion").click();
+  assert.equal(await page.locator("#aux_limit_entity").inputValue(), aux);
+  assert.equal(await page.locator("#aux_limit_enabled").isChecked(), false);
+  await page.selectOption("#offset_entity", otherOffset);
+  await page.selectOption("#offset_entity", offset);
+  await page.waitForTimeout(300);
+  assert.match(await page.locator("#aux-discovery").textContent(), /Förslag:/, "A late response for the old pump is ignored");
+  assert.equal(await page.locator("#aux_limit_entity").inputValue(), aux);
+  modeSettings = { ...modeSettings, hot_water_mode_entity: hot };
+  await page.reload();
+  await page.waitForFunction(() => document.getElementById("hot-water-discovery").textContent.includes("Förslag:"));
+  assert.equal(await page.locator("#hot_water_mode_entity").inputValue(), hot, "Saved choices are preserved");
+  assert.equal(await page.locator("#hot-water-suggestion").isHidden(), true);
+  assert.equal(modeWrites, 0, "Discovery and accepting suggestions never save or activate settings");
+  await page.close();
+}
+
 try {
   if (!process.env.ENERGY_ONLY) await dashboardChecks();
+  await modeDiscoveryChecks();
   await alarmChecks();
   await cloudAlarmChecks();
   await fireplaceChecks();
