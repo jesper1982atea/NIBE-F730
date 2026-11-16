@@ -13,12 +13,34 @@ from urllib.request import Request, urlopen
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app import handler_for
+from app import CloudAlarmCache, handler_for
 from controller import ControlError, Controller
 from insights import Insights
 from test_controller import config, fixtures
 from test_energy import END, METER, PRICE, START, meter_rows, price_rows
 from test_auxiliary import POWER, OFFSET, heater_rows, registry
+
+
+class CloudAlarmCacheTests(unittest.TestCase):
+    def test_invalidation_rejects_an_in_flight_result(self):
+        started = threading.Event()
+        release = threading.Event()
+        cloud = Mock()
+        def delayed_report():
+            started.set()
+            release.wait(5)
+            return {"configured": True, "device_id": "old"}
+        cloud.report.side_effect = delayed_report
+        cache = CloudAlarmCache(cloud)
+        worker = threading.Thread(target=cache.load, args=(cache.generation,))
+        worker.start()
+        try:
+            self.assertTrue(started.wait(1))
+            cache.invalidate()
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertIsNone(cache.result)
 
 
 class ApiTests(unittest.TestCase):
@@ -129,13 +151,22 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request("/api/myuplink/alarms", "PUT", body)[0], 400)
         self.ha.set_offset.assert_not_called()
 
-    def test_alarm_views_survive_a_failing_cloud_list(self):
+    def test_alarm_views_do_not_wait_for_a_slow_cloud_list(self):
         cloud = Mock()
-        cloud.report.side_effect = ControlError("myUplink svarade inte")
+        started = threading.Event()
+        release = threading.Event()
+        def delayed_report():
+            started.set()
+            release.wait(5)
+            return {"configured": False, "alarms": [], "checked_at": None}
+        cloud.report.side_effect = delayed_report
         self.server.RequestHandlerClass = handler_for(self.controller, self.token, myuplink=cloud)
-        for path in ("/api/alarms", "/api/overview"):
-            with self.subTest(path), self.assertLogs("nibe_comfort", "WARNING"):
+        try:
+            for path in ("/api/alarms", "/api/overview"):
                 self.assertEqual(self.request(path)[0], 200)
+            self.assertTrue(started.wait(1))
+        finally:
+            release.set()
         self.ha.device_identifiers.assert_not_called()
 
     def test_myuplink_discovery_auth_validation_and_explicit_save(self):

@@ -163,6 +163,32 @@ class MyUplinkTests(unittest.TestCase):
         with self.assertRaisesRegex(ControlError, "dubbla"):
             self.client.report()
 
+    def test_incomplete_or_contradictory_active_list_is_not_reported_as_empty(self):
+        for response in (
+            {"notifications": [], "numItems": 1},
+            {"notifications": [{**self.alarm, "status": "ResetByUserFromCloud"}], "numItems": 1},
+        ):
+            with self.subTest(response=response):
+                self.client.cached = None
+                self.client.request.side_effect = lambda path, *args, **kwargs: (
+                    {"access_token": "token", "expires_in": 3600} if path == "/oauth/token" else response)
+                with self.assertRaises(ControlError):
+                    self.client.report()
+
+    def test_paged_alarm_list_checks_total_before_filtering_foreign_devices(self):
+        first = [{**self.alarm, "id": str(i + 1), "deviceId": "foreign"} for i in range(100)]
+        def response(path, *args, **kwargs):
+            if path == "/oauth/token":
+                return {"access_token": "token", "expires_in": 3600}
+            return {"notifications": first if "page=1" in path else [self.alarm], "numItems": 101}
+        self.client.request.side_effect = response
+        self.assertEqual([alarm["code"] for alarm in self.client.report()["alarms"]], [229])
+        self.client.cached = None
+        self.client.request.side_effect = lambda path, *args, **kwargs: (
+            {"notifications": first if "page=1" in path else [], "numItems": 101})
+        with self.assertRaises(ControlError):
+            self.client.report()
+
     def test_nullable_empty_list_and_invalid_token_expiry(self):
         self.client.request.side_effect = lambda *args, **kwargs: (
             {"access_token": "token", "expires_in": 3600} if args[0] == "/oauth/token"

@@ -188,6 +188,8 @@ class MyUplink:
     def active(self):
         token = self.access_token()
         alarms = []
+        count = 0
+        total = None
         for page in range(1, 11):
             result = self.request(f"/v2/systems/{self.system_id}/notifications/active?page={page}&itemsPerPage=100", token=token)
             if (not isinstance(result, dict) or type(result.get("numItems")) is not int
@@ -198,12 +200,19 @@ class MyUplink:
                 notifications = []
             if not isinstance(notifications, list) or len(notifications) > 100:
                 raise ControlError("myUplink lämnade en ogiltig larmlista.")
+            if total is None:
+                total = result["numItems"]
+            if result["numItems"] != total or len(notifications) != min(100, total - count):
+                raise ControlError("myUplink-larmlistan är ofullständig eller har ändrats under hämtningen.")
+            count += len(notifications)
             for alarm in notifications:
                 if (not isinstance(alarm, dict) or not isinstance(alarm.get("id"), str)
                         or not alarm["id"] or type(alarm.get("alarmNumber")) is not int
                         or not isinstance(alarm.get("deviceId"), str)
                         or not isinstance(alarm.get("status"), str)):
                     raise ControlError("myUplink lämnade ett ogiltigt larm.")
+                if alarm["status"] != "Active":
+                    raise ControlError("myUplink lämnade en motsägelsefull aktiv larmlista.")
                 if alarm["deviceId"] != self.device_id:
                     continue
                 identifier = alarm["id"]
@@ -215,7 +224,7 @@ class MyUplink:
                 alarms.append({"id": identifier, "code": alarm["alarmNumber"], "status": alarm["status"],
                                "title": alarm.get("header") if isinstance(alarm.get("header"), str) else "Pumplarm",
                                "can_reset": can_reset, "blocked_reason": reason})
-            if page * 100 >= result["numItems"]:
+            if count == total:
                 if len({a["id"] for a in alarms}) != len(alarms):
                     raise ControlError("myUplink lämnade dubbla larm-ID:n.")
                 return alarms

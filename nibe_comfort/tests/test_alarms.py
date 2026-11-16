@@ -293,6 +293,9 @@ class CloudAlarmTests(CodeOnlyAlarmTests):
     def test_other_active_code_is_shown_instead_of_the_stale_latest_code(self):
         alarm = self.insights().alarms(self.cfg, self.cloud([229]))
         self.assertEqual((alarm["active"], alarm["code"]), (True, 229))
+        self.assertEqual(alarm["latest_code"], 184)
+        self.assertIn("pausar inte automatiken", alarm["explanation"])
+        self.assertEqual(self.tile(self.cloud([229]))["code"], 229)
 
     def test_unproven_cloud_lists_are_ignored(self):
         cases = {
@@ -324,6 +327,14 @@ class CloudAlarmTests(CodeOnlyAlarmTests):
         alarm = self.insights().alarms(self.cfg, self.cloud())
         self.assertTrue(alarm["active"])
         self.assertNotIn("source", alarm)
+
+    def test_unavailable_ha_status_is_not_overridden(self):
+        self.registry = [*self.registry, {"entity_id": ALARM, "device_id": "pump", "platform": "myuplink"}]
+        self.states += [entity(ALARM, "unavailable", self.now)]
+        alarm = self.insights().alarms(self.cfg, self.cloud())
+        self.assertIsNone(alarm["active"])
+        self.assertNotIn("source", alarm)
+        self.assertIsNone(self.tile(self.cloud())["active"])
 
     def test_control_never_uses_the_cloud_list(self):
         # pump_alarm (used by the control loop) is unchanged: only HA entities decide holds.
