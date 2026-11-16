@@ -452,11 +452,15 @@ class HomeAssistant:
             raise ControlError("Home Assistant returnerade ogiltiga rumsuppgifter.")
         return {row["entity_id"]: {"area_id": row["area_id"], "area_name": row["area_name"]} for row in rows}
 
-    def discover(self):
+    def discover(self, selected_offset=None):
         from insights import discover_prices
+        if selected_offset is not None and (not isinstance(selected_offset, str)
+                or not re.fullmatch(r"number\.[a-z0-9_]+", selected_offset)):
+            raise ControlError("Välj en giltig kurvförskjutningsentitet.")
         registry = self.integration_registry()
         states = self.states()
         result = discover_nibe(states, registry)
+        result["pump_modes"] = discover_pump_modes(states, registry, selected_offset or result["offset_entity"])
         sources = {provider: discover_prices(states, registry, provider) for provider in ("tibber", "nordpool")}
         result.update(sources["tibber"])
         result["price_sources"] = sources
@@ -583,6 +587,52 @@ def device_peers(registry):
 def entity_base(entity_id):
     """Entity id without a myUplink parameter id suffix (sensor.x_alarms_45001 -> sensor.x_alarms)."""
     return re.sub(r"_\d+$", "", entity_id)
+
+
+def discover_pump_modes(entities, registry, offset_entity):
+    """Suggest known settings only from the selected myUplink device and integration entry."""
+    validate_registry(registry)
+    modes = {"offset_entity": offset_entity, "hot_water_mode_entity": "", "aux_limit_entity": ""}
+    if not offset_entity:
+        return {**modes, "message": "Välj först pumpens kurvförskjutning."}
+    offsets = [item for item in registry if item["entity_id"] == offset_entity
+               and item.get("platform") == "myuplink"]
+    identities = {(item["device_id"], item.get("config_entry_id")) for item in offsets}
+    if (len(identities) != 1 or not offsets[0]["device_id"]
+            or not isinstance(offsets[0].get("config_entry_id"), str) or not offsets[0]["config_entry_id"]):
+        return {**modes, "message": "Vald kurvförskjutning kan inte entydigt kopplas till en myUplink-pump."}
+    device_id, entry = next(iter(identities))
+    states = {entity["entity_id"]: entity for entity in entities}
+    matches = {key: set() for key in ("hot_water_mode_entity", "aux_limit_entity")}
+    for item in registry:
+        entity_id = item["entity_id"]
+        if (item.get("platform") != "myuplink" or item["device_id"] != device_id
+                or item.get("config_entry_id") != entry or not entity_id.startswith("select.")):
+            continue
+        base = entity_base(entity_id)
+        if base.endswith(("_hot_water_comfort_mode", "_hot_water_amount")):
+            matches["hot_water_mode_entity"].add(entity_id)
+        if base.endswith("_max_electrical_add"):
+            matches["aux_limit_entity"].add(entity_id)
+    for key, candidates in matches.items():
+        if len(candidates) == 1:
+            candidate = next(iter(candidates))
+            state = states.get(candidate)
+            options = state.get("attributes", {}).get("options") if state else None
+            owners = {(item["device_id"], item.get("config_entry_id")) for item in registry
+                      if item["entity_id"] == candidate and item.get("platform") == "myuplink"}
+            if (owners == {(device_id, entry)} and isinstance(options, list) and len(options) >= 2
+                    and all(isinstance(option, str) and option for option in options)
+                    and state.get("state") in options):
+                modes[key] = candidate
+        modes[key + "_message"] = (
+            "Entydigt förslag från vald myUplink-pump. Kontrollera entitet och lägen innan du sparar."
+            if modes[key] else
+            "Flera möjliga entiteter hittades på pumpen. Välj manuellt."
+            if len(candidates) > 1 else
+            "Ingen entydig tillgänglig entitet hittades på pumpen. Välj manuellt."
+        )
+    return modes
 
 
 def alarm_sources(ids):

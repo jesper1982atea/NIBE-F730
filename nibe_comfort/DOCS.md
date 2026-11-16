@@ -1058,6 +1058,13 @@ oförenlig prislista används inte; då gör den relativa regeln ingenting.
 **Varmvatten och elpatron vid elpris.** Båda funktionerna är av som
 standard och kräver aktiverad automatik, aktuell prisgivare och valda
 `select`-entiteter från samma myUplink-pump som kurvförskjutningen.
+Tillägget söker efter kända inställningsentiteter på den valda pumpen och
+visar ett förslag när träffen är entydig och tillgänglig. Klicka på
+**Använd föreslagen entitet** om den är rätt; kontrollera sedan lägena och
+spara. Sökningen ändrar inte befintliga val, sparar inget och aktiverar inte
+styrningen. Finns ingen entydig träff, till exempel om entiteten har bytt
+namn eller modellen använder andra namn, väljer du manuellt. Kontrollera
+valen igen om du byter pump. Styrbara myUplink-entiteter kan kräva abonnemang.
 Varmvattenläget ändras högst en gång per timme; fördröjningen består efter
 omstart och osäkra skrivförsök. Andra manuellt valda lägen lämnas orörda.
 

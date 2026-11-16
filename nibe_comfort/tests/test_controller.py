@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from controller import ControlError, Controller, DEFAULTS, HomeAssistant, current_readings, device_peers, discover_nibe, evaluate, smoothed_indoor, validate
+from controller import ControlError, Controller, DEFAULTS, HomeAssistant, current_readings, device_peers, discover_nibe, discover_pump_modes, evaluate, smoothed_indoor, validate
 
 
 def entity(entity_id, value, now=None, **attributes):
@@ -139,6 +139,69 @@ class DiscoveryTests(unittest.TestCase):
                 ha.request.return_value = malformed
                 with self.assertRaises(ControlError):
                     ha.entity_areas(["sensor.living"])
+
+    def test_pump_mode_suggestions_require_exact_identity_and_available_select(self):
+        offset = "number.manually_renamed"
+        hot = "select.pump_hot_water_amount_47041"
+        aux = "select.pump_max_electrical_add_47100"
+        registry = [
+            {"entity_id": offset, "device_id": "pump", "config_entry_id": "entry", "platform": "myuplink"},
+            {"entity_id": hot, "device_id": "pump", "config_entry_id": "entry", "platform": "myuplink"},
+            {"entity_id": aux, "device_id": "pump", "config_entry_id": "entry", "platform": "myuplink"},
+            {"entity_id": "select.other_comfort_mode", "device_id": "other", "config_entry_id": "entry", "platform": "myuplink"},
+            {"entity_id": "select.other_max_electrical_add", "device_id": "pump", "config_entry_id": "other", "platform": "myuplink"},
+            {"entity_id": "select.fake_comfort_mode", "device_id": "pump", "config_entry_id": "entry", "platform": "other"},
+            {"entity_id": "select.pump_max_electrical_add_schedule", "device_id": "pump", "config_entry_id": "entry", "platform": "myuplink"},
+        ]
+        states = [entity(offset, 1), entity(hot, "Normal", options=["Normal", "Economy"]),
+                  entity(aux, "7 kW", options=["2 kW", "7 kW"])]
+        result = discover_pump_modes(states, registry, offset)
+        self.assertEqual(result["hot_water_mode_entity"], hot)
+        self.assertEqual(result["aux_limit_entity"], aux)
+        for update in ({"platform": "other"}, {"config_entry_id": None}, {"device_id": None}):
+            with self.subTest(update=update):
+                altered = [{**registry[0], **update}, *registry[1:]]
+                self.assertFalse(discover_pump_modes(states, altered, offset)["aux_limit_entity"])
+        self.assertFalse(discover_pump_modes(states, registry, "number.unknown")["aux_limit_entity"])
+        self.assertFalse(discover_pump_modes(states, registry, "")["aux_limit_entity"])
+        for bad_state in ("unavailable", "unknown", "not an option"):
+            altered = [*states[:2], entity(aux, bad_state, options=["2 kW", "7 kW"])]
+            self.assertFalse(discover_pump_modes(altered, registry, offset)["aux_limit_entity"])
+        self.assertFalse(discover_pump_modes(states[:2], registry, offset)["aux_limit_entity"])
+        self.assertFalse(discover_pump_modes([*states[:2], entity(aux, "7 kW")], registry, offset)["aux_limit_entity"])
+        conflicting_owner = {**registry[2], "device_id": "other"}
+        self.assertFalse(discover_pump_modes(states, [*registry, conflicting_owner], offset)["aux_limit_entity"])
+
+    def test_pump_mode_ambiguity_is_not_resolved_by_availability(self):
+        registry = [
+            {"entity_id": "number.a", "device_id": "a", "config_entry_id": "entry", "platform": "myuplink"},
+            {"entity_id": "number.b", "device_id": "b", "config_entry_id": "entry", "platform": "myuplink"},
+            {"entity_id": "select.a_hot_water_comfort_mode", "device_id": "a", "config_entry_id": "entry", "platform": "myuplink"},
+            {"entity_id": "select.a_hot_water_amount", "device_id": "a", "config_entry_id": "entry", "platform": "myuplink"},
+            {"entity_id": "select.b_hot_water_comfort_mode", "device_id": "b", "config_entry_id": "entry", "platform": "myuplink"},
+            {"entity_id": "select.b_heating_comfort_mode", "device_id": "b", "config_entry_id": "entry", "platform": "myuplink"},
+        ]
+        states = [entity("select.a_hot_water_comfort_mode", "Normal", options=["Normal", "Economy"]),
+                  entity("select.b_hot_water_comfort_mode", "Normal", options=["Normal", "Economy"]),
+                  entity("select.b_heating_comfort_mode", "Normal", options=["Normal", "Economy"])]
+        result = discover_pump_modes(states, registry, "number.a")
+        self.assertEqual(result["hot_water_mode_entity"], "")
+        self.assertIn("Flera", result["hot_water_mode_entity_message"])
+        self.assertEqual(discover_pump_modes(states, registry, "number.b")["hot_water_mode_entity"], "select.b_hot_water_comfort_mode")
+        duplicate = {**registry[0], "device_id": "b"}
+        self.assertFalse(discover_pump_modes(states, [*registry, duplicate], "number.a")["hot_water_mode_entity"])
+
+    def test_client_discovers_modes_for_explicitly_selected_pump(self):
+        registry = [
+            {"entity_id": "number.renamed", "device_id": "b", "config_entry_id": "entry", "platform": "myuplink"},
+            {"entity_id": "select.b_hot_water_amount", "device_id": "b", "config_entry_id": "entry", "platform": "myuplink"},
+        ]
+        states = [entity("number.renamed", 0), entity("select.b_hot_water_amount", "Normal", options=["Normal", "Economy"])]
+        ha = HomeAssistant("token")
+        ha.request = Mock(side_effect=[registry, states])
+        self.assertEqual(ha.discover("number.renamed")["pump_modes"]["hot_water_mode_entity"], "select.b_hot_water_amount")
+        with self.assertRaises(ControlError):
+            ha.discover("sensor.bad")
 
 
 class ValidationTests(unittest.TestCase):

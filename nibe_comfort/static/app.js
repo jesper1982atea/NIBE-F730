@@ -19,6 +19,9 @@ let settingsRevision = 0;
 let settingsBusy = false;
 let discovery = null;
 let discoveryError = "";
+let modeDiscoveryRequest = 0;
+let modeDiscoveryError = "";
+let modeDiscoveryOffset = null;
 let dashboardBusy = false;
 let historyBusy = false;
 let planBusy = false;
@@ -159,6 +162,57 @@ function pickerChanged(picker) {
   const fallback = defaults(options, chosen);
   // A newly chosen select keeps the current modes if it has them.
   renderModes(picker, ...ids.map((id, i) => options.includes($(id).value) ? $(id).value : fallback[i]));
+  renderModeDiscovery();
+}
+
+function renderModeDiscovery() {
+  const found = discovery?.pump_modes;
+  for (const [picker, prefix] of [["hot_water", "hot-water"], ["aux", "aux"]]) {
+    const key = MODE_PICKERS[picker].entity;
+    const selected = $(key).value;
+    const matching = found?.offset_entity === $("offset_entity").value;
+    const candidate = matching ? found?.[key] : "";
+    const description = modeDiscoveryError || (!matching ? "Välj en pump för att söka efter entiteter."
+      : found?.message || found?.[`${key}_message`] || "Automatisk upptäckt är inte tillgänglig.");
+    $(`${prefix}-discovery`).textContent = modeDiscoveryError || (candidate
+      ? `Förslag: ${candidate}. ${selected ? "Ditt nuvarande val ändras inte. Kontrollera att det tillhör vald pump." : "Använd förslaget och kontrollera lägena. Inget sparas eller aktiveras automatiskt."}`
+      : `${description}${selected ? " Ditt nuvarande val ändras inte; kontrollera att det tillhör vald pump." : ""}`);
+    $(`${prefix}-suggestion`).hidden = !!modeDiscoveryError || !candidate || !!selected;
+  }
+}
+
+function useModeSuggestion(picker) {
+  const key = MODE_PICKERS[picker].entity;
+  const found = discovery?.pump_modes;
+  if (!found || found.offset_entity !== $("offset_entity").value || $(key).value || !found[key]) return;
+  $(key).value = found[key];
+  if ($(key).value !== found[key]) {
+    modeDiscoveryError = "Den föreslagna entiteten saknas i entitetslistan. Uppdatera eller välj manuellt.";
+    renderModeDiscovery();
+    return;
+  }
+  pickerChanged(picker);
+  updateSaveState();
+}
+
+async function refreshPumpModes() {
+  const request = ++modeDiscoveryRequest;
+  const offset = $("offset_entity").value;
+  modeDiscoveryOffset = offset;
+  modeDiscoveryError = "";
+  if (discovery) discovery.pump_modes = null;
+  renderModeDiscovery();
+  if (!offset) return;
+  try {
+    const result = await api(`discovery?offset_entity=${encodeURIComponent(offset)}`);
+    if (request !== modeDiscoveryRequest || $("offset_entity").value !== offset) return;
+    if (!discovery) discovery = {};
+    discovery.pump_modes = result.pump_modes;
+  } catch (error) {
+    if (request !== modeDiscoveryRequest || $("offset_entity").value !== offset) return;
+    modeDiscoveryError = `Kunde inte söka efter pumpens entiteter: ${error.message}. Välj manuellt.`;
+  }
+  renderModeDiscovery();
 }
 
 function renderModes(picker, first, second) {
@@ -332,6 +386,7 @@ function renderSettings(formSettings = settings, preserveView = false) {
   renderNotifyOptions(formSettings.notify_service);
   renderModeSelects("hot_water", formSettings.hot_water_mode_entity, formSettings.hot_water_cheap_option, formSettings.hot_water_normal_option);
   renderModeSelects("aux", formSettings.aux_limit_entity, formSettings.aux_limit_option, formSettings.aux_normal_option);
+  renderModeDiscovery();
   $("price_provider").value = formSettings.price_provider;
   $("price_mode").value = formSettings.price_mode;
   renderPriceMode();
@@ -387,11 +442,14 @@ function renderSettings(formSettings = settings, preserveView = false) {
   renderIndoorDiff();
   renderSavedSettingsStatus();
   entityHints();
+  if (discovery && modeDiscoveryOffset !== $("offset_entity").value) void refreshPumpModes();
 }
 
 async function findPump() {
   try {
-    discovery = await api("discovery");
+    const query = settings.offset_entity ? `?offset_entity=${encodeURIComponent(settings.offset_entity)}` : "";
+    discovery = await api(`discovery${query}`);
+    modeDiscoveryOffset = discovery.pump_modes?.offset_entity || settings.offset_entity || discovery.offset_entity || "";
     // Only fill missing fields. Never switch an existing pump or overwrite user choices.
     if (!settings.offset_entity && discovery.offset_entity) {
       settings.offset_entity = discovery.offset_entity;
@@ -2744,6 +2802,8 @@ async function init() {
   $("notify-test").addEventListener("click", () => void testNotify());
   $("hot_water_mode_entity").addEventListener("change", () => pickerChanged("hot_water"));
   $("aux_limit_entity").addEventListener("change", () => pickerChanged("aux"));
+  $("hot-water-suggestion").addEventListener("click", () => useModeSuggestion("hot_water"));
+  $("aux-suggestion").addEventListener("click", () => useModeSuggestion("aux"));
   $("notify_service").addEventListener("change", () => { $("notify-test").disabled = !$("notify_service").value; $("notify-status").textContent = ""; });
   $("discover-cloud-devices").addEventListener("click", () => void discoverCloudDevices());
   $("save-cloud-device").addEventListener("click", () => void saveCloudDevice());
@@ -2771,7 +2831,7 @@ async function init() {
     renderIndoorDiff();
     renderPreheatExample();
   });
-  $("offset_entity").addEventListener("change", entityHints);
+  $("offset_entity").addEventListener("change", () => { entityHints(); void refreshPumpModes(); });
   $("outdoor_entity").addEventListener("change", entityHints);
   $("price_entity").addEventListener("change", entityHints);
   $("price_provider").addEventListener("change", changePriceProvider);

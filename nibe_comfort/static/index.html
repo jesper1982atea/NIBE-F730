@@ -583,6 +583,8 @@
         <p class="hint">Av från början. Pumpens varmvattenläge sätts till läget vid billig el när elpriset är billigt eller före dyra timmar, annars till det vanliga läget. Högst en ändring i timmen. Ett annat läge som du valt för hand lämnas orört. Kräver att automatiken är på.</p>
         <label for="hot_water_mode_entity">Pumpens inställning för varmvattenläge</label>
         <select id="hot_water_mode_entity"></select>
+        <p id="hot-water-discovery" class="hint" role="status"></p>
+        <button id="hot-water-suggestion" type="button" class="secondary" hidden>Använd föreslagen entitet</button>
         <div class="field-pair">
           <div><label for="hot_water_cheap_option">Läge vid billig el</label><select id="hot_water_cheap_option"></select></div>
           <div><label for="hot_water_normal_option">Vanligt läge</label><select id="hot_water_normal_option"></select></div>
@@ -595,6 +597,8 @@
         <p class="hint">Av från början. Under dyra timmar, och under den svalare perioden efter en förvärmning, sätts pumpens max eltillsats till det begränsade läget. Tillägget försöker återställa det vanliga läget vid kyla, paus, fel eller stopp. Återställningen kan misslyckas vid avbrott i Home Assistant, myUplink eller nätverket; kontrollera pumpens inställning om ett fel visas. Högst en sänkning i timmen. Kräver att automatiken är på.</p>
         <label for="aux_limit_entity">Pumpens inställning för max eltillsats</label>
         <select id="aux_limit_entity"></select>
+        <p id="aux-discovery" class="hint" role="status"></p>
+        <button id="aux-suggestion" type="button" class="secondary" hidden>Använd föreslagen entitet</button>
         <div class="field-pair">
           <div><label for="aux_limit_option">Max eltillsats vid dyr el</label><select id="aux_limit_option"></select></div>
           <div><label for="aux_normal_option">Vanlig max eltillsats</label><select id="aux_normal_option"></select></div>
