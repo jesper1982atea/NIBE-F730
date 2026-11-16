@@ -23,6 +23,47 @@ LOOP_RETRIES = 3
 LOOP_RETRY_SECONDS = 300
 
 
+class CloudAlarmCache:
+    """Fetch optional cloud alarms without holding up Home Assistant views."""
+
+    def __init__(self, myuplink):
+        self.myuplink = myuplink
+        self.lock = threading.Lock()
+        self.result = None
+        self.loading = False
+        self.last_attempt = None
+        self.generation = 0
+
+    def invalidate(self):
+        with self.lock:
+            self.result = None
+            self.last_attempt = None
+            self.generation += 1
+
+    def get(self):
+        with self.lock:
+            now = time.monotonic()
+            if not self.loading and (self.last_attempt is None or now - self.last_attempt >= 60):
+                self.loading = True
+                self.last_attempt = now
+                threading.Thread(target=self.load, args=(self.generation,), daemon=True).start()
+            return self.result
+
+    def load(self, generation):
+        result = None
+        try:
+            result = self.myuplink.report()
+        except (ControlError, OSError, ValueError) as exc:
+            LOG.warning("myUplink-larm kunde inte läsas: %s", exc)
+        except Exception:
+            LOG.exception("Oväntat fel vid läsning av myUplink-larm")
+        finally:
+            with self.lock:
+                if generation == self.generation:
+                    self.result = result
+                self.loading = False
+
+
 def run_control_loop(controller, stop, interval=60, retries=LOOP_RETRIES, retry_seconds=LOOP_RETRY_SECONDS):
     """Run control rounds until stopped. An unexpected error is reported to Home Assistant and retried
     a few times; after that the loop stops and says so instead of leaving stale "Styr" sensors."""
@@ -105,14 +146,7 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
     if insights is None:
         insights = Insights(controller.ha, getattr(controller, "data_dir", None))
     insights.fireplace_provider = controller.fireplace_observations
-
-    def cloud_alarms():
-        """The optional direct myUplink alarm list, or None; a cloud failure never breaks the HA-based view."""
-        try:
-            return myuplink.report()
-        except (ControlError, OSError, ValueError) as exc:
-            LOG.warning("myUplink-larm kunde inte läsas: %s", exc)
-            return None
+    cloud_alarms = CloudAlarmCache(myuplink)
     if getattr(controller, "preheat_provider", 1) is None:
         controller.preheat_provider = insights.control_preheat
 
@@ -166,9 +200,9 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                 elif path == "/api/discovery":
                     self.respond(200, controller.ha.discover())
                 elif path == "/api/overview":
-                    self.respond(200, insights.overview(controller.settings(), cloud_alarms()))
+                    self.respond(200, insights.overview(controller.settings(), cloud_alarms.get()))
                 elif path == "/api/alarms":
-                    self.respond(200, insights.alarms(controller.settings(), cloud_alarms()))
+                    self.respond(200, insights.alarms(controller.settings(), cloud_alarms.get()))
                 elif path == "/api/myuplink/alarms":
                     self.respond(200, myuplink.report())
                 elif path == "/api/myuplink/discovery":
@@ -333,7 +367,11 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                     body = read_json(self)
                     if not isinstance(body, dict) or set(body) != {"system_id", "device_id"}:
                         raise ControlError("Ange system_id och device_id från upptäckten.")
-                    self.respond(200, myuplink.select_device(body["system_id"], body["device_id"], controller.events))
+                    try:
+                        result = myuplink.select_device(body["system_id"], body["device_id"], controller.events)
+                    finally:
+                        cloud_alarms.invalidate()
+                    self.respond(200, result)
                 except (ValueError, ControlError) as exc:
                     self.respond(400, {"error": str(exc) or "Ogiltigt pumpval."})
                 except (OSError, sqlite3.Error):
@@ -348,7 +386,11 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                             or not isinstance(body["system_id"], str) or not body["system_id"]
                             or not isinstance(body["device_id"], str) or not body["device_id"]):
                         raise ControlError("Manuell kvittering kräver action=reset, larm-ID, system_id, device_id och confirmed=true.")
-                    self.respond(200, myuplink.reset(body["id"], controller.events, body["system_id"], body["device_id"]))
+                    try:
+                        result = myuplink.reset(body["id"], controller.events, body["system_id"], body["device_id"])
+                    finally:
+                        cloud_alarms.invalidate()
+                    self.respond(200, result)
                 except (ValueError, ControlError) as exc:
                     self.respond(400, {"error": str(exc) or "Ogiltig begäran."})
                 except (OSError, sqlite3.Error):

@@ -759,12 +759,13 @@ def with_cloud_alarm(alarm, status):
     """Decide active/inactive for pumps without an alarm status entity (F370); an HA status entity still decides."""
     if status is None or alarm.get("active") is not None:
         return alarm
+    alarm["source_checked_at"] = status["checked_at"]
     latest = alarm.get("latest_code", alarm.get("code"))
     if status["codes"]:
         code = latest if latest in status["codes"] else status["codes"][0]
         alarm.update(active=True, code=code, error=None, source="myUplink")
         if "latest_code" in alarm:
-            alarm.update(latest_code=code, info=alarm_info(code))
+            alarm["info"] = alarm_info(code)
         else:
             alarm.update(code_name=(alarm_info(code) or {}).get("name"), value=f"Larm aktivt · {alarm_label(code)}")
     else:
@@ -891,6 +892,9 @@ class Insights:
         if not isinstance(cloud, dict) or cloud.get("configured") is not True:
             return None
         try:
+            if not any(item["entity_id"] == config["offset_entity"] and item.get("platform") == "myuplink"
+                       for item in self.registry()):
+                return None
             identifiers = self.cached(("identifiers", config["offset_entity"]), 300,
                                       lambda: self.ha.device_identifiers(config["offset_entity"]))
         except ControlError as exc:
@@ -902,16 +906,22 @@ class Insights:
         key = ("overview", config["offset_entity"], config["price_entity"], config["price_provider"], config["max_age_minutes"])
         result = self.cached(key, 60, lambda: overview(self.ha.states(), self.registry(), config, time.time()))
         status = self.cloud_alarm_status(config, cloud, time.time())
-        for item in result.get("pump", []):
-            if item.get("key") == "alarm":
-                with_cloud_alarm(item, status)
+        if status is not None:
+            peers = device_peers(self.registry())
+            alarms, _ = alarm_sources(peers.get(config["offset_entity"], ()))
+            for item in result.get("pump", []):
+                if item.get("key") == "alarm" and not alarms:
+                    with_cloud_alarm(item, status)
         return result
 
     def alarms(self, config, cloud=None):
         states = self.ha.states()
         now = time.time()
         peers = device_peers(self.registry())
-        alarm = with_cloud_alarm(pump_alarm(states, config, peers, now), self.cloud_alarm_status(config, cloud, now))
+        alarm = pump_alarm(states, config, peers, now)
+        alarms, _ = alarm_sources(peers.get(config["offset_entity"], ()))
+        if not alarms:
+            alarm = with_cloud_alarm(alarm, self.cloud_alarm_status(config, cloud, now))
         readings = current_readings(config, states, now, peers)
         pump_ids = set(peers.get(config["offset_entity"], ()))
         pump_states = [s for s in states if s["entity_id"] in pump_ids]
@@ -936,8 +946,9 @@ class Insights:
             can_pause=alarm["active"] is True and alarm["code"] == 229 and not alarm["error"]
                       and alarm.get("source") is None and config["thermostat_control_enabled"],
             reset_supported=False,
-            explanation=("229 betyder att kompressorn blockerats efter tre körningar kortare än fem minuter i rad. "
-                         "Lågt flöde eller låg värmeöverföring är möjliga orsaker, inte en fastställd diagnos."
+            explanation=("Möjlig F-serietolkning av 229: kompressorn har blockerats efter tre korta körningar. "
+                         "Kontrollera pumpens handbok. Lågt flöde eller låg värmeöverföring är möjliga orsaker, inte en fastställd diagnos."
+                         + (" Molnlistan pausar inte automatiken; kontrollera pumpen." if alarm.get("source") else "")
                          if alarm["active"] is True and alarm["code"] == 229 else
                          alarm_explanation(alarm.get("code") or alarm.get("latest_code"), alarm["active"],
                                            alarm.get("source") or "larmstatusgivaren")),

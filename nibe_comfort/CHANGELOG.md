@@ -1,5 +1,16 @@
 # Ändringslogg
 
+## 0.2.47
+
+- Peters molnlarmlista kan visa aktiv status för samma myUplink-pump när
+  HA saknar larmstatusgivare, till exempel F370. Molnstatus visas med
+  lästid och påverkar inte automatikens larmspärr.
+- Ofullständig eller motsägelsefull larmlista ger osäker status. Molnhämtning
+  sker i bakgrunden så att en långsam anslutning inte blockerar HA-vyn.
+- Semesterperioder väljs med datum- och tidslistor; tvetydiga eller
+  obefintliga tider vid tidsomställning avvisas.
+- Tydligare tal, grafer och datum i gränssnittet.
+
 ## 0.2.46
 
 - Valfritt: styr vidare när en batterigivare är tyst. Tysta eller orimliga

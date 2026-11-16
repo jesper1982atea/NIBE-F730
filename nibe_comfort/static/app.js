@@ -884,6 +884,13 @@ function vacationInputTime(stamp) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
+function vacationTimestamp(value) {
+  const stamp = new Date(value).getTime() / 1000;
+  if (!Number.isFinite(stamp) || vacationInputTime(stamp) !== value
+      || [-7200, -3600, -1800, 1800, 3600, 7200].some((delta) => vacationInputTime(stamp + delta) === value)) return NaN;
+  return stamp;
+}
+
 function renderVacation() {
   const plan = lastStatus?.vacation || null;
   const phase = plan?.phase;
@@ -936,12 +943,12 @@ function vacationDraftStart() {
   const plan = lastStatus?.vacation;
   if (plan?.phase === "active") return plan.start;
   const value = $("vacation-start").value;
-  const stamp = value ? new Date(value).getTime() / 1000 : Date.now() / 1000;
+  const stamp = value ? vacationTimestamp(value) : Date.now() / 1000;
   return Number.isFinite(stamp) ? stamp : null;
 }
 
 function renderVacationDuration() {
-  const end = $("vacation-end").value ? new Date($("vacation-end").value).getTime() / 1000 : null;
+  const end = $("vacation-end").value ? vacationTimestamp($("vacation-end").value) : null;
   const start = vacationDraftStart();
   $("vacation-duration").textContent = end === null || !Number.isFinite(end) ? "Välj hemkomst"
     : start === null || end <= start ? "Hemkomsten måste vara efter avresan"
@@ -982,16 +989,16 @@ async function vacationAction(body) {
 }
 
 function saveVacation() {
-  const seconds = (id) => $(id).value ? new Date($(id).value).getTime() / 1000 : null;
+  const seconds = (id) => $(id).value ? vacationTimestamp($(id).value) : null;
   const end = seconds("vacation-end");
   if (end === null || !Number.isFinite(end)) {
-    $("vacation-error").textContent = "Ange när du kommer hem.";
+    $("vacation-error").textContent = end === null ? "Ange när du kommer hem." : "Välj en giltig och entydig hemkomsttid; tiden kan saknas eller förekomma två gånger vid tidsomställning.";
     $("vacation-error").hidden = false;
     return;
   }
   const start = lastStatus?.vacation?.phase === "active" ? null : seconds("vacation-start");
   if (start !== null && !Number.isFinite(start)) {
-    $("vacation-error").textContent = "Ange en giltig starttid.";
+    $("vacation-error").textContent = "Välj en giltig och entydig starttid; tiden kan saknas eller förekomma två gånger vid tidsomställning.";
     $("vacation-error").hidden = false;
     return;
   }
@@ -1434,8 +1441,8 @@ function metric(item) {
   value.textContent = item.value === null ? "Okänt" : cleared ? "Inget aktivt larm" : latest ?? `${shown} ${item.unit || ""}`.trim();
   const detail = document.createElement("small");
   const since = item.since ? ` · sedan ${new Date(item.since * 1000).toLocaleDateString("sv-SE", { day: "numeric", month: "short" })}` : "";
-  const via = item.source ? ` enligt ${item.source}` : "";
-  detail.textContent = item.error || (cleared ? (item.code ? `Senaste larmkod ${latest} är kvitterad${via}` : item.source ? `Enligt ${item.source}` : "") : item.active === true && item.key === "alarm" ? `Aktivt larm${via}` : item.code != null ? `Senaste larmkod${since} · aktiv status saknas` : "")
+  const via = item.source ? ` enligt ${item.source}${item.source_checked_at ? ` (${dayAndTime(item.source_checked_at)})` : ""}` : "";
+  detail.textContent = item.error || (cleared ? (item.code ? `Senaste larmkod ${latest}${via}` : item.source ? `Enligt ${item.source}` : "") : item.active === true && item.key === "alarm" ? `Aktivt larm${via}` : item.code != null ? `Senaste larmkod${since} · aktiv status saknas` : "")
     || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "");
   if (item.entity_id) block.title = item.entity_id;
   block.append(label, value, detail);
@@ -1572,6 +1579,7 @@ async function refreshAlarms() {
       ? `Larmstatus är osäker: ${data.error}`
       : data.active === true ? `Aktivt pumplarm${data.code !== null ? ` ${data.code}${data.info ? ` ${data.info.name}` : ""}` : ""}`
       : data.active === false ? "Inget aktivt pumplarm rapporterat." : "Larmstatus är okänd.";
+    if (data.source && data.source_checked_at) $("alarm-status").textContent += ` Enligt ${data.source}, läst ${dayAndTime(data.source_checked_at)}.`;
     $("alarm-explanation").textContent = data.explanation;
     // Operating values and rooms help troubleshoot an active alarm; without one they repeat the pump card.
     const active = data.active === true;

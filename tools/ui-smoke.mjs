@@ -1536,13 +1536,15 @@ try {
   await auxiliaryPage.locator("#auxiliary-section").screenshot({ path: `${artifacts}/auxiliary-mobile.png` });
   await auxiliaryPage.close();
   const vacationPage = await browser.newPage({ viewport: { width: 390, height: 844 }, timezoneId: "Europe/Stockholm" });
+  const vacationNow = Date.parse("2026-11-16T12:00:00+01:00") / 1000;
+  await vacationPage.clock.setFixedTime(new Date(vacationNow * 1000));
   vacationPage.on("pageerror", (error) => errors.push(error.message));
   vacationPage.on("dialog", (dialog) => dialog.accept());
   let vacationPlan = null, vacationWrites = [], vacationError = false, pumpOutage = false;
   const settingsWritesBeforeVacation = writes;
   await vacationPage.route("**/api/status", (route) => route.fulfill({ json: {
     indoor: 22, indoor_smoothed: 21.5, current_offset: 3, desired_offset: 2, next_offset: 2,
-    enabled: true, checked_at: Date.now() / 1000, rooms: [], warm_rooms: [],
+    enabled: true, checked_at: vacationNow, rooms: [], warm_rooms: [],
     contributions: { room: 0.5, weather: 0, price: 0 }, vacation: vacationPlan,
     ...(pumpOutage ? { outage_since: Date.now() / 1000, current_offset: null, desired_offset: null,
       next_offset: null, contributions: null, message: "Pumpens värden är tillfälligt borta från myUplink." } : {}),
@@ -1580,6 +1582,12 @@ try {
     await vacationPage.locator(`#${id} select`).nth(1).selectOption(time);
   };
   const whenValue = (id) => vacationPage.evaluate((id) => document.getElementById(id).value, id);
+  for (const ambiguous of ["2027-03-28T02:30", "2027-10-31T02:30"]) {
+    await pickWhen("vacation-end", ambiguous);
+    await vacationPage.locator("#vacation-save").click();
+    assert.match(await vacationPage.locator("#vacation-error").textContent(), /entydig/);
+    assert.equal(vacationWrites.length, 0, "A DST gap or duplicate time must never schedule a pump action");
+  }
   await pickWhen("vacation-start", "2026-12-01T10:00");
   await vacationPage.locator("#vacation-presets [data-days='7']").click();
   assert.equal(await whenValue("vacation-end"), "2026-12-08T10:00");

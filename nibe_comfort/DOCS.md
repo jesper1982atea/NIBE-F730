@@ -136,8 +136,11 @@ När direktanslutningen är konfigurerad använder larmkortet myUplinks lista
 ingen kod i listan visas som "Inget aktivt larm", en listad kod som aktiv.
 Listan används bara om den är högst 5 minuter gammal och gäller samma
 myUplink-enhet som HA-enheten bakom kurvförskjutningen. En larmstatusgivare
-i HA bestämmer fortfarande, och styrningen (larmspärr, paus vid 229) läser
-aldrig molnlistan.
+i HA bestämmer fortfarande även när den är otillgänglig. Hämtningen av
+molnlistan sker i bakgrunden och visningen anger när den lästes; ofullständiga
+eller motsägelsefulla svar ger inte beskedet att larm saknas. Styrningen
+(larmspärr, paus vid 229) läser aldrig molnlistan: ett larm 229 som bara
+syns där pausar alltså inte automatiken. Kontrollera pumpen.
 
 #### Snabbguide: befintlig HA-applikation och callback-URL
 
@@ -1232,6 +1235,9 @@ med paginering i UI/API. Övervaka tilläggets diskutrymme vid långvarig använ
 
 Under **Semesterläge** anger du när du reser och när du kommer hem. Lämnar
 du Från tomt börjar perioden direkt. Perioden sparas och överlever omstart.
+Datum och klockslag väljs separat. Vid sommar-/vintertidsomställning
+avvisas klockslag som inte finns eller förekommer två gånger; välj ett
+entydigt klockslag i stället.
 
 - Vid starten läses pumpens Smart Home Mode (myUplink), läget sparas och
   pumpen sätts i `vacation`. Väljaren hittas på samma enhet som
