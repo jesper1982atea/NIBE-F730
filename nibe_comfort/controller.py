@@ -132,6 +132,9 @@ AUX_LIMIT_MIN_SECONDS = 3600
 # require a later observation, rather than treating a service response as readback.
 AUX_RESTORE_CONFIRM_SECONDS = 120
 AUX_RESTORE_RETRY_SECONDS = 300
+# myUplink often drops the pump's values for a few minutes right after a write. A limit in force
+# survives such a gap; values missing for longer lift it as before.
+AUX_OUTAGE_GRACE_SECONDS = 600
 # Automatic base correction: one curve step per degree of lasting deviation and day. Small
 # deviations are ignored so sensor noise does not walk the correction.
 AUTO_BASE_RATE = 1 / 86400
@@ -1282,6 +1285,7 @@ class Controller:
         self.aux_limited = False
         self.aux_restore = None
         self.aux_restart_restore = False
+        self.aux_outage_since = None
         if self.aux_limit_path.exists():
             try:
                 saved = json.loads(self.aux_limit_path.read_text())
@@ -1555,6 +1559,24 @@ class Controller:
                     else {"limited": False, "last_attempt": self.aux_written})
         self.aux_limited = plan is not None
         self.aux_restore = plan
+        if plan is None:
+            self.aux_outage_since = None
+
+    def aux_outage_hold(self, now):
+        """True while a limit in force may outlast a short loss of pump values."""
+        if not self.aux_limited or self.aux_restore["phase"] == "restoring" or self.aux_restart_restore:
+            return False
+        if self.aux_outage_since is None:
+            self.aux_outage_since = now
+        return now - self.aux_outage_since < AUX_OUTAGE_GRACE_SECONDS
+
+    def lift_aux_limit_after_outage(self, reason, now=None, entities=None):
+        """Like lift_aux_limit, but a short outage keeps the limit instead of restoring at once."""
+        now = time.time() if now is None else now
+        if self.aux_outage_hold(now):
+            return (f"Elpatronen förblir begränsad ({reason}); full effekt återställs om värdena saknas i mer än "
+                    f"{AUX_OUTAGE_GRACE_SECONDS // 60} minuter.")
+        return self.lift_aux_limit(reason, entities=entities, now=now)
 
     def acknowledge_aux_recovery(self, entity_id, normal):
         """Clear a recovery only after explicit user verification and current HA readback."""
@@ -1655,10 +1677,15 @@ class Controller:
             state = fresh_entity({e["entity_id"]: e for e in entities}, entity_id, config["max_age_minutes"],
                                  now, peers.get(entity_id, ()))
         except ControlError as exc:
+            if self.aux_outage_hold(now):
+                report["error"] = (f"Pumpens max eltillsats kan inte läsas: {exc} Begränsningen behålls i högst "
+                                   f"{AUX_OUTAGE_GRACE_SECONDS // 60} minuter medan värdet saknas.")
+                return report
             if self.aux_limited and self.aux_restore["phase"] != "restoring":
                 self.store_aux_limited({**self.aux_restore, "phase": "restoring"})
             report["error"] = f"Pumpens max eltillsats kan inte läsas: {exc} Kontrollera inställningen på pumpen."
             return report
+        self.aux_outage_since = None
         current = report["current"] = state["state"]
         report["limited"] = current == limited
         options = (state.get("attributes") or {}).get("options") or []
@@ -2240,7 +2267,7 @@ class Controller:
                         self.outage_since = now
                     if now - self.outage_since < OUTAGE_GRACE_SECONDS and not self.last_error:
                         if self.aux_limited:
-                            error = self.lift_aux_limit("pumpens värden saknas", entities=entities, now=now)
+                            error = self.lift_aux_limit_after_outage("pumpens värden saknas", now=now, entities=entities)
                             if error:
                                 LOG.warning("%s", error)
                         self.status = {

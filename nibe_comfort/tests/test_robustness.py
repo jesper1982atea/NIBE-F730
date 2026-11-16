@@ -460,6 +460,80 @@ class AuxLimitTests(unittest.TestCase):
         # Preheating wants heat even in an expensive hour.
         self.assertEqual(self.step("7.1 kW", level="expensive", kind="preheat", now=20_000.0)["desired"], "7.1 kW")
 
+    def limit(self):
+        self.step("7.1 kW", level="expensive")
+        self.step("2.0 kW", level="expensive", now=10_060.0)
+        self.assertEqual(self.controller.aux_restore["phase"], "limited")
+        self.ha.set_select.reset_mock()
+
+    def test_short_loss_of_the_select_keeps_the_limit(self):
+        self.limit()
+        report = self.step("unavailable", level="expensive", now=10_120.0)
+        self.assertIn("högst 10 minuter", report["error"])
+        self.assertEqual(self.controller.aux_restore["phase"], "limited")
+        report = self.step("2.0 kW", level="expensive", now=10_420.0)
+        self.assertIsNone(report["error"])
+        self.assertIsNone(self.controller.aux_outage_since, "Readable again: the next gap gets a full grace")
+        self.step("unavailable", level="expensive", now=10_480.0)
+        self.step("unavailable", level="expensive", now=11_000.0)
+        self.assertEqual(self.controller.aux_restore["phase"], "limited")
+        self.ha.set_select.assert_not_called()
+
+    def test_long_loss_of_the_select_lifts_the_limit(self):
+        self.limit()
+        self.step("unavailable", level="expensive", now=10_120.0)
+        report = self.step("unavailable", level="expensive", now=10_720.0)
+        self.assertIn("Kontrollera inställningen", report["error"])
+        self.assertEqual(self.controller.aux_restore["phase"], "restoring")
+        self.step("2.0 kW", level="expensive", now=10_780.0)
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+
+    def test_cheap_hour_after_a_short_gap_still_restores(self):
+        self.limit()
+        self.step("unavailable", level="expensive", now=10_120.0)
+        self.step("2.0 kW", level="normal", now=10_300.0)
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+
+    def test_outage_round_keeps_the_limit_for_ten_minutes(self):
+        self.limit()
+        now = 10_120.0
+        add = entity(self.ADD, "unavailable", now, options=list(self.OPTIONS))
+        self.assertIn("förblir begränsad", self.controller.lift_aux_limit_after_outage("pumpens värden saknas", now, [add]))
+        self.assertEqual(self.controller.aux_restore["phase"], "limited")
+        self.controller.lift_aux_limit_after_outage("pumpens värden saknas", now + 599, [add])
+        self.assertEqual(self.controller.aux_restore["phase"], "limited")
+        self.controller.lift_aux_limit_after_outage("pumpens värden saknas", now + 600, [add])
+        self.assertEqual(self.controller.aux_restore["phase"], "restoring")
+        self.ha.set_select.assert_not_called()
+        add = entity(self.ADD, "2.0 kW", now + 660, options=list(self.OPTIONS))
+        self.controller.lift_aux_limit_after_outage("pumpens värden saknas", now + 660, [add])
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+
+    def test_outage_after_restart_restores_at_once(self):
+        self.limit()
+        restored = Controller(self.ha, self.temp.name)
+        self.assertTrue(restored.aux_restart_restore)
+        add = entity(self.ADD, "2.0 kW", 10_120.0, options=list(self.OPTIONS))
+        restored.lift_aux_limit_after_outage("pumpens värden saknas", 10_120.0, [add])
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+
+    def test_tick_during_pump_outage_keeps_the_limit(self):
+        from controller import OUTAGE_MESSAGE
+        self.controller.store_aux_limited({"limited": True, "entity_id": self.ADD, "normal": "7.1 kW",
+                                           "restricted": "2.0 kW", "phase": "limited", "started_at": time.time(),
+                                           "restore_attempted_at": None})
+        rows = fixtures()
+        next(e for e in rows if e["entity_id"] == "number.offset")["state"] = "unavailable"
+        rows.append(entity(self.ADD, "unavailable", time.time(), options=list(self.OPTIONS)))
+        self.ha.states.side_effect = lambda: rows
+        self.controller.tick()
+        self.assertEqual(self.controller.status["message"], OUTAGE_MESSAGE)
+        self.assertEqual(self.controller.aux_restore["phase"], "limited")
+        self.controller.aux_outage_since -= 600
+        self.controller.tick()
+        self.assertEqual(self.controller.aux_restore["phase"], "restoring")
+        self.ha.set_select.assert_not_called()
+
     def test_cold_house_or_cold_weather_get_full_power(self):
         report = self.step("7.1 kW", level="expensive", indoor=20.4)
         self.assertEqual(report["desired"], "7.1 kW")
@@ -606,4 +680,5 @@ class AuxLimitTests(unittest.TestCase):
         controller.tick.side_effect = lambda: (stop.set(), (_ for _ in ()).throw(ControlError("rum saknas")))
         with self.assertLogs("nibe_comfort", "WARNING"):
             run_control_loop(controller, stop, interval=0)
-        controller.lift_aux_limit.assert_called_once_with("styrningen saknar aktuella värden")
+        controller.lift_aux_limit_after_outage.assert_called_once_with("styrningen saknar aktuella värden")
+        controller.lift_aux_limit.assert_not_called()

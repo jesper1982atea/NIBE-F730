@@ -76,7 +76,7 @@ def run_control_loop(controller, stop, interval=60, retries=LOOP_RETRIES, retry_
             LOG.warning("%s", exc)
             failures = 0
             # Without a full control round the house temperature is unknown: never keep the heater limited.
-            lift_aux_limit(controller, "styrningen saknar aktuella värden")
+            lift_aux_limit(controller, "styrningen saknar aktuella värden", outage=True)
         except Exception:
             failures += 1
             final = failures > retries
@@ -115,14 +115,17 @@ def run_control_loop(controller, stop, interval=60, retries=LOOP_RETRIES, retry_
         stop.wait(interval)
 
 
-def lift_aux_limit(controller, reason, timeout=None):
-    """Best effort: a failure here must never stop the loop or the shutdown."""
+def lift_aux_limit(controller, reason, timeout=None, outage=False):
+    """Best effort: a failure here must never stop the loop or the shutdown. With outage, a short
+    loss of values keeps the limit (see AUX_OUTAGE_GRACE_SECONDS)."""
     try:
         if not controller.lock.acquire(timeout=3):
             LOG.error("Kunde inte påbörja återställning av elpatronen: styrningen är upptagen. Kontrollera pumpen.")
             return
         try:
-            if timeout is None:
+            if outage:
+                error = controller.lift_aux_limit_after_outage(reason)
+            elif timeout is None:
                 error = controller.lift_aux_limit(reason)
             else:
                 error = controller.lift_aux_limit(reason, timeout=timeout)
