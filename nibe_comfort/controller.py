@@ -610,18 +610,22 @@ def discover_pump_modes(entities, registry, offset_entity):
     device_id, entry = next(iter(identities))
     states = {entity["entity_id"]: entity for entity in entities}
     matches = {key: set() for key in ("hot_water_mode_entity", "aux_limit_entity")}
+    plain_comfort = set()
     for item in registry:
         entity_id = item["entity_id"]
         if (item.get("platform") != "myuplink" or item["device_id"] != device_id
                 or item.get("config_entry_id") != entry or not entity_id.startswith("select.")):
             continue
         base = entity_base(entity_id)
-        # F370 and similar models call the hot water mode plain "comfort_mode" (Economy/Normal/Lux).
-        if base.endswith(("_hot_water_comfort_mode", "_hot_water_amount")) or (
-                base.endswith("_comfort_mode") and not HOT_WATER_OTHER_MODES.search(base)):
+        if base.endswith(("_hot_water_comfort_mode", "_hot_water_amount")):
             matches["hot_water_mode_entity"].add(entity_id)
+        elif base.endswith("_comfort_mode") and not HOT_WATER_OTHER_MODES.search(base):
+            # F370 and similar models call the hot water mode plain "comfort_mode" (Economy/Normal/Lux).
+            plain_comfort.add(entity_id)
         if base.endswith("_max_electrical_add"):
             matches["aux_limit_entity"].add(entity_id)
+    if not matches["hot_water_mode_entity"]:
+        matches["hot_water_mode_entity"] = plain_comfort
     for key, candidates in matches.items():
         if len(candidates) == 1:
             candidate = next(iter(candidates))

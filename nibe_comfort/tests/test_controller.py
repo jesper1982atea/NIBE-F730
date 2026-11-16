@@ -205,6 +205,11 @@ class DiscoveryTests(unittest.TestCase):
         result = discover_pump_modes(states, registry, offset)
         self.assertEqual(result["hot_water_mode_entity"], hot)
         self.assertEqual(result["aux_limit_entity"], aux)
+        # A pump with an explicit hot water comfort mode keeps it, even beside a plain comfort_mode.
+        specific = "select.f370_cu_3x400v_hot_water_comfort_mode"
+        registry.append({"entity_id": specific, "device_id": "pump", "config_entry_id": "entry", "platform": "myuplink"})
+        states.append(entity(specific, "Normal", options=["Economy", "Normal"]))
+        self.assertEqual(discover_pump_modes(states, registry, offset)["hot_water_mode_entity"], specific)
 
     def test_client_discovers_modes_for_explicitly_selected_pump(self):
         registry = [
