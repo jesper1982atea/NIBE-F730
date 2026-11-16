@@ -592,6 +592,9 @@ def entity_base(entity_id):
     return re.sub(r"_\d+$", "", entity_id)
 
 
+HOT_WATER_OTHER_MODES = re.compile(r"heating|cooling|scheduling|ventilation")
+
+
 def discover_pump_modes(entities, registry, offset_entity):
     """Suggest known settings only from the selected myUplink device and integration entry."""
     validate_registry(registry)
@@ -613,7 +616,9 @@ def discover_pump_modes(entities, registry, offset_entity):
                 or item.get("config_entry_id") != entry or not entity_id.startswith("select.")):
             continue
         base = entity_base(entity_id)
-        if base.endswith(("_hot_water_comfort_mode", "_hot_water_amount")):
+        # F370 and similar models call the hot water mode plain "comfort_mode" (Economy/Normal/Lux).
+        if base.endswith(("_hot_water_comfort_mode", "_hot_water_amount")) or (
+                base.endswith("_comfort_mode") and not HOT_WATER_OTHER_MODES.search(base)):
             matches["hot_water_mode_entity"].add(entity_id)
         if base.endswith("_max_electrical_add"):
             matches["aux_limit_entity"].add(entity_id)

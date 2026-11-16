@@ -191,6 +191,21 @@ class DiscoveryTests(unittest.TestCase):
         duplicate = {**registry[0], "device_id": "b"}
         self.assertFalse(discover_pump_modes(states, [*registry, duplicate], "number.a")["hot_water_mode_entity"])
 
+    def test_f370_plain_comfort_mode_is_the_hot_water_suggestion(self):
+        offset = "number.f370_cu_3x400v_heating_offset_climate_system_1"
+        hot = "select.f370_cu_3x400v_comfort_mode"
+        aux = "select.f370_cu_3x400v_set_max_electrical_add"
+        ids = [offset, hot, aux, "select.f370_cu_3x400v_smart_home_mode", "select.f370_cu_3x400v_op_mode",
+               "select.tvattstuga_f370_cu_3x400v_scheduling_comfort_mode_sunday_47653",
+               "select.tvattstuga_f370_cu_3x400v_scheduling_comfort_mode_monday_47693"]
+        registry = [{"entity_id": e, "device_id": "pump", "config_entry_id": "entry", "platform": "myuplink"} for e in ids]
+        states = [entity(offset, 0), entity(hot, "Economy", options=["Economy", "Normal", "Lux"]),
+                  entity(aux, "7.1 kW", options=["0.0 kW", "2.0 kW", "7.1 kW"]),
+                  *[entity(e, "off", options=["off", "economy", "normal", "luxury"]) for e in ids[5:]]]
+        result = discover_pump_modes(states, registry, offset)
+        self.assertEqual(result["hot_water_mode_entity"], hot)
+        self.assertEqual(result["aux_limit_entity"], aux)
+
     def test_client_discovers_modes_for_explicitly_selected_pump(self):
         registry = [
             {"entity_id": "number.renamed", "device_id": "b", "config_entry_id": "entry", "platform": "myuplink"},
