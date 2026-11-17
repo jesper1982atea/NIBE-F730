@@ -1,5 +1,26 @@
 # Ändringslogg
 
+## 0.2.49
+
+- Elpatronbegränsningen håller vid korta myUplink-avbrott: en begränsning som
+  redan gäller behålls i högst 10 minuter när pumpens värden saknas, i stället
+  för att full effekt återställs direkt efter varje skrivning.
+- Elpatronbegränsningen hålls genom korta prisdippar: minst 45 minuter, och
+  släpps först när priset är tydligt lägre. Billigt pris, förvärmning och
+  komfortspärrarna släpper den fortfarande direkt.
+- Varmvattenläge föreslås även för F370 och liknande som bara har
+  `comfort_mode` (Economy/Normal/Lux). `*_hot_water_comfort_mode` går före.
+- Fyra nya val, alla av från början (idéer från EnergyWizard, egen kod):
+  behovsanpassad sänkning vid dyr el, solvärme (kräver solcellseffektgivare),
+  varmvatten efter vanor och baskorrigeringens minne i dygn. Tre har ett
+  skuggläge som bara loggar vad regeln hade gjort.
+- Varmvattenvanor visar hur många dygn som samlats under inlärningen.
+- Prisflytt under pumpens el och kostnad: vad samma kWh hade kostat till
+  periodens snittpris minus vad de kostade. Mäter tidpunkten, inte minskad
+  förbrukning.
+- Sidfoten visar ungefärligt antal installationer senaste 14 dagarna, från
+  GitHubs klonstatistik. Inget skickas från din installation.
+
 ## Opublicerat
 
 Fyra nya val, alla av från början. Tre av dem har ett skuggläge som bara
