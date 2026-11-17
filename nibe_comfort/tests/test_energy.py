@@ -99,6 +99,35 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(data["currency"], "SEK")
         self.assertEqual(data["hours"][0]["kwh"], 1)
 
+    def test_price_shift_flat_price_is_zero(self):
+        shift = report()["price_shift"]
+        self.assertEqual(shift["hours"], 24)
+        self.assertTrue(shift["complete"])
+        self.assertAlmostEqual(shift["average_price"], 2)
+        self.assertAlmostEqual(shift["difference"], 0)
+
+    def test_price_shift_rewards_use_in_cheap_hours(self):
+        # 2 kWh in the 12 cheap hours (1 kr), 0 kWh in the 12 dear hours (3 kr): average 2 kr.
+        meter = [row(METER, 100 + 2 * min(i, 12), START + i * 3600, device_class="energy",
+                     state_class="total_increasing", unit_of_measurement="kWh") for i in range(25)]
+        prices = [row(PRICE, 1 if i < 12 else 3, START + i * 3600, unit_of_measurement="SEK/kWh") for i in range(24)]
+        shift = report(meter, prices)["price_shift"]
+        self.assertAlmostEqual(shift["kwh"], 24)
+        self.assertAlmostEqual(shift["actual_cost"], 24)
+        self.assertAlmostEqual(shift["average_cost"], 48)
+        self.assertAlmostEqual(shift["difference"], 24)
+        self.assertAlmostEqual(shift["actual_price"], 1)
+        # The other way round costs more than the average.
+        prices = [row(PRICE, 3 if i < 12 else 1, START + i * 3600, unit_of_measurement="SEK/kWh") for i in range(24)]
+        self.assertAlmostEqual(report(meter, prices)["price_shift"]["difference"], -24)
+
+    def test_price_shift_only_counts_priced_complete_hours(self):
+        prices = price_rows()[:12]
+        shift = report(prices=prices)["price_shift"]
+        self.assertFalse(shift["complete"])
+        self.assertLess(shift["hours"], 24)
+        self.assertIsNone(report(prices=[])["price_shift"])
+
     def test_units_and_negative_prices(self):
         for unit, scale in (("Wh", 1000), ("kWh", 1), ("MWh", 0.001)):
             for price_unit, value in (("SEK/MWh", 2000), ("öre/kWh", 200), ("kr/kWh", 2)):

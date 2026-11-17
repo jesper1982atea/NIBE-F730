@@ -220,13 +220,44 @@ def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, p
     if any(isinstance(value, (int, float)) and not math.isfinite(value)
            for entry in [*hours, totals] for value in entry.values()):
         raise ControlError("Energihistoriken gav för stora värden för en säker kostnadsberäkning.")
+    shift = price_shift(hours, price_segments)
     if not price_error and totals["priced_seconds"] + 0.01 < totals["coverage_seconds"]:
         price_error = "Historiska priser saknas, är otillgängliga eller för gamla för delar av perioden. Endast prissatt del ingår."
     return {
         "start": start, "end": end, "hours": hours, "totals": totals, "currency": currency,
-        "price_error": price_error, "skipped_intervals": skipped,
+        "price_error": price_error, "skipped_intervals": skipped, "price_shift": shift,
         "method": "power" if power else "counter",
     }
+
+
+def price_shift(hours, price_segments):
+    """What the same kWh would have cost at the period's average price, against what they cost.
+
+    Only complete, fully priced hours count. The average is time-weighted over those hours,
+    so a positive ``difference`` means the pump used more of its electricity in the cheaper
+    hours than an even spread would have. It says nothing about how many kWh were used.
+    """
+    used = [hour for hour in hours if hour["kwh"] is not None and hour["cost"] is not None]
+    if not used:
+        return None
+    weighted = seconds = 0.0
+    starts = [segment[0] for segment in price_segments]
+    for hour in used:
+        first = max(0, bisect_right(starts, hour["start"]) - 1)
+        for price_start, price_end, price in price_segments[first:]:
+            if price_start >= hour["end"]:
+                break
+            duration = max(0, min(hour["end"], price_end) - max(hour["start"], price_start))
+            weighted += price * duration
+            seconds += duration
+    kwh = sum(hour["kwh"] for hour in used)
+    if seconds <= 0 or kwh <= 0:
+        return None
+    average = weighted / seconds
+    actual = sum(hour["cost"] for hour in used)
+    return {"hours": len(used), "complete": len(used) == len(hours), "kwh": kwh,
+            "average_price": average, "actual_price": actual / kwh, "actual_cost": actual,
+            "average_cost": kwh * average, "difference": kwh * average - actual}
 
 
 def hourly_energy(rows, entity_id, start, end, power=False):
