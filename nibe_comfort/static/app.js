@@ -2710,6 +2710,19 @@ async function showVersion() {
   } catch {
     $("version").textContent = "";
   }
+  try {
+    const text = communityText((await api("community")).community);
+    $("community").textContent = text ? ` · ${text}` : "";
+  } catch {
+    $("community").textContent = "";
+  }
+}
+
+// Installations according to the maintainer's published GitHub clone statistics; nothing is sent from here.
+function communityText(community) {
+  if (!community) return "";
+  const n = community.installations;
+  return `≈ ${n} ${n === 1 ? "installation" : "installationer"} senaste 14 dagarna`;
 }
 
 async function init() {
