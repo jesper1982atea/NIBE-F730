@@ -126,8 +126,12 @@ VACATION_MAX_SECONDS = 366 * 86400
 MANUAL_FIREPLACE_PENDING_SECONDS = 1800
 # The pump needs time to finish a hot water charge; never flip the mode more often than this.
 HOT_WATER_MIN_SECONDS = 3600
-# The electric heater limit uses the same pace; lifting the limit is never delayed.
+# The electric heater limit uses the same pace. With quarter-hour prices a single expensive
+# quarter used to toggle the limit through the cloud; a limit in force is kept for a while and
+# until the price is clearly lower. Cheap prices, pre-heating and the comfort guards lift it at once.
 AUX_LIMIT_MIN_SECONDS = 3600
+AUX_PRICE_HOLD_SECONDS = 2700
+AUX_PRICE_RELEASE_MARGIN = 15
 # A cloud service may finish after a client timeout. Keep the recovery record and
 # require a later observation, rather than treating a service response as readback.
 AUX_RESTORE_CONFIRM_SECONDS = 120
@@ -1663,6 +1667,15 @@ class Controller:
         if preheat.get("kind") != "preheat":
             reason = ("dyr period efter förvärmning" if preheat.get("kind") == "coast"
                       else "dyr el" if result.get("price_level") == "expensive" else None)
+            if (not reason and self.aux_limited and self.aux_restore["phase"] in ("lowering", "limited")
+                    and result.get("price_level") != "cheap"):
+                rank, price = result.get("price_rank"), result.get("price")
+                if now - self.aux_restore["started_at"] < AUX_PRICE_HOLD_SECONDS:
+                    reason = f"dyr el (begränsningen hålls minst {AUX_PRICE_HOLD_SECONDS // 60} minuter)"
+                elif (rank is not None and rank * 100 >= config["price_high_percent"] - AUX_PRICE_RELEASE_MARGIN
+                      if config["price_mode"] == "relative" else
+                      price is not None and price >= config["price_high"] * 0.9):
+                    reason = "dyr el (väntar på tydligt lägre pris)"
         guard = None
         indoor, outdoor = result.get("indoor"), result.get("outdoor")
         if reason and (result.get("price") is None or result.get("price_error")):

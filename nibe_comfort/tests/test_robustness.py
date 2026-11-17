@@ -421,9 +421,11 @@ class AuxLimitTests(unittest.TestCase):
                           aux_limit_option="2.0 kW", aux_normal_option="7.1 kW")
         self.controller.save(self.cfg)
 
-    def step(self, current, level=None, kind=None, indoor=21.0, outdoor=0.0, hold=False, now=10_000.0, options=OPTIONS):
+    def step(self, current, level=None, kind=None, indoor=21.0, outdoor=0.0, hold=False, now=10_000.0, options=OPTIONS,
+             price=1, rank=None):
         add = entity(self.ADD, current, now, options=list(options))
-        return self.controller.aux_limit_step([add], now, {"price_level": level, "price": 1, "indoor": indoor, "outdoor": outdoor},
+        return self.controller.aux_limit_step([add], now, {"price_level": level, "price": price, "price_rank": rank,
+                                                           "indoor": indoor, "outdoor": outdoor},
                                               {"kind": kind}, hold)
 
     def test_off_by_default_and_validated(self):
@@ -443,8 +445,8 @@ class AuxLimitTests(unittest.TestCase):
         self.assertIn("väntar", report["note"])
         self.assertTrue(self.controller.aux_limited)
         self.ha.set_select.reset_mock()
-        # Lifting the limit is never delayed.
-        self.step("2.0 kW", level="normal", now=10_060.0)
+        # A cheap price lifts the limit at once.
+        self.step("2.0 kW", level="cheap", now=10_060.0)
         self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
         self.assertTrue(self.controller.aux_limited)
         self.ha.set_select.reset_mock()
@@ -491,7 +493,7 @@ class AuxLimitTests(unittest.TestCase):
     def test_cheap_hour_after_a_short_gap_still_restores(self):
         self.limit()
         self.step("unavailable", level="expensive", now=10_120.0)
-        self.step("2.0 kW", level="normal", now=10_300.0)
+        self.step("2.0 kW", level="cheap", now=10_300.0)
         self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
 
     def test_outage_round_keeps_the_limit_for_ten_minutes(self):
@@ -533,6 +535,43 @@ class AuxLimitTests(unittest.TestCase):
         self.controller.tick()
         self.assertEqual(self.controller.aux_restore["phase"], "restoring")
         self.ha.set_select.assert_not_called()
+
+    def test_a_limit_in_force_is_held_through_short_price_dips(self):
+        self.limit()
+        # A normal quarter right after the start keeps the limit instead of toggling it through the cloud.
+        report = self.step("2.0 kW", level=None, now=10_900.0)
+        self.ha.set_select.assert_not_called()
+        self.assertIn("minst 45 minuter", report["reason"])
+        self.assertEqual(report["desired"], "2.0 kW")
+        # After the hold, an absolute price just under the expensive limit still keeps it ...
+        report = self.step("2.0 kW", level=None, now=12_800.0, price=1.9)
+        self.ha.set_select.assert_not_called()
+        self.assertIn("tydligt lägre pris", report["reason"])
+        # ... and a clearly lower price lifts it.
+        self.step("2.0 kW", level=None, now=12_860.0, price=1.0)
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+
+    def test_relative_prices_release_below_the_margin(self):
+        self.controller.save({**self.cfg, "price_mode": "relative", "price_high_percent": 75})
+        self.limit()
+        self.step("2.0 kW", level=None, now=12_800.0, rank=0.62)
+        self.ha.set_select.assert_not_called()
+        self.step("2.0 kW", level=None, now=12_860.0, rank=None)
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+        self.ha.set_select.reset_mock()
+        self.setUp()
+        self.controller.save({**self.cfg, "price_mode": "relative", "price_high_percent": 75})
+        self.limit()
+        self.step("2.0 kW", level=None, now=12_800.0, rank=0.55)
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+
+    def test_hold_never_overrides_cheap_prices_preheating_or_comfort(self):
+        for kwargs in ({"level": "cheap"}, {"kind": "preheat"}, {"indoor": 20.0}, {"outdoor": -15.0}):
+            with self.subTest(**kwargs):
+                self.setUp()
+                self.limit()
+                self.step("2.0 kW", now=10_300.0, **kwargs)
+                self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
 
     def test_cold_house_or_cold_weather_get_full_power(self):
         report = self.step("7.1 kW", level="expensive", indoor=20.4)
@@ -611,7 +650,7 @@ class AuxLimitTests(unittest.TestCase):
 
     def test_old_unchanged_normal_reading_does_not_confirm_restore(self):
         self.step("7.1 kW", level="expensive")
-        self.step("2.0 kW", level="normal", now=10_060)
+        self.step("2.0 kW", level="cheap", now=10_060)
         stale = entity(self.ADD, "7.1 kW", 10_000, options=list(self.OPTIONS))
         self.controller.aux_limit_step([stale], 10_300, {"price_level": "normal", "indoor": 21, "outdoor": 0},
                                        {"kind": None}, False)
@@ -619,7 +658,7 @@ class AuxLimitTests(unittest.TestCase):
 
     def test_manual_recovery_requires_wait_matching_plan_and_normal_readback(self):
         self.step("7.1 kW", level="expensive")
-        self.step("2.0 kW", level="normal", now=10_060)
+        self.step("2.0 kW", level="cheap", now=10_060)
         self.ha.set_select.reset_mock()
         self.ha.states.side_effect = None
         self.ha.states.return_value = [entity(self.ADD, "7.1 kW", 10_200, options=list(self.OPTIONS))]
@@ -648,7 +687,7 @@ class AuxLimitTests(unittest.TestCase):
 
     def test_manual_recovery_keeps_plan_if_saving_disabled_setting_fails(self):
         self.step("7.1 kW", level="expensive")
-        self.step("2.0 kW", level="normal", now=10_060)
+        self.step("2.0 kW", level="cheap", now=10_060)
         self.ha.states.side_effect = None
         self.ha.states.return_value = [entity(self.ADD, "7.1 kW", 10_200, options=list(self.OPTIONS))]
         with patch("controller.time.time", return_value=10_200), patch("controller.atomic_json", side_effect=OSError("disk")):
@@ -659,7 +698,7 @@ class AuxLimitTests(unittest.TestCase):
     def test_recovery_remains_visible_if_device_disappears(self):
         self.step("7.1 kW", level="expensive")
         self.controller.myuplink_peers = {}
-        self.step("2.0 kW", level="normal", now=10_060)
+        self.step("2.0 kW", level="cheap", now=10_060)
         self.assertEqual(self.controller.snapshot()["aux_recovery"]["phase"], "restoring")
         with patch("controller.time.time", return_value=10_300):
             with self.assertRaises(ControlError):

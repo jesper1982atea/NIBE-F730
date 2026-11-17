@@ -2,6 +2,10 @@
 
 ## 0.2.48
 
+- Elpatronbegränsningen slår inte längre om för enstaka kvartspriser: en
+  begränsning hålls minst 45 minuter och släpps när priset är tydligt lägre
+  (15 procentenheter under dyrgränsen, eller 10 % under i absolut läge).
+  Billigt pris, förvärmning och för kallt inne eller ute släpper den direkt.
 - Föreslår entydigt identifierade inställningsentiteter för varmvatten och
   max eltillsats på den valda myUplink-pumpen. Förslag används först efter
   ditt val och sparas eller aktiverar inte styrning automatiskt.
