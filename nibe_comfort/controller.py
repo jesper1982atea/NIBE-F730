@@ -1719,6 +1719,7 @@ class Controller:
                 habit["note"] = f"Varmvattenvanorna kan inte läsas: {habits['error']}"
             else:
                 habit["days"] = habits.get("days")
+                habit["note"] = habits.get("note")
                 due = habit_due(habits.get("profile"), now)
                 if due:
                     habit["due"] = due[0]

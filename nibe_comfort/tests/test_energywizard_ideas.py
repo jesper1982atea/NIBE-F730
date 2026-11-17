@@ -243,6 +243,8 @@ class ControllerRuleTests(unittest.TestCase):
         self.assertEqual(self.hot_water("on", habits={"profile": {"wd-7": 0.25}, "days": 28})["desired"], "Economy")
         self.assertIn("bakgrunden", self.hot_water("on", habits=None)["habit"]["note"])
         self.assertIn("kan inte", self.hot_water("on", habits={"error": "nere"})["habit"]["note"])
+        learning = self.hot_water("on", habits={"profile": {}, "days": 11, "note": "Lär sig: 11 av 14 dygn med varmvattenmätningar."})
+        self.assertIn("11 av 14", learning["habit"]["note"])
         self.ha.set_select.assert_not_called()
 
     def test_adaptive_shadow_is_logged_once_per_decision(self):
