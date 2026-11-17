@@ -363,6 +363,7 @@
         <summary>Timvärden och datatäckning</summary>
   <p class="hint">K = kurvförskjutning, T = termostat, I = sparade inställningar. En begäran utan återläsning är inte en bekräftad ändring. Graferna visar bara fullständiga timmar; tabellen visar datatäckningen.</p>
   <p class="hint">Timfördelningen är uppskattad: ökningen i elmätaren fördelas jämnt mellan dess rapporter (högst två timmar). Kostnaden beräknas med historiken från din sparade prisgivare, aldrig dagens pris för äldre timmar. Bara avgifter och moms som redan finns i givaren ingår; fast avgift ingår inte. Luckor, otillgängliga värden och räknaråterställningar räknas inte som noll. Producerad värme är inte använd el.</p>
+  <p class="hint">Prisflytt: vad samma kWh hade kostat till periodens tidsviktade snittpris, minus vad de faktiskt kostade. Plus betyder att pumpen använde mer el när elen var billig. Bara hela, prissatta timmar ingår. Det mäter tidpunkten, inte om pumpen använt mindre el; väder, varmvatten och kamin påverkar också.</p>
         <div id="energy-table" class="table-scroll"></div>
       </details>
       </div>
@@ -683,7 +684,7 @@
       <p class="hint">Loggen sparas lokalt och överlever omstart. Händelser före denna uppdatering kan inte återskapas. Manuella ändringar på pumpen kan upptäckas vid nästa avläsning men deras upphov kan inte fastställas.</p>
     </section>
     </details>
-    <footer>Via Home Assistant · Avläsning varje minut · Pumpens egna skydd och reglering är alltid kvar.<span id="version"></span></footer>
+    <footer>Via Home Assistant · Avläsning varje minut · Pumpens egna skydd och reglering är alltid kvar.<span id="version"></span><span id="community" title="Från GitHubs statistik över unika kloner av repot. Ungefärligt; inget skickas från din installation."></span></footer>
   </main>
 </body>
 </html>

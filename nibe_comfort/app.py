@@ -16,9 +16,11 @@ from controller import ControlError, Controller, HomeAssistant, temperature
 from insights import Insights, control_history
 from energy import change_comparisons, meter_error
 from myuplink import MyUplink
+from community import Community
 
 LOG = logging.getLogger("nibe_comfort")
 STATIC = Path(__file__).parent / "static"
+COMMUNITY = Community("https://raw.githubusercontent.com/jesper1982atea/NIBE-F730/stats/anvandare.json")
 LOOP_RETRIES = 3
 LOOP_RETRY_SECONDS = 300
 
@@ -200,6 +202,8 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                     self.respond(200, controller.test_status())
                 elif path == "/api/version":
                     self.respond(200, {"version": os.environ.get("NIBE_COMFORT_VERSION", "dev")})
+                elif path == "/api/community":
+                    self.respond(200, {"community": COMMUNITY.get()})
                 elif path == "/api/status":
                     self.respond(200, controller.snapshot())
                 elif path == "/api/discovery":

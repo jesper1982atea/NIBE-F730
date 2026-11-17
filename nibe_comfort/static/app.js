@@ -1516,6 +1516,17 @@ function drawCurve(container, curve) {
   container.append(svg);
 }
 
+// Same kWh at the period's average price minus what they cost: a gain from timing, not from using less.
+function priceShiftMetric(shift, currency) {
+  if (!shift) return metric({ label: "Prisflytt", value: null, detail: "Kräver timmar med både mätning och pris." });
+  const gain = shift.difference >= 0;
+  return metric({
+    label: `${gain ? "Tjänat på prisflytt" : "Dyrare än snittpris"} · ${shift.complete ? "hela perioden" : `${shift.hours} av 24 timmar`}`,
+    value: displayNumber(Math.abs(shift.difference)), unit: currency,
+    detail: `Snittpris ${displayNumber(shift.average_price)}, pumpens pris ${displayNumber(shift.actual_price)} ${currency}/kWh`,
+  });
+}
+
 function metric(item) {
   const block = document.createElement("div");
   block.className = "live-metric";
@@ -1531,7 +1542,7 @@ function metric(item) {
   const detail = document.createElement("small");
   const since = item.since ? ` · sedan ${new Date(item.since * 1000).toLocaleDateString("sv-SE", { day: "numeric", month: "short" })}` : "";
   const via = item.source ? ` enligt ${item.source}${item.source_checked_at ? ` (${dayAndTime(item.source_checked_at)})` : ""}` : "";
-  detail.textContent = item.error || (cleared ? (item.code ? `Senaste larmkod ${latest}${via}` : item.source ? `Enligt ${item.source}` : "") : item.active === true && item.key === "alarm" ? `Aktivt larm${via}` : item.code != null ? `Senaste larmkod${since} · aktiv status saknas` : "")
+  detail.textContent = item.error || item.detail || (cleared ? (item.code ? `Senaste larmkod ${latest}${via}` : item.source ? `Enligt ${item.source}` : "") : item.active === true && item.key === "alarm" ? `Aktivt larm${via}` : item.code != null ? `Senaste larmkod${since} · aktiv status saknas` : "")
     || (item.reported_at ? `Rapporterat ${new Date(item.reported_at).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "");
   if (item.entity_id) block.title = item.entity_id;
   block.append(label, value, detail);
@@ -1829,6 +1840,7 @@ async function refreshEnergy() {
         value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
       metric({ label: totals.cost === null ? "Beräknad kostnad · endast prissatt del" : "Beräknad kostnad · hela perioden",
         value: priced > 0 ? displayNumber(totals.partial_cost) : null, unit: data.currency || "" }),
+      priceShiftMetric(data.price_shift, data.currency || ""),
     );
     $("energy-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(priced)} av 24 timmar. ${data.method === "power" ? "El och kostnad uppskattas från eleffekt: senaste värdet gäller till nästa rapport, högst 15 minuter mellan rapporter. Ingen extrapolering efter sista rapporten. " : ""}${data.price_error || "Kostnaden är uppskattad utifrån mätarintervall och historiska priser."}`;
     const markers = [...historyMarkers(data.changes), ...data.settings_changes.map((change) => ({
@@ -2732,6 +2744,19 @@ async function showVersion() {
   } catch {
     $("version").textContent = "";
   }
+  try {
+    const text = communityText((await api("community")).community);
+    $("community").textContent = text ? ` · ${text}` : "";
+  } catch {
+    $("community").textContent = "";
+  }
+}
+
+// Installations according to the maintainer's published GitHub clone statistics; nothing is sent from here.
+function communityText(community) {
+  if (!community) return "";
+  const n = community.installations;
+  return `≈ ${n} ${n === 1 ? "installation" : "installationer"} senaste 14 dagarna`;
 }
 
 async function init() {
