@@ -543,6 +543,10 @@
             <div><label for="expensive_reduction">Sänkning vid högt pris · steg</label><input id="expensive_reduction" name="expensive_reduction" type="number" min="0" max="3" step="0.1" required></div>
           </div>
           <p class="hint">Prisgränser anges i givarens enhet, utan omräkning. Steg är kurvförskjutning, inte grader inne. Regeln får inte förstärka en temperaturavvikelse utanför toleransen mot det mål som gäller just då, inklusive eventuell förvärmning.</p>
+          <label for="adaptive_reduction_mode">Behovsanpassad sänkning vid dyr el</label>
+          <select id="adaptive_reduction_mode" name="adaptive_reduction_mode"><option value="off">Av</option><option value="shadow">Skugga · visa bara vad den hade gjort</option><option value="on">På</option></select>
+          <p class="hint">Sänker bara så mycket som huset klarar: den största sänkningen, högst steget ovan, där den inlärda husmodellen förutsäger att de två kallaste styrande rummen håller sig över målet minus toleransen tills den dyra perioden är slut (högst 8 timmar fram). Kräver utegivare och en husmodell som känner huset (se Inlärning); annars gäller den vanliga sänkningen. <em>Skugga</em> ändrar ingenting och skriver i händelseloggen när regeln hade valt annorlunda.</p>
+          <p class="hint" id="adaptive-status" role="status"></p>
           </details>
         </section>
       </div>
@@ -576,6 +580,14 @@
         <label for="solar_entity">Solproduktion</label><select id="solar_entity" name="solar_entity"></select>
         <label for="battery_discharge_entity">Batteri · urladdning</label><select id="battery_discharge_entity" name="battery_discharge_entity"></select>
         <label for="battery_charge_entity">Batteri · laddning</label><select id="battery_charge_entity" name="battery_charge_entity"></select>
+        <h3>Solvärme i styrningen</h3>
+        <p class="hint">Valfritt och bara med solceller. Utan vald effektgivare händer ingenting. När panelerna ger minst gränsen nedan och rummen samtidigt blir varmare med minst 0,1 °C i timmen värmer solen huset: målet sänks då 0,3 °C och den automatiska baskorrigeringen står still. När väderprognosen visar minst tre soltimmar de närmaste 12 timmarna minskas förvärmning och höjning vid billig el med 0,5, eftersom solen ändå lagrar värme gratis. <em>Skugga</em> ändrar ingenting och skriver i händelseloggen vad den hade gjort.</p>
+        <label for="solar_power_entity">Solcellernas effekt just nu (W eller kW)</label><select id="solar_power_entity" name="solar_power_entity"></select>
+        <div class="field-pair">
+          <div><label for="solar_mode">Solvärme</label><select id="solar_mode" name="solar_mode"><option value="off">Av</option><option value="shadow">Skugga · visa bara vad den hade gjort</option><option value="on">På</option></select></div>
+          <div><label for="solar_power_threshold">Solen räknas från · W</label><input id="solar_power_threshold" name="solar_power_threshold" type="number" min="50" max="20000" step="50" required></div>
+        </div>
+        <p class="hint" id="solar-status" role="status"></p>
       </section>
       <section class="card">
         <h2>Varmvatten på billig el</h2>
@@ -590,6 +602,10 @@
           <div><label for="hot_water_normal_option">Vanligt läge</label><select id="hot_water_normal_option"></select></div>
         </div>
         <p id="hot-water-settings-status" class="hint" role="status"></p>
+        <label for="hot_water_habit_mode">Varmvatten efter vanor</label>
+        <select id="hot_water_habit_mode" name="hot_water_habit_mode"><option value="off">Av</option><option value="shadow">Skugga · visa bara vad den hade gjort</option><option value="on">På</option></select>
+        <p class="hint">Lär sig ur pumpens varmvattengivare (BT6) när ni brukar duscha, per timme för vardagar och helger var för sig, de senaste fyra veckorna (tillägget sparar själv, Home Assistant har bara runt tio dygn). Är det dyrt men en dusch brukar komma inom två timmar på minst hälften av dagarna väljs läget vid billig el ändå, så att vattnet är varmt i tid. Kräver minst två veckors historik. <em>Skugga</em> ändrar ingenting och skriver i händelseloggen vad den hade gjort.</p>
+        <p class="hint" id="habit-status" role="status"></p>
       </section>
       <section class="card">
         <h2>Begränsa elpatronen vid dyr el</h2>

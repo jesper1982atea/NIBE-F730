@@ -152,6 +152,8 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
     cloud_alarms = CloudAlarmCache(myuplink)
     if getattr(controller, "preheat_provider", 1) is None:
         controller.preheat_provider = insights.control_preheat
+    if getattr(controller, "habit_provider", 1) is None:
+        controller.habit_provider = insights.control_habits
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):

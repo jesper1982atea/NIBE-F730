@@ -9,6 +9,7 @@ const advanced = [
   ["min_interval_minutes", "Minst mellan ändringar · minuter", 10, 1440, 1, "Räknas från senaste sparade styrförsök, även efter timeout. Omstart börjar inte om väntetiden."],
   ["max_age_minutes", "Högsta ålder på mätvärden · minuter", 5, 1440, 1, "För gamla eller saknade värden pausar automatiken."],
   ["auto_base_limit", "Automatisk baskorrigering högst · steg", 0.5, 5, 0.5, "Hur långt grundvärdet får flyttas automatiskt åt vardera hållet."],
+  ["auto_base_memory_days", "Baskorrigeringens minne · dygn", 0, 30, 0.5, "0 = korrigeringen ligger kvar tills rummen säger annat. Annars bleknar den mot noll med denna tidskonstant, så att en missad värmekälla (en brasa, en solig vecka) inte gör huset för kallt i flera dygn efteråt."],
 ];
 let settings;
 let entities = [];
@@ -386,6 +387,8 @@ function renderSettings(formSettings = settings, preserveView = false) {
   renderNotifyOptions(formSettings.notify_service);
   renderModeSelects("hot_water", formSettings.hot_water_mode_entity, formSettings.hot_water_cheap_option, formSettings.hot_water_normal_option);
   renderModeSelects("aux", formSettings.aux_limit_entity, formSettings.aux_limit_option, formSettings.aux_normal_option);
+  selectOptions("solar_power_entity", (entity) => entity.entity_id.startsWith("sensor.") && ["W", "kW"].includes(entity.unit), formSettings.solar_power_entity);
+  for (const id of ["adaptive_reduction_mode", "solar_mode", "hot_water_habit_mode"]) $(id).value = formSettings[id];
   renderModeDiscovery();
   $("price_provider").value = formSettings.price_provider;
   $("price_mode").value = formSettings.price_mode;
@@ -560,7 +563,35 @@ async function manualFireplace() {
   await refreshStatus();
 }
 
+const RULE_MODES = { off: "av", shadow: "skugga", on: "på" };
+
+function renderRuleStatus() {
+  const adaptive = lastStatus?.adaptive_reduction;
+  const mode = settings?.adaptive_reduction_mode;
+  $("adaptive-status").textContent = !mode || mode === "off" ? ""
+    : !adaptive ? `Läge ${RULE_MODES[mode]}. Gör inget just nu: elpriset sänker inte värmen.`
+    : adaptive.note ? `Läge ${RULE_MODES[mode]}. ${adaptive.note}`
+    : `Läge ${RULE_MODES[mode]}. ${adaptive.applied ? "Sänker" : "Hade sänkt"} ${displayNumber(adaptive.reduction)} steg av högst ${displayNumber(adaptive.fixed)}: de två kallaste rummen (nu ${displayNumber(adaptive.start)} °C) förutsägs som lägst ${displayNumber(adaptive.predicted_min)} °C under ${displayNumber(adaptive.hours)} h dyr el, golv ${displayNumber(adaptive.floor)} °C.`;
+  const solar = lastStatus?.solar;
+  const solarMode = settings?.solar_mode;
+  const sunNow = solar?.heating ? (solar.applied ? "Solen värmer huset: målet sänkt 0,3 °C." : "Solen värmer huset: målet hade sänkts 0,3 °C.")
+    : "Solen värmer inte huset märkbart just nu.";
+  const sunAhead = solar?.sunny_hours === null || solar?.sunny_hours === undefined ? "Ingen timprognos."
+    : `${displayNumber(solar.sunny_hours)} soltimmar väntas närmaste 12 h${solar.sunny_ahead
+      ? (solar.applied ? ", förvärmning och billig-el-höjning minskas." : ", förvärmning och billig-el-höjning hade minskats.") : "."}`;
+  $("solar-status").textContent = !solarMode || solarMode === "off" || !solar ? ""
+    : solar.note ? solar.note
+    : `Läge ${RULE_MODES[solarMode]}. Solceller ${solar.power ?? "—"} W${solar.rising === null ? "" : `, rummen ${solar.rising >= 0 ? "+" : ""}${displayNumber(solar.rising)} °C/h`}. ${sunNow} ${sunAhead}`;
+  const habit = lastStatus?.hot_water?.habit;
+  const habitMode = settings?.hot_water_habit_mode;
+  $("habit-status").textContent = !habitMode || habitMode === "off" || !habit ? ""
+    : habit.note ? `Läge ${RULE_MODES[habitMode]}. ${habit.note}`
+    : `Läge ${RULE_MODES[habitMode]}. Lärt av ${habit.days} dygn. ${habit.reason
+      ? `Nu: ${habit.reason}${habit.would ? ` – hade valt ${habit.would}` : ""}.` : "Ingen trolig tappning de närmaste två timmarna."}`;
+}
+
 function renderHotWaterControl() {
+  renderRuleStatus();
   const state = lastStatus?.hot_water;
   const text = !state?.enabled ? "" : state.error ? state.error
     : `Varmvattenläge ${state.current ?? "okänt"} · önskat ${state.desired} (${state.reason}).${state.note ? ` ${state.note}` : ""}${state.next_change_at
@@ -2539,6 +2570,9 @@ const fieldLabels = {
   battery_discharge_entity: "Batteri ur", battery_charge_entity: "Batteri in",
   min_interval_minutes: "Minsta ändringsintervall", max_step: "Största steg", max_age_minutes: "Högsta mätvärdesålder",
   preheat_enabled: "Förvärmning", preheat_degrees: "Förvärmning · grader",
+  adaptive_reduction_mode: "Behovsanpassad sänkning", auto_base_memory_days: "Baskorrigeringens minne",
+  solar_mode: "Solvärme", solar_power_entity: "Solcellseffekt", solar_power_threshold: "Solen räknas från",
+  hot_water_habit_mode: "Varmvatten efter vanor",
 };
 
 function logValue(value) {
@@ -2559,7 +2593,7 @@ function renderEvents() {
     const data = event.details;
     const lines = [];
     for (const [key, change] of Object.entries(data.changes || {})) lines.push(`${fieldLabels[key] || key}: ${logValue(change.from)} → ${logValue(change.to)}`);
-    if (event.kind === "write_attempt") lines.push(`Förskjutning ${data.previous} → ${data.value}. Rum ${displayNumber(data.indoor)} °C${data.indoor_smoothed != null ? ` (timmedel ${displayNumber(data.indoor_smoothed)} °C)` : ""}, mål ${displayNumber(data.target_temperature)} °C. Rumspåverkan ${displayNumber(data.contributions.room)}, väder ${displayNumber(data.contributions.weather)}, pris ${displayNumber(data.contributions.price)}.${data.target_shift ? ` Mål tillfälligt ${data.target_shift > 0 ? "+" : ""}${displayNumber(data.target_shift)}° (${data.preheat === "preheat" ? "förvärmning" : "dyrt elpris"}).` : ""}`);
+    if (event.kind === "write_attempt") lines.push(`Förskjutning ${data.previous} → ${data.value}. Rum ${displayNumber(data.indoor)} °C${data.indoor_smoothed != null ? ` (timmedel ${displayNumber(data.indoor_smoothed)} °C)` : ""}, mål ${displayNumber(data.target_temperature)} °C. Rumspåverkan ${displayNumber(data.contributions.room)}, väder ${displayNumber(data.contributions.weather)}, pris ${displayNumber(data.contributions.price)}.${data.adaptive_reduction != null ? ` Behovsanpassad sänkning ${displayNumber(data.adaptive_reduction)} steg.` : ""}${data.target_shift ? ` Mål tillfälligt ${data.target_shift > 0 ? "+" : ""}${displayNumber(data.target_shift)}° (${[data.preheat === "preheat" ? "förvärmning" : data.preheat === "coast" ? "dyrt elpris" : "", data.solar ? "solvärme" : ""].filter(Boolean).join(", ")}).` : ""}`);
     if (data.requested !== undefined) lines.push(`Begärt: ${data.requested}. Återläst: ${data.observed}.`);
     if (event.kind === "test_write") lines.push(`Förskjutning ${data.previous} → ${data.value} i ${data.restore_after_minutes} minuter.`);
     if (event.kind === "test_restore") lines.push(`Tillbaka till ${data.value}.`);

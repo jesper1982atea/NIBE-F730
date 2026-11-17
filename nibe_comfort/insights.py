@@ -9,9 +9,10 @@ import threading
 import time
 from concurrent.futures import Future, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import quote, urlencode
 
-from controller import SOURCE_ENTITIES, ControlError, alarm_code, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
+from controller import SOURCE_ENTITIES, ControlError, alarm_code, atomic_json, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 from energy import ENERGY_UNITS, POWER_UNITS, consumption_report, discover_meter, hourly_energy, meter_error, produced_energy, pump_sources, split_sources
 from auxiliary import heater_entities, heater_report
@@ -261,6 +262,62 @@ def draw_offs(points, now):
         size = "stor" if drop >= 10 else "mellan" if drop >= 4 else "liten"
         result.append({"start": start, "end": end, "from": before, "to": after, "drop": drop, "size": size})
     return result
+
+
+HABIT_DAYS = 28
+HABIT_MIN_DAYS = 14
+# A shower moves the lower tank sensor (BT6) 2–4 °C on an F370; standby and small taps move it less.
+HABIT_MIN_DROP = 2.5
+# Hourly forecast conditions that let the sun warm the house through the windows.
+SUN_WEIGHT = {"sunny": 1.0, "partlycloudy": 0.5}
+
+
+def day_type(day):
+    """'wd' Monday–Friday, 'we' Saturday–Sunday: habits per weekday would need months of history."""
+    return "we" if day.weekday() >= 5 else "wd"
+
+
+def merge_habits(saved, draws, points, now, days=HABIT_DAYS):
+    """Add newly read days and draws to the stored ones; Home Assistant keeps only about ten days."""
+    cutoff = now - days * 86400
+    first = datetime.fromtimestamp(cutoff).date().isoformat()
+    seen = set(saved.get("days") or []) | {datetime.fromtimestamp(t).date().isoformat() for t, v in points if v is not None}
+    found = {round(start): drop for start, drop in saved.get("draws") or []}
+    found.update({round(draw["start"]): draw["drop"] for draw in draws})
+    return {"days": sorted(day for day in seen if day >= first),
+            "draws": sorted([start, drop] for start, drop in found.items() if start >= cutoff)}
+
+
+def habit_profile(store):
+    """Share of weekdays (or weekend days) with a shower-sized draw starting in each hour.
+
+    Only days with readings count, so a gap in the history does not look like a day without use."""
+    days = [datetime.fromisoformat(day).date() for day in store.get("days") or []]
+    result = {"profile": {}, "days": len(days), "draws": 0, "note": None}
+    if len(days) < HABIT_MIN_DAYS:
+        result["note"] = f"Lär sig: {len(days)} av {HABIT_MIN_DAYS} dygn med varmvattenmätningar."
+        return result
+    observed = {}
+    for day in days:
+        observed[day_type(day)] = observed.get(day_type(day), 0) + 1
+    hits = {}
+    for start, drop in store.get("draws") or []:
+        if drop < HABIT_MIN_DROP:
+            continue
+        stamp = datetime.fromtimestamp(start)
+        hits.setdefault(f"{day_type(stamp)}-{stamp.hour}", set()).add(stamp.date())
+        result["draws"] += 1
+    result["profile"] = {key: round(len(dates) / observed[key.split("-")[0]], 3)
+                         for key, dates in hits.items() if observed.get(key.split("-")[0])}
+    return result
+
+
+def sunny_hours(points, now, hours=12):
+    """Weighted sunny forecast hours within the coming hours; None without an hourly forecast."""
+    rows = [p for p in points if now - 3600 < p["timestamp"] <= now + hours * 3600]
+    if len(rows) < hours // 2:
+        return None
+    return round(sum(SUN_WEIGHT.get(p.get("condition"), 0.0) for p in rows), 1)
 
 
 def charge_periods(rows, now):
@@ -800,6 +857,9 @@ class Insights:
         self.loading = {}
         self.history_lock = threading.Lock()
         self.store = LearningStore(f"{data_dir}/learning.sqlite" if data_dir else None)
+        # Hot water draws outlive Home Assistant's recorder here; without a data directory only in memory.
+        self.habit_path = Path(data_dir) / "hot-water-habits.json" if data_dir else None
+        self.habit_memory = {}
         self.fireplace_provider = None
         self.control_schedule = None
         self.control_loading = False
@@ -1125,6 +1185,72 @@ class Insights:
             return hot_water(states, registry, config, groups, now)
         return self.cached(key, 120, load)
 
+    def hot_water_habits(self, config, days=HABIT_DAYS):
+        """Draw habits per weekday and hour from the lower tank sensor's history. Cached for six hours."""
+        def load():
+            now = time.time()
+            registry = self.registry()
+            states = self.ha.states()
+            eid = hot_water_entities(registry, config["offset_entity"], states).get("charge")
+            if not eid:
+                raise ControlError("Pumpens varmvattengivare (BT6) hittades inte på samma enhet som kurvförskjutningen.")
+            fahrenheit = next((s for s in states if s["entity_id"] == eid), {}).get("attributes", {}).get("unit_of_measurement") == "°F"
+            points, start = [], now - days * 86400
+            while start < now:
+                end = min(start + 7 * 86400, now)
+                query = urlencode({"filter_entity_id": eid, "end_time": datetime.fromtimestamp(end, timezone.utc).isoformat(),
+                                   "minimal_response": "", "no_attributes": "", "significant_changes_only": "0"})
+                stamp = quote(datetime.fromtimestamp(start, timezone.utc).isoformat(), safe="")
+                rows = history_groups(self.history_request("/history/period/" + stamp + "?" + query)).get(eid, [])
+                points += numeric_steps(rows, eid, start, fahrenheit)
+                start = end
+            points.sort(key=lambda row: row[0])
+            saved = self.habit_memory
+            if self.habit_path and self.habit_path.exists():
+                try:
+                    saved = json.loads(self.habit_path.read_text())
+                except (OSError, ValueError):
+                    logging.getLogger("nibe_comfort").warning("Sparade varmvattenvanor kunde inte läsas; börjar om.")
+                    saved = {}
+            store = merge_habits(saved if isinstance(saved, dict) else {}, draw_offs(points, now), points, now, days)
+            self.habit_memory = store
+            if self.habit_path:
+                atomic_json(self.habit_path, store)
+            return habit_profile(store)
+        return self.cached(("habits", config["offset_entity"], days), 6 * 3600, load)
+
+    def control_habits(self, config):
+        """Like control_preheat: never let the history read delay a control round."""
+        key = config["offset_entity"]
+        with self.lock:
+            entry = getattr(self, "_habit_entry", None)
+            matching = entry is not None and entry[0] == key
+            age = time.monotonic() - entry[1] if matching else float("inf")
+            if not getattr(self, "habit_loading", False) and age >= 6 * 3600:
+                self.habit_loading = True
+                threading.Thread(target=self._load_control_habits, args=(key, copy.deepcopy(config)), daemon=True).start()
+            if matching and age < 12 * 3600:
+                if isinstance(entry[2], str):
+                    raise ControlError(entry[2])
+                return copy.deepcopy(entry[2])
+        raise ControlError("Varmvattenvanorna hämtas i bakgrunden.")
+
+    def _load_control_habits(self, key, config):
+        result = "Hämtningen av varmvattenvanor avbröts."
+        try:
+            result = self.hot_water_habits(config)
+        except ControlError as exc:
+            result = str(exc)
+        except Exception as exc:
+            logging.getLogger("nibe_comfort").exception("Internt fel vid hämtning av varmvattenvanor")
+            result = f"Internt fel: {type(exc).__name__}."
+        finally:
+            with self.lock:
+                # A failed read is retried within the hour rather than after six.
+                stamp = time.monotonic() - (0 if not isinstance(result, str) else 5 * 3600)
+                self._habit_entry = (key, stamp, result)
+                self.habit_loading = False
+
     def history(self, config):
         key = ("history", tuple(config["room_sensors"]), config["outdoor_entity"], config["target_temperature"])
 
@@ -1438,10 +1564,12 @@ class Insights:
             number(entity["state"], "Aktuellt elpris")
         key = ("preheat", tuple(control_rooms(config)), config["offset_entity"], config["preheat_degrees"],
                config["price_provider"], config["price_entity"], config["max_age_minutes"],
+               config["solar_mode"], config["forecast_entity"],
                tuple((e["start"], e["end"]) for e in self.fireplace_intervals()))
 
         def load():
-            prices = self.prices(config)
+            # Solar rules alone need no prices; everything else that asks for this schedule does.
+            prices = self.prices(config) if config["price_entity"] or config["solar_mode"] == "off" else []
             model = None
             try:
                 model = self.house_model(config)["model"]
@@ -1451,6 +1579,16 @@ class Insights:
             result = preheat_windows(prices, time.time(), lead, config["preheat_degrees"])
             result["lead_hours"] = lead
             result["lead_source"] = "learned" if model and model["status"] == "good" else "default"
+            result["prices"] = [[t, p] for t, p in prices]
+            result["model"] = {key: model.get(key) for key in ("status", "beta", "lag")} if model else None
+            result["sunny_hours"] = None
+            if config["solar_mode"] != "off":
+                try:
+                    forecast = self.forecast(config["forecast_entity"])
+                    if forecast["type"] == "hourly":
+                        result["sunny_hours"] = sunny_hours(forecast["points"], time.time())
+                except Exception:  # the forecast only trims pre-heating; control works without it
+                    result["sunny_hours"] = None
             return result
         return self.cached(key, 900, load)
 

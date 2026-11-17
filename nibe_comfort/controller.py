@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from alarm_codes import alarm_info, alarm_label
 from fireplace import empty_state, intervals as fireplace_intervals, update as update_fireplace, validate_state as validate_fireplace_state
+from learning import predict as model_predict
 
 
 DEFAULTS = {
@@ -75,7 +76,17 @@ DEFAULTS = {
     "solar_entity": "",
     "battery_discharge_entity": "",
     "battery_charge_entity": "",
+    # Optional rules; "shadow" only reports what the rule would have done.
+    "adaptive_reduction_mode": "off",
+    "auto_base_memory_days": 0.0,
+    "solar_mode": "off",
+    "solar_power_entity": "",
+    "solar_power_threshold": 500.0,
+    "hot_water_habit_mode": "off",
 }
+RULE_MODES = ("off", "shadow", "on")
+NEW_RULE_KEYS = ("adaptive_reduction_mode", "auto_base_memory_days", "solar_mode", "solar_power_entity",
+                 "solar_power_threshold", "hot_water_habit_mode")
 SOURCE_ENTITIES = ("grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity")
 AUX_LIMIT_KEYS = ("aux_limit_enabled", "aux_limit_entity", "aux_limit_option", "aux_normal_option",
                   "aux_limit_max_drop", "aux_limit_min_outdoor")
@@ -103,6 +114,8 @@ LIMITS = {
     "pause_notify_minutes": (0, 1440),
     "aux_limit_max_drop": (0.1, 2),
     "aux_limit_min_outdoor": (-30, 15),
+    "auto_base_memory_days": (0, 30),
+    "solar_power_threshold": (50, 20000),
 }
 
 
@@ -145,6 +158,21 @@ AUTO_BASE_RATE = 1 / 86400
 AUTO_BASE_NOISE = 0.1
 AUTO_BASE_MAX_GAP = 600
 AUTO_BASE_SAVE_SECONDS = 600
+# Adaptive price reduction: the largest reduction (in these steps, at most the configured one) for
+# which the learned house model keeps the two coldest controlling rooms above target minus tolerance
+# until the expensive period ends, looking at most this far ahead.
+ADAPTIVE_STEP = 0.5
+ADAPTIVE_MAX_HOURS = 8
+# Sun: rooms rising this fast while the panels produce means the sun is heating the house.
+SUN_RISE_RATE = 0.1
+SUN_RISE_MIN_SECONDS = 1800
+SUN_HEATING_DROP = 0.3
+# A sunny forecast takes this much off pre-heating and the cheap boost; the sun stores heat for free.
+SUN_AHEAD_DROP = 0.5
+SUN_AHEAD_HOURS = 3
+# Hot water habits: a draw this likely within this many hours keeps the cheap hot water mode.
+HABIT_PROBABILITY = 0.5
+HABIT_LEAD_HOURS = 2
 PAUSE_NOTIFICATION_ID = "nibe_comfort_paus"
 SENSOR_PREFIX = "sensor.nibe_comfort_"
 MONTHS = ("jan", "feb", "mars", "apr", "maj", "juni", "juli", "aug", "sep", "okt", "nov", "dec")
@@ -177,6 +205,9 @@ def validate(config):
         raise ControlError("Välj Tibber eller Nord Pool som elpriskälla.")
     if result["price_mode"] not in ("absolute", "relative"):
         raise ControlError("Prisnivån måste följa fasta gränser eller dygnets egna priser.")
+    for key in ("adaptive_reduction_mode", "solar_mode", "hot_water_habit_mode"):
+        if result[key] not in RULE_MODES:
+            raise ControlError(f"{key} måste vara av, skugga eller på.")
     for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled",
                 "auto_base_enabled", "publish_sensors", "skip_silent_rooms", "hot_water_price_enabled",
                 "aux_limit_enabled"):
@@ -226,6 +257,7 @@ def validate(config):
         ("notify_service", ("notify.",)),
         ("hot_water_mode_entity", ("select.",)),
         ("aux_limit_entity", ("select.",)),
+        ("solar_power_entity", ("sensor.",)),
         *((key, ("sensor.",)) for key in SOURCE_ENTITIES),
     ):
         value = result[key]
@@ -277,6 +309,12 @@ def validate(config):
         raise ControlError("Välj elprisgivare för prisstyrning av varmvatten eller elpatron.")
     if result["aux_limit_enabled"] and not result["outdoor_entity"]:
         raise ControlError("Välj utomhusgivare för elpatronens köldgräns.")
+    if result["adaptive_reduction_mode"] != "off" and not (result["price_entity"] and result["outdoor_entity"]):
+        raise ControlError("Behovsanpassad sänkning behöver elprisgivare och utomhusgivare.")
+    if result["solar_mode"] != "off" and not result["solar_power_entity"]:
+        raise ControlError("Välj solcellernas effektgivare (W) för solstyrningen, eller stäng av den.")
+    if result["hot_water_habit_mode"] != "off" and not result["hot_water_price_enabled"]:
+        raise ControlError("Varmvatten efter vanor bygger på varmvatten på billig el; slå på det först.")
     if result["enabled"] and (not rooms or not result["offset_entity"]):
         raise ControlError("Välj rumsgivare och kurvförskjutning innan aktivering.")
     return result
@@ -879,7 +917,8 @@ def indoor_reading(config, get):
         rooms = [temperature(get(key)) for key in selected]
         if any(not 5 <= value <= 40 for value in rooms):
             raise ControlError("En rumsgivare visar en orimlig inomhustemperatur (utanför 5–40 °C).")
-        return {"value": sum(rooms) / len(rooms), "rooms": list(selected), "skipped": [], "fallback": False}
+        return {"value": sum(rooms) / len(rooms), "rooms": list(selected), "skipped": [], "fallback": False,
+                "values": dict(zip(selected, rooms))}
     values, skipped = read_rooms(selected, get)
     fallback = False
     if not values and config["priority_sensors"]:
@@ -891,7 +930,8 @@ def indoor_reading(config, get):
         if len(skipped) == 1:
             raise ControlError(skipped[0]["error"])
         raise ControlError("Ingen rumsgivare har ett aktuellt värde: " + " ".join(room["error"] for room in skipped))
-    return {"value": sum(values.values()) / len(values), "rooms": list(values), "skipped": skipped, "fallback": fallback}
+    return {"value": sum(values.values()) / len(values), "rooms": list(values), "skipped": skipped, "fallback": fallback,
+            "values": values}
 
 
 def indoor_temperature(config, get):
@@ -964,8 +1004,128 @@ def smoothed_indoor(samples, now):
     return sum(values) / len(values) if values else None
 
 
+def decimal(value):
+    """Swedish number for messages: 0.5 → '0,5', 1.0 → '1'."""
+    return f"{round(value, 2):g}".replace(".", ",")
+
+
+def habit_due(profile, now):
+    """(hour, probability) of the first likely hot water draw from this hour on, or None.
+
+    The profile is keyed 'wd-<hour>' for Monday–Friday and 'we-<hour>' for the weekend."""
+    for hours in range(HABIT_LEAD_HOURS + 1):
+        stamp = datetime.fromtimestamp(now + hours * 3600)
+        probability = (profile or {}).get(f"{'we' if stamp.weekday() >= 5 else 'wd'}-{stamp.hour}", 0)
+        if probability >= HABIT_PROBABILITY:
+            return stamp.hour, probability
+    return None
+
+
+def indoor_rate(samples, now):
+    """°C per hour over the smoothing window, or None with less than half an hour of samples."""
+    values = sorted((t, v) for t, v in samples if now - SMOOTHING_SECONDS < t <= now)
+    if len(values) < 2 or values[-1][0] - values[0][0] < SUN_RISE_MIN_SECONDS:
+        return None
+    return (values[-1][1] - values[0][1]) / (values[-1][0] - values[0][0]) * 3600
+
+
+def solar_effect(config, get, samples, now, plan):
+    """Sun heating the house now, and sun expected soon. Never reads anything without a solar power sensor."""
+    info = {"mode": config["solar_mode"], "power": None, "rising": None, "heating": False, "sunny_ahead": False,
+            "sunny_hours": None, "applied": False, "note": None}
+    if config["solar_mode"] == "off" or not config["solar_power_entity"]:
+        return info
+    try:
+        entity = get(config["solar_power_entity"])
+        power = number(entity["state"], "Solcellseffekt")
+        if (entity.get("attributes", {}).get("unit_of_measurement") or "").lower() == "kw":
+            power *= 1000
+    except ControlError as exc:
+        info["note"] = f"Solstyrningen gör inget just nu: {exc}"
+        return info
+    rising = indoor_rate(samples, now)
+    info.update(power=round(power), rising=None if rising is None else round(rising, 2))
+    info["heating"] = power >= config["solar_power_threshold"] and rising is not None and rising >= SUN_RISE_RATE
+    hours = (plan or {}).get("sunny_hours")
+    if hours is not None:
+        info["sunny_hours"] = hours
+        info["sunny_ahead"] = hours >= SUN_AHEAD_HOURS
+    info["applied"] = config["solar_mode"] == "on"
+    return info
+
+
+def adaptive_reduction(config, plan, values, base, outdoor, now):
+    """Largest price reduction that the learned model says the two coldest rooms can take."""
+    fixed = config["expensive_reduction"]
+    info = {"mode": config["adaptive_reduction_mode"], "fixed": fixed, "reduction": None, "hours": None,
+            "start": None, "predicted_min": None, "floor": None, "applied": False, "note": None}
+    model = (plan or {}).get("model")
+    until = (plan or {}).get("expensive_until")
+    if not model or model.get("status") != "good" or not model.get("beta"):
+        info["note"] = "Husmodellen är inte säker än; den vanliga sänkningen gäller."
+        return info
+    if until is None or until <= now:
+        info["note"] = "Slutet på den dyra perioden är okänt; den vanliga sänkningen gäller."
+        return info
+    if outdoor is None or not values:
+        info["note"] = "Utetemperatur eller rumsvärden saknas; den vanliga sänkningen gäller."
+        return info
+    hours = min(ADAPTIVE_MAX_HOURS, max(0.25, (until - now) / 3600))
+    end = now + hours * 3600
+    lag = int(model.get("lag") or 0)
+    # The pump answers after the learned lag, so the cost of a reduction shows up after the expensive
+    # period too; follow it until the reduced hours have passed through the house.
+    horizon = math.ceil(hours) + lag + 1
+    coldest = sorted(values.values())[:2]
+    start = sum(coldest) / len(coldest)
+    floor = config["target_temperature"] - config["deadband"]
+    clamp = lambda value: max(config["min_offset"], min(config["max_offset"], value))
+
+    def run(reduction):
+        return [value for _, value in model_predict(
+            model, start, now, lambda t: clamp(base - reduction) if now <= t < end else clamp(base),
+            lambda t: outdoor, horizon)]
+
+    # Only the difference the reduction makes is taken from the model, on top of today's level: the
+    # model's own equilibrium can be off by tenths. Its predicted cooling counts, predicted warming does not.
+    baseline = run(0.0)
+    chosen = lowest = None
+    count = int(round(fixed / ADAPTIVE_STEP))
+    for k in range(count, -1, -1):
+        reduction = round(k * ADAPTIVE_STEP, 6)
+        reduced = run(reduction)
+        lowest = min(start + min(0.0, b - start) + (r - b) for b, r in zip(baseline, reduced))
+        if lowest >= floor - 1e-9:
+            chosen = reduction
+            break
+    info.update(reduction=chosen if chosen is not None else 0.0, hours=round(hours, 2), start=round(start, 2),
+                predicted_min=round(lowest, 2), floor=round(floor, 2), lag=lag,
+                applied=config["adaptive_reduction_mode"] == "on")
+    return info
+
+
+def expensive_until(config, prices, now):
+    """End of the expensive run that contains now, from the coming prices; None if now is not expensive."""
+    points = sorted((float(t), float(p)) for t, p in prices or ())
+    if len(points) < 2:
+        return None
+    slot = min(b[0] - a[0] for a, b in zip(points, points[1:]) if b[0] > a[0])
+    level = lambda t, p: price_level(config, p, series_rank(points, t, p) if config["price_mode"] == "relative" else None)
+    current = next(((t, p) for t, p in points if t <= now < t + slot), None)
+    if current is None or level(*current) != "expensive":
+        return None
+    end = current[0] + slot
+    for t, p in points:
+        if t < end:
+            continue
+        if t > end + 1 or level(t, p) != "expensive":
+            break
+        end = t + slot
+    return end
+
+
 def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False, indoor_samples=(),
-             base_correction=0.0):
+             base_correction=0.0, plan=None):
     """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule.
 
     indoor_samples: earlier (time, value) control averages; the room rule then uses their mean
@@ -979,6 +1139,12 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
     indoor_now = reading["value"]
     indoor = smoothed_indoor([*indoor_samples, (now, indoor_now)], now)
     target_shift = max(-config["preheat_degrees"], min(config["preheat_degrees"], target_shift)) if config["preheat_enabled"] else 0.0
+    solar = solar_effect(config, get, [*indoor_samples, (now, indoor_now)], now, plan)
+    if solar["applied"]:
+        if solar["sunny_ahead"] and target_shift > 0:
+            target_shift = max(0.0, target_shift - SUN_AHEAD_DROP)
+        if solar["heating"]:
+            target_shift -= SUN_HEATING_DROP
     error = config["target_temperature"] + target_shift - indoor
     room_adjustment = 0 if abs(error) <= config["deadband"] else error * config["room_gain"]
     outdoor = None
@@ -1007,8 +1173,20 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
             price_error = str(exc)
     if price_rule:
         price_adjustment = price_contribution(config, price, error, rank)
+    if solar["applied"] and solar["sunny_ahead"] and price_adjustment > 0:
+        price_adjustment = max(0.0, price_adjustment - SUN_AHEAD_DROP)
     fireplace_adjustment = fireplace_contribution(config, indoor_now, fireplace_active)
     base_correction = round(base_correction, 3) + 0.0 if config["auto_base_enabled"] else 0.0
+    adaptive = None
+    if config["adaptive_reduction_mode"] != "off" and price_adjustment < 0:
+        base = config["base_offset"] + base_correction + room_adjustment + weather_adjustment + fireplace_adjustment
+        try:
+            model_outdoor = outdoor if outdoor is not None else temperature(get(config["outdoor_entity"]))
+        except ControlError:
+            model_outdoor = None
+        adaptive = adaptive_reduction(config, plan, reading.get("values") or {}, base, model_outdoor, now)
+        if adaptive["applied"] and adaptive["reduction"] is not None and adaptive["note"] is None:
+            price_adjustment = -min(-price_adjustment, adaptive["reduction"])
     desired = (config["base_offset"] + base_correction + room_adjustment + weather_adjustment
                + price_adjustment + fireplace_adjustment)
     requested = desired
@@ -1023,6 +1201,7 @@ def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_acti
         "contributions": {"room": round(room_adjustment, 2), "weather": round(weather_adjustment, 2),
                           "price": price_adjustment, "fireplace": fireplace_adjustment,
                           "base_correction": base_correction},
+        "adaptive_reduction": adaptive, "solar": solar,
         "desired_offset": round(desired, 3), "current_offset": None,
         "next_offset": None, "writable": False,
         "control_limit": (
@@ -1206,7 +1385,7 @@ class Controller:
                 for key in ("skip_silent_rooms", "price_mode", "price_low_percent", "price_high_percent", "auto_base_enabled",
                             "auto_base_limit", "publish_sensors", "pause_notify_minutes", "notify_service",
                             "hot_water_price_enabled", "hot_water_mode_entity", "hot_water_cheap_option",
-                            "hot_water_normal_option", *SOURCE_ENTITIES, *AUX_LIMIT_KEYS):
+                            "hot_water_normal_option", *SOURCE_ENTITIES, *AUX_LIMIT_KEYS, *NEW_RULE_KEYS):
                     saved.setdefault(key, DEFAULTS[key])
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
@@ -1239,6 +1418,10 @@ class Controller:
         # Set by the web layer: callable(config) -> {"windows": [...]} for price-based pre-heating.
         self.preheat_provider = None
         self.preheat_kind = None
+        # Set by the web layer: callable(config) -> {"profile": {"weekday-hour": probability}, "days": n}.
+        self.habit_provider = None
+        # Last logged shadow decision per rule, so a shadow note is logged once, not every minute.
+        self.shadow_last = {}
         self.fireplace_path = Path(data_dir) / "fireplace-state.json"
         try:
             self.fireplace_state = validate_fireplace_state(json.loads(self.fireplace_path.read_text())) \
@@ -1445,6 +1628,14 @@ class Controller:
         previous, self.base_seen_at = self.base_seen_at, now
         limit = self.config["auto_base_limit"]
         value = max(-limit, min(limit, self.base_correction["value"]))
+        memory = self.config["auto_base_memory_days"]
+        if self.config["auto_base_enabled"] and memory and previous is not None:
+            # Short memory: the correction fades towards zero, so a missed heat source (an undetected
+            # fire, a sunny week) cannot leave the house too cold for days afterwards.
+            value *= math.exp(-min(now - previous, AUTO_BASE_MAX_GAP) / (memory * 86400))
+        solar = result.get("solar") or {}
+        if solar.get("applied") and (solar.get("power") or 0) >= self.config["solar_power_threshold"]:
+            eligible = False
         if self.config["auto_base_enabled"] and eligible and previous is not None:
             error = result["error"]
             limit_hit = bool(result["control_limit"]) and ((result["control_limit"]["direction"] == "upper") == (error > 0))
@@ -1455,7 +1646,8 @@ class Controller:
             if now - self.base_saved_at >= AUTO_BASE_SAVE_SECONDS:
                 atomic_json(self.base_path, self.base_correction)
                 self.base_saved_at = now
-        return {"enabled": self.config["auto_base_enabled"], "value": round(value, 3) + 0.0, "limit": limit}
+        return {"enabled": self.config["auto_base_enabled"], "value": round(value, 3) + 0.0, "limit": limit,
+                "memory_days": memory}
 
     def warnings(self, result):
         """Things worth knowing that do not stop control."""
@@ -1509,7 +1701,7 @@ class Controller:
                 LOG.warning("Kunde inte rapportera till Home Assistant: %s", exc)
                 self.report_error = str(exc)
 
-    def hot_water_step(self, entities, now, result, preheat, hold):
+    def hot_water_step(self, entities, now, result, preheat, hold, habits=None):
         """Opt-in: the pump hot water mode follows the price. Leaves modes it does not manage alone."""
         config = self.config
         if not config["hot_water_price_enabled"]:
@@ -1517,9 +1709,29 @@ class Controller:
         cheap, normal = config["hot_water_cheap_option"], config["hot_water_normal_option"]
         reason = ("förvärmer före dyr el" if preheat.get("kind") == "preheat"
                   else "billig el" if result.get("price_level") == "cheap" else None)
+        habit = None
+        if config["hot_water_habit_mode"] != "off":
+            habit = {"mode": config["hot_water_habit_mode"], "due": None, "reason": None, "would": None,
+                     "days": None, "note": None}
+            if not habits:
+                habit["note"] = "Varmvattenvanorna hämtas i bakgrunden."
+            elif "error" in habits:
+                habit["note"] = f"Varmvattenvanorna kan inte läsas: {habits['error']}"
+            else:
+                habit["days"] = habits.get("days")
+                due = habit_due(habits.get("profile"), now)
+                if due:
+                    habit["due"] = due[0]
+                    habit["reason"] = f"varmvatten brukar tappas kl {due[0]:02d} ({round(due[1] * 100)} % av dagarna)"
+                    if not reason:
+                        if habit["mode"] == "on":
+                            reason = habit["reason"]
+                        else:
+                            habit["would"] = cheap
         desired = cheap if reason else normal
         report = {"enabled": True, "entity_id": config["hot_water_mode_entity"], "desired": desired,
-                  "reason": reason or "inte billig el", "current": None, "note": None, "error": None, "next_change_at": None}
+                  "reason": reason or "inte billig el", "current": None, "note": None, "error": None, "next_change_at": None,
+                  "habit": habit}
         peers = self.peers()
         if not self.pump_select(config["hot_water_mode_entity"]):
             report["error"] = "Varmvattenläget finns inte på samma pump och myUplink-integration som kurvförskjutningen."
@@ -1959,12 +2171,66 @@ class Controller:
         """Fetch pre-heating windows outside the lock (may read history). Returns windows or an error text."""
         with self.lock:
             config = copy.deepcopy(self.config)
-        if not config["preheat_enabled"] or not self.preheat_provider:
+        needed = config["preheat_enabled"] or config["adaptive_reduction_mode"] != "off" or config["solar_mode"] != "off"
+        if not needed or not self.preheat_provider:
             return None
         try:
-            return {"windows": list(self.preheat_provider(config)["windows"])}
+            schedule = self.preheat_provider(config)
+            return {"windows": list(schedule["windows"]), "prices": list(schedule.get("prices") or []),
+                    "model": schedule.get("model"), "sunny_hours": schedule.get("sunny_hours")}
         except Exception as exc:  # optional optimisation: fall back to plain comfort control
             return {"error": str(exc) or type(exc).__name__}
+
+    def control_plan(self, now, schedule):
+        """What the optional rules need from the background schedule; empty when it is missing."""
+        if not schedule or "error" in schedule:
+            return {}
+        return {"model": schedule.get("model"), "sunny_hours": schedule.get("sunny_hours"),
+                "expensive_until": expensive_until(self.config, schedule.get("prices"), now)}
+
+    def habit_schedule(self):
+        """Learned hot water habits, fetched outside the lock like the pre-heating schedule."""
+        with self.lock:
+            config = copy.deepcopy(self.config)
+        if config["hot_water_habit_mode"] == "off" or not config["hot_water_price_enabled"] or not self.habit_provider:
+            return None
+        try:
+            return self.habit_provider(config)
+        except Exception as exc:
+            return {"error": str(exc) or type(exc).__name__}
+
+    def shadow_step(self, result):
+        """Log once when a rule in shadow mode would have acted differently; never changes control."""
+        found = {}
+        adaptive = result.get("adaptive_reduction")
+        if (adaptive and adaptive["mode"] == "shadow" and adaptive["note"] is None
+                and abs(adaptive["reduction"] - adaptive["fixed"]) > 1e-6):
+            found["adaptive"] = ((adaptive["reduction"], adaptive["fixed"]),
+                                 f"Skugga: behovsanpassad sänkning hade sänkt {decimal(adaptive['reduction'])} steg i stället "
+                                 f"för {decimal(adaptive['fixed'])}. De två kallaste rummen förutsägs bli som lägst "
+                                 f"{decimal(adaptive['predicted_min'])} °C under {decimal(adaptive['hours'])} h dyr el "
+                                 f"(golv {decimal(adaptive['floor'])} °C).")
+        solar = result.get("solar") or {}
+        if solar.get("mode") == "shadow":
+            parts = []
+            if solar["heating"]:
+                parts.append(f"solen värmer huset ({solar['power']} W, rummen +{decimal(solar['rising'])} °C/h): målet hade "
+                             f"sänkts {decimal(SUN_HEATING_DROP)} °C")
+            if solar["sunny_ahead"] and (result.get("target_shift", 0) > 0 or result["contributions"]["price"] > 0):
+                parts.append(f"sol väntas ({decimal(solar['sunny_hours'])} soltimmar): förvärmning och billig-el-höjning hade "
+                             f"minskats {decimal(SUN_AHEAD_DROP)}")
+            if parts:
+                found["solar"] = (tuple(parts), "Skugga: " + "; ".join(parts) + ".")
+        habit = (result.get("hot_water") or {}).get("habit") or {}
+        if habit.get("mode") == "shadow" and habit.get("would"):
+            found["hot_water"] = (habit["would"], f"Skugga: varmvattnet hade ställts på {habit['would']} ({habit['reason']}).")
+        for key in ("adaptive", "solar", "hot_water"):
+            signature = found[key][0] if key in found else None
+            if signature != self.shadow_last.get(key):
+                if signature is not None:
+                    self.events.add("shadow", found[key][1], rule=key)
+                self.shadow_last[key] = signature
+        return [message for _, message in found.values()]
 
     def preheat(self, now, schedule):
         """Active pre-heating window. Any problem means no shift: normal comfort control continues."""
@@ -2262,6 +2528,7 @@ class Controller:
 
     def control_tick(self):
         schedule = self.preheat_schedule()
+        habits = self.habit_schedule()
         with self.lock:
             now = time.time()
             readings = {}
@@ -2318,7 +2585,7 @@ class Controller:
                 self.indoor_samples = [(t, v) for t, v in self.indoor_samples if now - SMOOTHING_SECONDS < t < now]
                 result = evaluate(self.config, entities, now, peers, preheat["shift"],
                                   fireplace_active=fireplace["phase"] == "active", indoor_samples=self.indoor_samples,
-                                  base_correction=self.base_correction["value"])
+                                  base_correction=self.base_correction["value"], plan=self.control_plan(now, schedule))
                 self.indoor_samples.append((now, result.pop("indoor_now")))
                 result["preheat"] = preheat
                 result.update(readings)
@@ -2360,8 +2627,10 @@ class Controller:
                                "control_in_progress": True}
                 result["pump_alarm"] = alarm
                 result["thermostat_control"] = self.thermostat_step(entities, now, peers, testing or vacation, alarm_hold=alarm_hold)
-                result["hot_water"] = self.hot_water_step(entities, now, result, preheat, testing or vacation or alarm_hold)
+                result["hot_water"] = self.hot_water_step(entities, now, result, preheat, testing or vacation or alarm_hold,
+                                                          habits)
                 result["aux_limit"] = self.aux_limit_step(entities, now, result, preheat, testing or vacation or alarm_hold)
+                result["shadow"] = self.shadow_step(result)
                 if testing:
                     result["message"] = "Test av styrningen pågår: automatiken väntar tills testet är klart."
                 elif alarm_hold:
@@ -2390,6 +2659,8 @@ class Controller:
                                                  if e["entity_id"] == self.config["price_entity"]), None),
                                 contributions=result["contributions"], desired_offset=result["desired_offset"],
                                 target_shift=result["target_shift"], preheat=preheat.get("kind"),
+                                solar=bool(result["solar"]["applied"] and (result["solar"]["heating"] or result["solar"]["sunny_ahead"])),
+                                adaptive_reduction=(result["adaptive_reduction"] or {}).get("reduction") if (result["adaptive_reduction"] or {}).get("applied") else None,
                                 fireplace=fireplace["phase"], fireplace_rooms=fireplace["rooms"],
                             )
                             pending = dict(

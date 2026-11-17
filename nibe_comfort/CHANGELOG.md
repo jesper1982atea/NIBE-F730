@@ -1,5 +1,26 @@
 # Ändringslogg
 
+## Opublicerat
+
+Fyra nya val, alla av från början. Tre av dem har ett skuggläge som bara
+skriver i händelseloggen vad regeln hade gjort, utan att ändra något.
+
+- Behovsanpassad sänkning vid dyr el: den inlärda husmodellen väljer den
+  största sänkningen (högst den inställda) där de två kallaste styrande rummen
+  förutsägs hålla sig över målet minus toleransen tills den dyra perioden är
+  slut. Pumpens fördröjning räknas med, och bara sänkningens effekt tas från
+  modellen. Annars gäller den vanliga sänkningen.
+- Solvärme (bara med en vald solcellseffektgivare): värmer solen huset sänks
+  målet 0,3 °C och baskorrigeringen står still; väntas sol de närmaste
+  12 timmarna minskas förvärmning och billig-el-höjning med 0,5.
+- Varmvatten efter vanor: duschtider per timme för vardagar och helg lärs ur
+  BT6 och sparas i tillägget (fyra veckor). Är det dyrt men en dusch brukar
+  komma inom två timmar väljs läget för billig el ändå.
+- Baskorrigeringens minne i dygn: korrigeringen bleknar mot noll, så att en
+  missad värmekälla inte gör huset för kallt i flera dygn efteråt.
+
+Idéerna kommer från EnergyWizard (murre87/energywizard); koden är egen.
+
 ## 0.2.48
 
 - Elpatronbegränsningen slår inte längre om för enstaka kvartspriser: en
