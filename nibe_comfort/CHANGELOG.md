@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 0.2.54
+
+- Måltemperatur, innetemperatur, uteväder och nästa värmejustering visas
+  högst upp i alla vyer.
+- Pumpöversikten visar de viktigaste driftvärdena först och samlar övriga
+  eller saknade mätvärden bakom utfällbara avsnitt.
+- Förtydligar uppdateringsfel vid HTTP 401 så det framgår om Home Assistant
+  nekar tilläggets token eller webbpanelens inloggningssession.
+
 ## 0.2.53
 
 - Pumpar utan elmätare (t.ex. F370) får en uppskattad elförbrukning i stället
