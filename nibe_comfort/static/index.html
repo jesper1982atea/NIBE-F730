@@ -23,6 +23,7 @@
       <a href="#hot-water-card">Varmvatten</a>
       <a href="#temperature-section">Rum och historik</a>
       <a href="#energy-section">El och kostnad</a>
+      <a href="#savings-section">Besparingskalkyl</a>
       <a href="#auxiliary-section">Elpatron</a>
       <a href="#alarm-card">Larm</a>
       <a href="#vacation-card">Semester</a>
@@ -366,6 +367,42 @@
   <p class="hint">Prisflytt: vad samma kWh hade kostat till periodens tidsviktade snittpris, minus vad de faktiskt kostade. Plus betyder att pumpen använde mer el när elen var billig. Bara hela, prissatta timmar ingår. Det mäter tidpunkten, inte om pumpen använt mindre el; väder, varmvatten och kamin påverkar också.</p>
         <div id="energy-table" class="table-scroll"></div>
       </details>
+      </div>
+    </section>
+
+    <section class="card dashboard" id="savings-section">
+      <div class="section-heading">
+        <div><span class="section-number">FAKTISK KOSTNAD · UPPSKATTAD EFFEKT</span><h2>Besparingskalkyl</h2></div>
+        <label for="savings-days">Visa</label>
+        <select id="savings-days" aria-label="Period för besparingskalkylen">
+          <option value="7">7 dagar</option><option value="30" selected>30 dagar</option><option value="90">90 dagar</option>
+        </select>
+        <button type="button" id="refresh-savings" class="secondary">Uppdatera</button>
+      </div>
+      <p class="section-intro">Samlar pumpens verkliga elmätning och historiska elpris per dag och månad. Jämförelsen före/efter är en uppskattning kring bekräftade ändringar – inte bevis på att ändringen ensam orsakade skillnaden.</p>
+      <p id="savings-status" role="status">Hämtar kostnads- och styrhistorik…</p>
+      <div id="savings-data" hidden>
+        <div id="savings-metrics" class="live-grid"></div>
+        <p id="savings-coverage" class="hint"></p>
+        <div id="savings-chart" class="chart" role="img" aria-label="Pumpens och elpatronens uppskattade kostnad per dag"></div>
+        <details class="disclosure" open>
+          <summary>Dag för dag</summary>
+          <div id="savings-daily" class="table-scroll"></div>
+        </details>
+        <details class="disclosure">
+          <summary>Summering per månad</summary>
+          <div id="savings-monthly" class="table-scroll"></div>
+        </details>
+        <details class="disclosure">
+          <summary>Vilka ändringar sammanföll med lägre kostnad?</summary>
+          <p class="hint">För varje bekräftad kurv- eller termostatändring jämförs närmaste hela timme före med närmaste hela timme efter; ändringstimmen hoppas över. Positivt värde betyder lägre kostnad efteråt. Väder, varmvatten, pris och husets tröghet påverkar också. Jämförelsen är inte kausal eller en garanterad besparing.</p>
+          <ul id="savings-actions" class="plan-changes"></ul>
+        </details>
+        <details class="disclosure">
+          <summary>Elpatronens körningar i perioden</summary>
+          <p id="savings-heater-status" class="hint"></p>
+          <div id="savings-heater-runs" class="table-scroll" tabindex="0" role="region" aria-label="Elpatronens körningar i vald period"></div>
+        </details>
       </div>
     </section>
 

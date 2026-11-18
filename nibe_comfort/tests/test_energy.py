@@ -2,15 +2,16 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from controller import ControlError, Controller, validate
-from energy import change_comparisons, consumption_report, discover_meter, meter_error
+from energy import change_comparisons, consumption_report, discover_meter, meter_error, price_intervals
 from insights import Insights
+from savings import action_periods, energy_periods, period_bounds
 from test_controller import config, entity
 
 
@@ -243,6 +244,37 @@ class EnergyTests(unittest.TestCase):
         self.assertNotIn("savings", data)
         self.assertNotIn("savings", comparisons[0])
 
+    def test_calendar_period_summaries_and_change_estimates_are_explicit(self):
+        data = report()
+        segments, _, _ = price_intervals(price_rows(), PRICE, END, 7200)
+        periods = energy_periods(data["hours"], segments)
+        self.assertEqual(sum(item["kwh"] for item in periods["daily"]), 24)
+        self.assertEqual(sum(item["cost"] for item in periods["daily"]), 48)
+        self.assertTrue(all(item["price_shift"]["difference"] == 0 for item in periods["daily"]))
+        comparisons = [
+            {"kind": "offset", "timestamp": START + 3600, "before": {"cost": 4, "kwh": 2},
+             "after": {"cost": 3, "kwh": 1}},
+            {"kind": "thermostat", "timestamp": START + 7200, "before": {"cost": 3, "kwh": 1},
+             "after": {"cost": 5, "kwh": 2}},
+            {"kind": "settings", "timestamp": START + 7200, "before": {"cost": 3}, "after": {"cost": 0}},
+        ]
+        actions = action_periods(comparisons)
+        self.assertEqual(actions["observations"], 2)
+        self.assertEqual(actions["by_kind"][0]["kind"], "offset")
+        self.assertEqual(actions["by_kind"][0]["estimated_savings"], 1)
+        self.assertEqual(actions["by_kind"][1]["estimated_savings"], -2)
+        self.assertEqual(actions["daily"][0]["estimated_savings"], -1)
+
+    def test_calendar_period_bounds_use_local_midnight_and_reject_arbitrary_ranges(self):
+        now = END + 3600
+        start, end = period_bounds(now, 30)
+        midnight = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
+        self.assertEqual(end, midnight.timestamp())
+        self.assertEqual(start, (midnight - timedelta(days=30)).timestamp())
+        for invalid in (True, 1, 14, "30"):
+            with self.subTest(invalid=invalid), self.assertRaises(ControlError):
+                period_bounds(now, invalid)
+
 
 class EnergyIntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -380,6 +412,19 @@ class EnergyIntegrationTests(unittest.TestCase):
                 self.insights.energy({**automatic, "offset_entity": "number.other"})
             with self.assertRaisesRegex(ControlError, "saknas"):
                 self.insights.energy({**self.cfg, "energy_entity": "sensor.missing"})
+
+    def test_long_period_report_uses_completed_local_days(self):
+        now = END + 60
+        with patch("insights.time.time", return_value=now):
+            data = self.insights.energy(self.cfg, 7)
+        expected_start, expected_end = period_bounds(now, 7)
+        self.assertEqual((data["start"], data["end"]), (expected_start, expected_end))
+        self.assertIn("daily", data)
+        self.assertIn("monthly", data)
+        stamp = datetime.fromisoformat(unquote(self.ha.request.call_args.args[0].split("/history/period/")[1].split("?")[0])).timestamp()
+        self.assertEqual(stamp, expected_start - 3600)
+        with self.assertRaisesRegex(ControlError, "7, 30 eller 90"):
+            self.insights.energy(self.cfg, 14)
 
     def test_provider_switch_does_not_reuse_tibber_cost(self):
         with patch("insights.time.time", return_value=END + 60):

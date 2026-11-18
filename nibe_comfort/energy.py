@@ -192,8 +192,12 @@ def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, p
     } for stamp in range(int(start), int(end), 3600)]
     intervals, skipped = usage_intervals(meter, start, end, power, hold_zero)
     price_starts = [segment[0] for segment in price_segments]
+    hour_starts = [hour["start"] for hour in hours]
     for left, right, rate in intervals:
-        for hour in hours:
+        first_hour = max(0, bisect_right(hour_starts, left) - 1)
+        for hour in hours[first_hour:]:
+            if hour["start"] >= right:
+                break
             low, high = max(left, hour["start"]), min(right, hour["end"])
             if high <= low:
                 continue
@@ -351,10 +355,11 @@ def pump_sources(pump_hours, source_hours):
     return result, totals
 
 
-def change_comparisons(hours, changes):
+def change_comparisons(hours, changes, limit=20):
     """Only compare complete hour pairs; no attribution or savings claims."""
     result = []
     seen = set()
+    by_start = {hour["start"]: hour for hour in hours}
     for change in sorted(changes, key=lambda c: c["timestamp"]):
         if change["status"] not in ("confirmed", "observed", "saved"):
             continue
@@ -364,8 +369,8 @@ def change_comparisons(hours, changes):
             continue
         seen.add(key)
         boundary = int(stamp // 3600) * 3600
-        before = next((h for h in hours if h["start"] == boundary - 3600), None)
-        after = next((h for h in hours if h["start"] == boundary + 3600), None)
+        before = by_start.get(boundary - 3600)
+        after = by_start.get(boundary + 3600)
         result.append({
             "timestamp": stamp, "kind": change["kind"], "entity_id": change.get("entity_id"),
             "value": change.get("value"), "label": change.get("label", "Återläst ändring"),
@@ -375,4 +380,4 @@ def change_comparisons(hours, changes):
             "difference_cost": after["cost"] - before["cost"]
             if before and after and before["cost"] is not None and after["cost"] is not None else None,
         })
-    return result[-20:]
+    return result if limit is None else result[-limit:]
