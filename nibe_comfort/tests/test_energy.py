@@ -228,12 +228,16 @@ class EnergyTests(unittest.TestCase):
 
     def test_comparison_uses_full_hours_around_change_not_incomplete_change_hour(self):
         data = report()
-        changes = [{"timestamp": START + 3700, "kind": "offset", "status": "confirmed", "value": 2},
+        changes = [{"timestamp": START + 3700, "kind": "offset", "status": "confirmed",
+                    "previous": 1, "value": 2, "unit": "steg",
+                    "contributions": {"room": -1, "price": 0.5}},
                    {"timestamp": START + 4000, "kind": "offset", "status": "failed", "value": 3}]
         comparisons = change_comparisons(data["hours"], changes)
         self.assertEqual(len(comparisons), 1)
         self.assertEqual(comparisons[0]["before"]["start"], START)
         self.assertEqual(comparisons[0]["after"]["start"], START + 7200)
+        self.assertEqual(comparisons[0]["previous"], 1)
+        self.assertEqual(comparisons[0]["contributions"], {"room": -1, "price": 0.5})
         self.assertEqual(comparisons[0]["difference_kwh"], 0)
         self.assertEqual(comparisons[0]["difference_cost"], 0)
         data["hours"][2]["kwh"] = None
@@ -264,6 +268,9 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(actions["by_kind"][0]["estimated_savings"], 1)
         self.assertEqual(actions["by_kind"][1]["estimated_savings"], -2)
         self.assertEqual(actions["daily"][0]["estimated_savings"], -1)
+        self.assertEqual(len(actions["items"]), 2)
+        self.assertEqual(actions["items"][0]["estimated_savings"], 1)
+        self.assertEqual(actions["items"][0]["before"]["cost"], 4)
 
     def test_calendar_period_bounds_use_local_midnight_and_reject_arbitrary_ranges(self):
         now = END + 3600
