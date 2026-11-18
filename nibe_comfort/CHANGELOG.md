@@ -2,6 +2,10 @@
 
 ## Ej släppt
 
+- Fel från API:t, till exempel att elmätare saknas för besparingskalkylen, svarar
+  med HTTP 422 i stället för 502. En Cloudflare-tunnel framför Home Assistant
+  ersatte 502-svaren med en egen felsida, så sidan visade "ingress gav en
+  webbsida" i stället för den verkliga orsaken.
 - "För kallt inne" släpper en begränsning som gäller först när rummen är
   0,2 °C under gränsen. Ett enda givarsteg precis vid gränsen gav annars en
   återställning via molnet inom några minuter. En ny begränsning kräver

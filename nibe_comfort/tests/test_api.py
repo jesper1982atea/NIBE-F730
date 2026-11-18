@@ -303,7 +303,7 @@ class ApiTests(unittest.TestCase):
 
     def test_auxiliary_missing_power_is_explicit_not_a_zero_cost_report(self):
         status, data = self.request("/api/auxiliary")
-        self.assertEqual(status, 502)
+        self.assertEqual(status, 422)
         self.assertIn("myUplink", data["error"])
         self.ha.request.assert_not_called()
 
@@ -365,7 +365,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request("/api/savings?days=30", token=False)[0], 401)
 
     def test_energy_missing_meter_and_log_failure_are_explicit(self):
-        self.assertEqual(self.request("/api/energy")[0], 502)
+        self.assertEqual(self.request("/api/energy")[0], 422)
         self.controller.save(config(energy_entity=METER, price_entity=PRICE))
         self.ha.states.side_effect = lambda: [*fixtures(), meter_rows()[-1], price_rows()[-1]]
         self.ha.integration_registry.return_value = [{"entity_id": PRICE, "platform": "tibber"}]
@@ -511,13 +511,13 @@ class ApiTests(unittest.TestCase):
     def test_area_endpoint_surfaces_home_assistant_lookup_failure(self):
         self.ha.entity_areas.side_effect = ControlError("Områdesuppslag misslyckades")
         status, body = self.request("/api/areas")
-        self.assertEqual(status, 502)
+        self.assertEqual(status, 422)
         self.assertIn("Områdesuppslag misslyckades", body["error"])
 
     def test_ha_failure_has_explicit_response(self):
         self.ha.states.side_effect = ControlError("Ingen kontakt")
         status, body = self.request("/api/entities")
-        self.assertEqual(status, 502)
+        self.assertEqual(status, 422)
         self.assertEqual(body["error"], "Ingen kontakt")
 
     def test_discovery_is_read_only_and_authenticated(self):
@@ -529,13 +529,13 @@ class ApiTests(unittest.TestCase):
         self.ha.set_select.assert_not_called()
         self.assertEqual(self.request("/api/discovery?offset_entity=number.manually_renamed"), (200, result))
         self.ha.discover.assert_called_with("number.manually_renamed")
-        self.assertEqual(self.request("/api/discovery?offset_entity=number.a&offset_entity=number.b")[0], 502)
+        self.assertEqual(self.request("/api/discovery?offset_entity=number.a&offset_entity=number.b")[0], 422)
         self.assertEqual(self.request("/api/discovery", token=False)[0], 401)
 
     def test_discovery_failure_is_visible(self):
         self.ha.discover.side_effect = ControlError("Upptäckten misslyckades")
         status, body = self.request("/api/discovery")
-        self.assertEqual(status, 502)
+        self.assertEqual(status, 422)
         self.assertEqual(body["error"], "Upptäckten misslyckades")
 
     def test_events_are_authenticated_and_paginated(self):
