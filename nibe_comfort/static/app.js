@@ -391,6 +391,7 @@ function renderSettings(formSettings = settings, preserveView = false) {
   selectOptions("price_entity", (entity) => entity.entity_id.startsWith("sensor."), formSettings.price_entity);
   selectOptions("forecast_entity", (entity) => entity.entity_id.startsWith("weather."), formSettings.forecast_entity);
   selectOptions("energy_entity", (entity) => entity.energy_meter_error === null, formSettings.energy_entity);
+  selectOptions("house_power_entity", (entity) => entity.entity_id.startsWith("sensor.") && ["W", "kW"].includes(entity.unit), formSettings.house_power_entity);
   for (const id of ["grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity"]) {
     selectOptions(id, (entity) => entity.entity_id.startsWith("sensor.") && ["kWh", "Wh", "MWh", "W", "kW"].includes(entity.unit), formSettings[id]);
   }
@@ -1204,7 +1205,7 @@ async function refreshSavedSettings() {
         if ((roomDraft && roomFields.includes(key)) || (priceDraft && priceFields.includes(key))
           || JSON.stringify(draft[key]) !== JSON.stringify(settings[key])) merged[key] = draft[key];
       }
-      const energyChanged = ["offset_entity", "energy_entity", "price_entity", "price_provider", "max_age_minutes",
+      const energyChanged = ["offset_entity", "energy_entity", "house_power_entity", "price_entity", "price_provider", "max_age_minutes",
         "grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity"]
         .some((key) => latest[key] !== settings[key]);
       settings = latest;
@@ -1851,7 +1852,7 @@ function historyMarkers(changes) {
 async function refreshEnergy() {
   if (energyBusy) { pendingRefreshes.add("energy"); return; }
   energyBusy = true;
-  const signature = () => JSON.stringify([settings.offset_entity, settings.energy_entity, settings.price_entity, settings.price_provider, settings.max_age_minutes]);
+  const signature = () => JSON.stringify([settings.offset_entity, settings.energy_entity, settings.house_power_entity, settings.price_entity, settings.price_provider, settings.max_age_minutes]);
   const requested = signature();
   $("energy-data").hidden = true;
   for (const id of ["energy-metrics", "energy-chart", "energy-cost-chart", "energy-table", "energy-comparisons"]) {
@@ -1870,13 +1871,13 @@ async function refreshEnergy() {
     const priced = totals.priced_seconds / 3600;
     $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name}. ${dayAndTime(data.start)} – ${clock(data.end)}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
     $("energy-metrics").replaceChildren(
-      metric({ label: `${data.method === "power" ? "Uppskattad el" : "Använd el"} · ${totals.kwh === null ? "endast täckt del" : "hela perioden"}`,
+      metric({ label: `${data.method === "power" || data.method === "estimate" ? "Uppskattad el" : "Använd el"} ·${totals.kwh === null ? "endast täckt del" : "hela perioden"}`,
         value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
       metric({ label: totals.cost === null ? "Beräknad kostnad · endast prissatt del" : "Beräknad kostnad · hela perioden",
         value: priced > 0 ? displayNumber(totals.partial_cost) : null, unit: data.currency || "" }),
       priceShiftMetric(data.price_shift, data.currency || ""),
     );
-    $("energy-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(priced)} av 24 timmar. ${data.method === "power" ? "El och kostnad uppskattas från eleffekt: senaste värdet gäller till nästa rapport, högst 15 minuter mellan rapporter. Ingen extrapolering efter sista rapporten. " : ""}${data.price_error || "Kostnaden är uppskattad utifrån mätarintervall och historiska priser."}`;
+    $("energy-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(priced)} av 24 timmar. ${data.method === "estimate" ? estimateText(data.meter) : data.method === "power" ? "El och kostnad uppskattas från eleffekt: senaste värdet gäller till nästa rapport, högst 15 minuter mellan rapporter. Ingen extrapolering efter sista rapporten. " : ""}${data.price_error || "Kostnaden är uppskattad utifrån mätarintervall och historiska priser."}`;
     const markers = [...historyMarkers(data.changes), ...data.settings_changes.map((change) => ({
       time: change.timestamp, label: "Inställningar sparade", short: "I", className: "done-other", title: change.label,
     }))];
@@ -1931,6 +1932,17 @@ async function refreshEnergy() {
 function showEnergySection(visible) {
   $("energy-section").hidden = !visible;
   document.querySelector('#classic-nav a[href="#energy-section"]').hidden = !visible;
+}
+
+function estimateText(meter) {
+  const e = meter?.estimate;
+  if (!e) return "";
+  const c = e.calibration;
+  const source = c?.kw ? `kalibrerat mot ${c.name || c.entity_id}: median av ${c.samples} kompressorstarter de senaste ${c.days} dagarna`
+    : c?.error ? `standardvärde, kalibreringen misslyckades: ${c.error.replace(/[.!?]+\s*$/, "")}`
+      : c ? `standardvärde, för få användbara kompressorstarter för kalibrering (${c.samples ?? 0} av ${c.starts ?? 0})`
+        : "standardvärde";
+  return `Pumpen saknar elmätare, så elen uppskattas: kompressorn ${displayNumber(e.compressor_kw)} kW när den går (${source}), elpatronens rapporterade effekt och ${displayNumber(e.base_kw * 1000)} W för fläkt och cirkulationspump. Inte uppmätt. `;
 }
 
 function savingsDate(period, monthly = false) {
@@ -1991,7 +2003,7 @@ async function refreshSavings() {
         unit: "tillfällen", detail: "Se kostnad och kWh före/efter för varje tillfälle nedan. Det är observationer, inte en summerad eller bevisad besparing." }),
       metric({ label: "Elpatronens kostnad · ingår i pumpens kostnad", value: heaterCost === null ? null : displayNumber(heaterCost), unit: currency }),
     );
-    $("savings-status").textContent = `Senaste ${days} hela kalenderdagarna · ${data.energy.meter.name}. ${data.energy.method === "power" ? "Pumpens kWh uppskattas från effekthistorik. " : ""}${data.energy.price_error || "Kostnad räknad från vald prisgivare."}${data.heater_error ? ` Elpatron: ${data.heater_error}` : data.heater?.price_error ? ` Elpatron: ${data.heater.price_error}` : ""}`;
+    $("savings-status").textContent = `Senaste ${days} hela kalenderdagarna · ${data.energy.meter.name}. ${data.energy.method === "estimate" ? estimateText(data.energy.meter) : data.energy.method === "power" ? "Pumpens kWh uppskattas från effekthistorik. " : ""}${data.energy.price_error || "Kostnad räknad från vald prisgivare."}${data.heater_error ? ` Elpatron: ${data.heater_error}` : data.heater?.price_error ? ` Elpatron: ${data.heater.price_error}` : ""}`;
     $("savings-coverage").textContent = `Pumpens datatäckning: ${totalCoverage} av ${totalHours} timmar med fullständig elmätning, varav ${totalPriceCoverage} timmar även har fullständigt elpris. Dagar med luckor visar bara kompletta timmar, inte noll. Historiken beror på hur länge Home Assistant sparar Recorder-data. I tabellen betyder + lägre kostnad och − högre jämfört med respektive kolumns jämförelse.`;
     const heaterCostAt = (item) => item?.cost ?? null;
     const dateStamp = (period) => new Date(`${period}T12:00:00`).getTime() / 1000;
@@ -2749,7 +2761,7 @@ const fieldLabels = {
   nearest_thermostat: "Närmast värmepumpen", thermostat_control_enabled: "Termostatbegränsning",
   fireplace_enabled: "Kaminanpassning", fireplace_rooms: "Kaminrum", fireplace_max_age_minutes: "Kaminens mätvärdesålder",
   offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare", price_provider: "Elpriskälla",
-  forecast_entity: "Prognoskälla", energy_entity: "Pumpens elmätare", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
+  forecast_entity: "Prognoskälla", energy_entity: "Pumpens elmätare", house_power_entity: "Husets förbrukning (kalibrering)", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
   max_offset: "Högsta förskjutning", weather_gain: "Väderpåverkan", room_gain: "Rumspåverkan",
   price_low: "Lågprisgräns", price_high: "Högprisgräns", cheap_boost: "Höjning vid lågt pris",
   expensive_reduction: "Sänkning vid högt pris", deadband: "Toleransband",

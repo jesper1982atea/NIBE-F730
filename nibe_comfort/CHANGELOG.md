@@ -1,5 +1,30 @@
 # Ändringslogg
 
+## 0.2.53
+
+- Pumpar utan elmätare (t.ex. F370) får en uppskattad elförbrukning i stället
+  för ett felmeddelande: kompressorn räknas som 0,5 kW när den går (fast
+  varvtal; uppmätt 0,47 kW i median på 20 starter mot husets elmätare),
+  plus elpatronens rapporterade effekt och 50 W för fläkt och
+  cirkulationspump. Besparingskalkyl, prisflytt och kostnad visas då med
+  texten "Uppskattning – pumpen saknar elmätare". Okänd status ger lucka,
+  aldrig noll.
+- Uppskattningen kan kalibreras mot husets förbrukning (ny valfri inställning,
+  W/kW-givare, t.ex. växelriktarens husförbrukning): kompressorns effekt mäts
+  som husets ökning vid kompressorstarter de senaste 14 dagarna när elpatronen
+  är av (median, orimliga steg utelämnas, minst 5 starter). Annars 0,5 kW.
+- Fel från API:t, till exempel att elmätare saknas för besparingskalkylen, svarar
+  med HTTP 422 i stället för 502. En Cloudflare-tunnel framför Home Assistant
+  ersatte 502-svaren med en egen felsida, så sidan visade "ingress gav en
+  webbsida" i stället för den verkliga orsaken.
+- "För kallt inne" släpper en begränsning som gäller först när rummen är
+  0,2 °C under gränsen. Ett enda givarsteg precis vid gränsen gav annars en
+  återställning via molnet inom några minuter. En ny begränsning kräver
+  fortfarande att rummen ligger på gränsen.
+- Händelsen för återställning anger den verkliga orsaken, till exempel
+  "för kallt inne" eller "efter omstart", i stället för "styrningen behöver
+  återställning".
+
 ## 0.2.52
 
 - Besparingskalkylen visar kostnad och kWh före/efter varje bekräftad

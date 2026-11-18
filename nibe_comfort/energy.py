@@ -5,7 +5,7 @@ import re
 from bisect import bisect_right
 from datetime import datetime
 
-from controller import ControlError, number
+from controller import ControlError, entity_base, number
 
 
 ENERGY_UNITS = {"Wh": 0.001, "kWh": 1, "MWh": 1000}
@@ -15,6 +15,23 @@ MAX_POWER_GAP_SECONDS = 900
 # House flow counters often step 0.1 kWh at a time and can stand still for hours, so an
 # increase is spread evenly over the time since the previous step, up to a day.
 MAX_SOURCE_GAP_SECONDS = 86400
+
+# Pumps without an electricity meter (e.g. F370): the electricity is estimated from the compressor's
+# status, the auxiliary heater's own reported power and a small constant for fans and circulation
+# pump. The F370 has a fixed-speed compressor; on 20 starts the house meter rose by a median
+# 0.47 kW, so 0.5 kW is used. An estimate, never presented as a measurement.
+ESTIMATE_COMPRESSOR_KW = 0.5
+ESTIMATE_BASE_KW = 0.05
+ESTIMATE_STEP_SECONDS = 300
+ESTIMATE_ID = "sensor.nibe_comfort_estimated_pump_power"
+COMPRESSOR_OFF = ("off", "standby", "stopped", "blocked", "av", "avstängd")
+# Calibration against a whole-house consumption sensor (optional setting house_power_entity).
+CALIBRATION_DAYS = 14
+CALIBRATION_WINDOW_SECONDS = 1200
+CALIBRATION_MARGIN_SECONDS = 360
+CALIBRATION_MIN_KW = 0.15
+CALIBRATION_MAX_KW = 2.0
+CALIBRATION_MIN_STARTS = 5
 
 
 def produced_energy(entity):
@@ -72,6 +89,115 @@ def discover_meter(states, registry, offset_entity):
         raise ControlError("Flera möjliga elmätare finns på myUplink-pumpen: " + ", ".join(sorted(candidates))
                            + ". De kan överlappa eller avse olika delar. Välj elmätare manuellt; ingen summeras automatiskt.")
     return next(iter(candidates.values()))
+
+
+def discover_estimate(states, pump_ids):
+    """(compressor status, auxiliary heater power) on the pump, or None when an estimate is not possible."""
+    selected = [s for s in states if s["entity_id"] in pump_ids]
+    compressors = [s for s in selected if entity_base(s["entity_id"]).endswith("_status_compressor")]
+    heaters = [s for s in selected if entity_base(s["entity_id"]).endswith("_power_internal_add_heat")
+               and s["attributes"].get("unit_of_measurement") in POWER_UNITS]
+    if len(compressors) != 1 or len(heaters) != 1:
+        return None
+    return compressors[0], heaters[0]
+
+
+def compressor_running(state):
+    if state in (None, "", "unknown", "unavailable"):
+        return None
+    return str(state).strip().lower() not in COMPRESSOR_OFF
+
+
+def calibrate_compressor(compressor_rows, heater_rows, heater_id, load_rows, load_id):
+    """Measure the compressor's electric power against a whole-house consumption sensor.
+
+    At each compressor start (off -> running) with the auxiliary heater at 0 kW for the whole
+    window, the house's median power 6-20 minutes after the start minus 6-20 minutes before it is
+    the compressor's step (myUplink reports a few minutes late, hence the 6-minute margin). Other
+    household loads switching at the same moment give outliers, so implausible steps are dropped and
+    the median of the rest is used. Returns {"kw", "starts", "samples"} or None when too few starts.
+    """
+    compressor = sorted({timestamp(row): compressor_running(row.get("state")) for row in compressor_rows}.items())
+    heater, _ = samples(heater_rows, heater_id, power=True, check_meter=False)
+    load, _ = samples(load_rows, load_id, power=True, check_meter=False)
+    load = [(stamp, value) for stamp, value in load if value is not None]
+    if len(compressor) < 2 or not heater or not load:
+        return None
+    heater_stamps = [stamp for stamp, _ in heater]
+    load_stamps = [stamp for stamp, _ in load]
+
+    def heater_off(left, right):
+        index = bisect_right(heater_stamps, left) - 1
+        if index < 0:
+            return False
+        while index < len(heater) and heater[index][0] < right:
+            if heater[index][1] != 0:
+                return False
+            index += 1
+        return True
+
+    def median_load(left, right):
+        values = sorted(value for _, value in load[bisect_right(load_stamps, left - 1e-9):bisect_right(load_stamps, right)])
+        return values[len(values) // 2] if len(values) >= 3 else None
+
+    steps, starts = [], 0
+    for (_, before), (stamp, after) in zip(compressor, compressor[1:]):
+        if before is not False or after is not True:
+            continue
+        starts += 1
+        if not heater_off(stamp - CALIBRATION_WINDOW_SECONDS, stamp + CALIBRATION_WINDOW_SECONDS):
+            continue
+        low = median_load(stamp - CALIBRATION_WINDOW_SECONDS, stamp - CALIBRATION_MARGIN_SECONDS)
+        high = median_load(stamp + CALIBRATION_MARGIN_SECONDS, stamp + CALIBRATION_WINDOW_SECONDS)
+        if low is None or high is None:
+            continue
+        step = high - low
+        if CALIBRATION_MIN_KW <= step <= CALIBRATION_MAX_KW:
+            steps.append(step)
+    if len(steps) < CALIBRATION_MIN_STARTS:
+        return {"kw": None, "starts": starts, "samples": len(steps)}
+    steps.sort()
+    middle = len(steps) // 2
+    median = steps[middle] if len(steps) % 2 else (steps[middle - 1] + steps[middle]) / 2
+    return {"kw": round(median, 3), "starts": starts, "samples": len(steps)}
+
+
+def estimated_power_rows(compressor_rows, heater_rows, heater_id, end, compressor_kw=ESTIMATE_COMPRESSOR_KW):
+    """Synthetic power rows (kW) every ESTIMATE_STEP_SECONDS from the two step functions.
+
+    myUplink reports only on change, so each state holds until its next row; an unknown or
+    unavailable row on either sensor leaves a gap (no row), which the report counts as missing.
+    """
+    compressor = sorted({timestamp(row): compressor_running(row.get("state")) for row in compressor_rows}.items())
+    heater, _ = samples(heater_rows, heater_id, power=True, check_meter=False)
+    if not compressor or not heater:
+        return []
+    changes = sorted({stamp for stamp, _ in compressor} | {stamp for stamp, _ in heater})
+    first = max(compressor[0][0], heater[0][0])
+    rows, ci, hi = [], 0, 0
+    attrs = {"device_class": "power", "unit_of_measurement": "kW", "state_class": "measurement"}
+
+    def emit(stamp, value):
+        rows.append({"last_updated": datetime.fromtimestamp(stamp).astimezone().isoformat(),
+                     "state": "unavailable" if value is None else repr(value), "attributes": attrs})
+
+    boundaries = [stamp for stamp in changes if stamp >= first] + [end]
+    for left, right in zip(boundaries, boundaries[1:]):
+        while ci + 1 < len(compressor) and compressor[ci + 1][0] <= left:
+            ci += 1
+        while hi + 1 < len(heater) and heater[hi + 1][0] <= left:
+            hi += 1
+        running, aux = compressor[ci][1], heater[hi][1]
+        value = None if running is None or aux is None else round(
+            (compressor_kw if running else 0.0) + aux + ESTIMATE_BASE_KW, 4)
+        stamp = left
+        while stamp < right:
+            emit(stamp, value)
+            stamp += ESTIMATE_STEP_SECONDS
+    if rows:
+        # Closing row at the end so the last step counts up to it (a power interval needs both ends).
+        emit(end, value)
+    return rows
 
 
 def timestamp(row):

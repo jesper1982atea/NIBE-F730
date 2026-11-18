@@ -373,7 +373,9 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                     LOG.warning("myUplink-upptäckt misslyckades: %s", exc)
                     self.respond(422, {"error": str(exc)})
                 else:
-                    self.respond(502, {"error": str(exc)})
+                    # 422, not 502: proxies in front of Home Assistant (e.g. a Cloudflare tunnel) replace 5xx
+                    # bodies with their own HTML error page, and the page could then not show the reason.
+                    self.respond(422, {"error": str(exc)})
             except (OSError, sqlite3.Error):
                 LOG.exception("Kunde inte läsa tilläggets data")
                 self.respond(500, {"error": "Kunde inte läsa tilläggets data. Kontrollera logg och lagringsutrymme."})

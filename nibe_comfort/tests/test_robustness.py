@@ -583,9 +583,31 @@ class AuxLimitTests(unittest.TestCase):
         self.ha.set_select.assert_not_called()
         self.step("7.1 kW", level="expensive")
         self.ha.set_select.reset_mock()
-        # The house cooled while limited: full power again straight away.
-        self.step("2.0 kW", level="expensive", indoor=20.4, now=10_060.0)
+        # The house cooled while limited: full power again straight away, once clearly below the limit.
+        self.step("2.0 kW", level="expensive", indoor=20.2, now=10_060.0)
         self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+
+    def test_cold_house_lift_needs_a_margin_below_the_limit(self):
+        # Limit 21 - 0.5 = 20.5; a limit in force is lifted only below 20.3, so one sensor step at the
+        # limit does not cost a cloud write.
+        self.step("7.1 kW", level="expensive")
+        self.ha.set_select.reset_mock()
+        for now, indoor in ((10_060.0, 20.4), (10_120.0, 20.3)):
+            report = self.step("2.0 kW", level="expensive", indoor=indoor, now=now)
+            self.ha.set_select.assert_not_called()
+            self.assertEqual(report["desired"], "2.0 kW")
+        self.step("2.0 kW", level="expensive", indoor=20.2, now=10_180.0)
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+        sent = [e for e in self.controller.events.recent() if e.get("kind") == "aux_limit_restore_sent"]
+        self.assertIn("för kallt inne", sent[0]["message"])
+        self.assertNotIn("behöver återställning", sent[0]["message"])
+
+    def test_new_limit_still_needs_the_house_at_the_limit(self):
+        report = self.step("7.1 kW", level="expensive", indoor=20.4)
+        self.ha.set_select.assert_not_called()
+        self.assertIn("kallt inne", report["reason"])
+        self.step("7.1 kW", level="expensive", indoor=20.5, now=10_060.0)
+        self.ha.set_select.assert_called_once_with(self.ADD, "2.0 kW")
 
     def test_limit_timeout_keeps_a_persistent_restore_target(self):
         self.ha.set_select.side_effect = ControlError("timeout")
