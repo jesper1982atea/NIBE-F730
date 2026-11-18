@@ -35,6 +35,8 @@ DEFAULTS = {
     "price_entity": "",
     "price_provider": "tibber",
     "energy_entity": "",
+    # Optional whole-house consumption (W/kW) used to calibrate the estimate for pumps without a meter.
+    "house_power_entity": "",
     "forecast_entity": "",
     "base_offset": 0.0,
     "min_offset": -3.0,
@@ -257,6 +259,7 @@ def validate(config):
         ("outdoor_entity", ("sensor.", "weather.")),
         ("price_entity", ("sensor.",)),
         ("energy_entity", ("sensor.",)),
+        ("house_power_entity", ("sensor.",)),
         ("forecast_entity", ("weather.",)),
         ("notify_service", ("notify.",)),
         ("hot_water_mode_entity", ("select.",)),
@@ -1386,6 +1389,7 @@ class Controller:
                 saved.setdefault("fireplace_max_age_minutes", 15.0)
                 saved.setdefault("price_provider", "tibber")
                 saved.setdefault("energy_entity", "")
+                saved.setdefault("house_power_entity", "")
                 for key in ("skip_silent_rooms", "price_mode", "price_low_percent", "price_high_percent", "auto_base_enabled",
                             "auto_base_limit", "publish_sensors", "pause_notify_minutes", "notify_service",
                             "hot_water_price_enabled", "hot_water_mode_entity", "hot_water_cheap_option",

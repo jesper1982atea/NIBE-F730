@@ -9,6 +9,10 @@
   cirkulationspump. Besparingskalkyl, prisflytt och kostnad visas då med
   texten "Uppskattning – pumpen saknar elmätare". Okänd status ger lucka,
   aldrig noll.
+- Uppskattningen kan kalibreras mot husets förbrukning (ny valfri inställning,
+  W/kW-givare, t.ex. växelriktarens husförbrukning): kompressorns effekt mäts
+  som husets ökning vid kompressorstarter de senaste 14 dagarna när elpatronen
+  är av (median, orimliga steg utelämnas, minst 5 starter). Annars 0,5 kW.
 - Fel från API:t, till exempel att elmätare saknas för besparingskalkylen, svarar
   med HTTP 422 i stället för 502. En Cloudflare-tunnel framför Home Assistant
   ersatte 502-svaren med en egen felsida, så sidan visade "ingress gav en

@@ -383,6 +383,7 @@ function renderSettings(formSettings = settings, preserveView = false) {
   selectOptions("price_entity", (entity) => entity.entity_id.startsWith("sensor."), formSettings.price_entity);
   selectOptions("forecast_entity", (entity) => entity.entity_id.startsWith("weather."), formSettings.forecast_entity);
   selectOptions("energy_entity", (entity) => entity.energy_meter_error === null, formSettings.energy_entity);
+  selectOptions("house_power_entity", (entity) => entity.entity_id.startsWith("sensor.") && ["W", "kW"].includes(entity.unit), formSettings.house_power_entity);
   for (const id of ["grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity"]) {
     selectOptions(id, (entity) => entity.entity_id.startsWith("sensor.") && ["kWh", "Wh", "MWh", "W", "kW"].includes(entity.unit), formSettings[id]);
   }
@@ -1196,7 +1197,7 @@ async function refreshSavedSettings() {
         if ((roomDraft && roomFields.includes(key)) || (priceDraft && priceFields.includes(key))
           || JSON.stringify(draft[key]) !== JSON.stringify(settings[key])) merged[key] = draft[key];
       }
-      const energyChanged = ["offset_entity", "energy_entity", "price_entity", "price_provider", "max_age_minutes",
+      const energyChanged = ["offset_entity", "energy_entity", "house_power_entity", "price_entity", "price_provider", "max_age_minutes",
         "grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity"]
         .some((key) => latest[key] !== settings[key]);
       settings = latest;
@@ -1820,7 +1821,7 @@ function historyMarkers(changes) {
 async function refreshEnergy() {
   if (energyBusy) { pendingRefreshes.add("energy"); return; }
   energyBusy = true;
-  const signature = () => JSON.stringify([settings.offset_entity, settings.energy_entity, settings.price_entity, settings.price_provider, settings.max_age_minutes]);
+  const signature = () => JSON.stringify([settings.offset_entity, settings.energy_entity, settings.house_power_entity, settings.price_entity, settings.price_provider, settings.max_age_minutes]);
   const requested = signature();
   $("energy-data").hidden = true;
   for (const id of ["energy-metrics", "energy-chart", "energy-cost-chart", "energy-table", "energy-comparisons"]) {
@@ -1904,7 +1905,13 @@ function showEnergySection(visible) {
 
 function estimateText(meter) {
   const e = meter?.estimate;
-  return e ? `Pumpen saknar elmätare, så elen uppskattas: kompressorn ${displayNumber(e.compressor_kw)} kW när den går, elpatronens rapporterade effekt och ${displayNumber(e.base_kw * 1000)} W för fläkt och cirkulationspump. Inte uppmätt. ` : "";
+  if (!e) return "";
+  const c = e.calibration;
+  const source = c?.kw ? `kalibrerat mot ${c.name || c.entity_id}: median av ${c.samples} kompressorstarter de senaste ${c.days} dagarna`
+    : c?.error ? `standardvärde, kalibreringen misslyckades: ${c.error.replace(/[.!?]+\s*$/, "")}`
+      : c ? `standardvärde, för få användbara kompressorstarter för kalibrering (${c.samples ?? 0} av ${c.starts ?? 0})`
+        : "standardvärde";
+  return `Pumpen saknar elmätare, så elen uppskattas: kompressorn ${displayNumber(e.compressor_kw)} kW när den går (${source}), elpatronens rapporterade effekt och ${displayNumber(e.base_kw * 1000)} W för fläkt och cirkulationspump. Inte uppmätt. `;
 }
 
 function savingsDate(period, monthly = false) {
@@ -2694,7 +2701,7 @@ const fieldLabels = {
   nearest_thermostat: "Närmast värmepumpen", thermostat_control_enabled: "Termostatbegränsning",
   fireplace_enabled: "Kaminanpassning", fireplace_rooms: "Kaminrum", fireplace_max_age_minutes: "Kaminens mätvärdesålder",
   offset_entity: "Pumpanslutning", outdoor_entity: "Utegivare", price_entity: "Elprisgivare", price_provider: "Elpriskälla",
-  forecast_entity: "Prognoskälla", energy_entity: "Pumpens elmätare", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
+  forecast_entity: "Prognoskälla", energy_entity: "Pumpens elmätare", house_power_entity: "Husets förbrukning (kalibrering)", base_offset: "Basförskjutning", min_offset: "Lägsta förskjutning",
   max_offset: "Högsta förskjutning", weather_gain: "Väderpåverkan", room_gain: "Rumspåverkan",
   price_low: "Lågprisgräns", price_high: "Högprisgräns", cheap_boost: "Höjning vid lågt pris",
   expensive_reduction: "Sänkning vid högt pris", deadband: "Toleransband",

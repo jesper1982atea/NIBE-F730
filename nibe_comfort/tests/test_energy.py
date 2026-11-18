@@ -278,6 +278,7 @@ class EnergyTests(unittest.TestCase):
 
 COMPRESSOR = "sensor.f370_status_compressor"
 HEATER = "sensor.f370_power_internal_add_heat_43084"
+HOUSE = "sensor.inverter_load_power"
 
 
 def compressor_rows(changes=((0, "Operating"), (6, "Off"), (7, "Operating"))):
@@ -306,6 +307,48 @@ class EstimateTests(unittest.TestCase):
         self.assertAlmostEqual(hours[2]["kwh"], 3.55, msg="Aux heater on top of the compressor")
         self.assertAlmostEqual(hours[6]["kwh"], 0.05, msg="Compressor off: only fans and pump")
         self.assertAlmostEqual(data["totals"]["cost"], data["totals"]["kwh"] * 2)
+
+    def calibration_data(self, compressor_kw=0.47, cycles=8):
+        """Compressor off 30 min every 3 h; house 1.0 kW plus the compressor; a kettle at start 3, aux at start 5."""
+        changes = []
+        for k in range(cycles):
+            changes += [(k * 3, "Off"), (k * 3 + 0.5, "Operating")]
+        house = []
+        for stamp in range(START, START + cycles * 3 * 3600, 60):
+            offset = (stamp - START) % (3 * 3600)
+            cycle = (stamp - START) // (3 * 3600)
+            kw = 1.0 + (compressor_kw if offset >= 1800 else 0) + (0.02 if stamp // 60 % 2 else -0.02)
+            if cycle == 3 and 1800 <= offset < 1800 + 1500:
+                kw += 2.0
+            house.append(row(HOUSE, round(kw, 3), stamp, device_class="power", unit_of_measurement="kW"))
+        heater = heater_rows(((0, 0), (15, 3), (15.75, 0)))
+        return compressor_rows(changes), heater, house
+
+    def test_calibration_measures_the_compressor_step_and_drops_outliers(self):
+        from energy import calibrate_compressor
+        compressor, heater, house = self.calibration_data()
+        result = calibrate_compressor(compressor, heater, HEATER, house, HOUSE)
+        self.assertEqual(result["starts"], 8)
+        self.assertEqual(result["samples"], 6, "The kettle start is implausible, the aux start is skipped")
+        self.assertAlmostEqual(result["kw"], 0.47, places=2)
+        # Watts work the same way.
+        watts = [{**r, "state": str(float(r["state"]) * 1000), "attributes": {**r["attributes"], "unit_of_measurement": "W"}}
+                 for r in house]
+        self.assertAlmostEqual(calibrate_compressor(compressor, heater, HEATER, watts, HOUSE)["kw"], 0.47, places=2)
+
+    def test_calibration_needs_enough_starts(self):
+        from energy import calibrate_compressor
+        compressor, heater, house = self.calibration_data(cycles=4)
+        result = calibrate_compressor(compressor, heater, HEATER, house, HOUSE)
+        self.assertIsNone(result["kw"])
+        self.assertEqual(result["starts"], 4)
+        self.assertIsNone(calibrate_compressor(compressor, heater, HEATER, [], HOUSE))
+
+    def test_calibrated_power_replaces_the_default(self):
+        from energy import ESTIMATE_ID, estimated_power_rows
+        rows = estimated_power_rows(compressor_rows(), heater_rows(), HEATER, END, compressor_kw=0.4)
+        data = consumption_report(rows, price_rows(), ESTIMATE_ID, PRICE, START, END, 7200, power=True)
+        self.assertAlmostEqual(data["totals"]["kwh"], 23 * 0.4 + 3 + 24 * 0.05)
 
     def test_unknown_state_is_a_gap_not_zero(self):
         data = estimate_report(compressor_rows(((0, "Operating"), (5, "unavailable"), (8, "Operating"))))
@@ -403,6 +446,41 @@ class EnergyIntegrationTests(unittest.TestCase):
         self.insights = Insights(self.ha, tempfile.mkdtemp(dir=self.temp.name))
         with self.assertRaisesRegex(ControlError, "Ingen entydig ackumulerad elmätare"):
             self.insights.energy({**self.cfg, "energy_entity": ""})
+
+    def test_house_sensor_calibrates_the_estimate_and_failures_fall_back(self):
+        compressor, heater, house = EstimateTests.calibration_data(None)
+        self.ha.integration_registry.return_value = [
+            {"entity_id": self.cfg["offset_entity"], "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": COMPRESSOR, "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": HEATER, "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": PRICE, "device_id": "home", "platform": "tibber"},
+        ]
+        house_state = row(HOUSE, 1.5, END, device_class="power", unit_of_measurement="kW", friendly_name="Husets last")
+        self.ha.states.return_value = [compressor_rows()[-1], heater_rows()[-1], price_rows()[-1], house_state]
+        self.ha.request.side_effect = [[compressor_rows(), heater_rows(), price_rows()], [compressor, heater, house]]
+        cfg = {**self.cfg, "energy_entity": "", "house_power_entity": HOUSE}
+        with patch("insights.time.time", return_value=END + 60):
+            data = self.insights.energy(cfg)
+        estimate = data["meter"]["estimate"]
+        self.assertAlmostEqual(estimate["compressor_kw"], 0.47, places=2)
+        self.assertEqual(estimate["calibration"]["samples"], 6)
+        self.assertEqual(estimate["calibration"]["name"], "Husets last")
+        self.assertAlmostEqual(data["totals"]["kwh"], 23 * estimate["compressor_kw"] + 3 + 24 * 0.05)
+        calibration_query = parse_qs(urlsplit(self.ha.request.call_args_list[1].args[0]).query)
+        self.assertEqual(calibration_query["filter_entity_id"], [f"{COMPRESSOR},{HEATER},{HOUSE}"])
+        self.ha.set_offset.assert_not_called()
+        # A missing or wrong house sensor keeps the default and says why.
+        for states, message in (([compressor_rows()[-1], heater_rows()[-1], price_rows()[-1]], "saknas"),
+                                ([compressor_rows()[-1], heater_rows()[-1], price_rows()[-1],
+                                  row(HOUSE, 5, END, device_class="energy", unit_of_measurement="kWh")], "W eller kW")):
+            with self.subTest(message=message):
+                self.insights = Insights(self.ha, tempfile.mkdtemp(dir=self.temp.name))
+                self.ha.states.return_value = states
+                self.ha.request.side_effect = [[compressor_rows(), heater_rows(), price_rows()]]
+                with patch("insights.time.time", return_value=END + 60):
+                    data = self.insights.energy(cfg)
+                self.assertEqual(data["meter"]["estimate"]["compressor_kw"], 0.5)
+                self.assertIn(message, data["meter"]["estimate"]["calibration"]["error"])
 
     def test_discovery_excludes_other_pumps_production_period_counters_and_ambiguous_names(self):
         registry = self.pump_registry()

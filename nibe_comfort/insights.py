@@ -14,7 +14,7 @@ from urllib.parse import quote, urlencode
 
 from controller import SOURCE_ENTITIES, ControlError, alarm_code, atomic_json, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
-from energy import ENERGY_UNITS, ESTIMATE_BASE_KW, ESTIMATE_COMPRESSOR_KW, ESTIMATE_ID, POWER_UNITS, consumption_report, discover_estimate, discover_meter, estimated_power_rows, hourly_energy, meter_error, price_intervals, produced_energy, pump_sources, split_sources
+from energy import CALIBRATION_DAYS, ENERGY_UNITS, ESTIMATE_BASE_KW, ESTIMATE_COMPRESSOR_KW, ESTIMATE_ID, POWER_UNITS, calibrate_compressor, consumption_report, discover_estimate, discover_meter, estimated_power_rows, hourly_energy, meter_error, price_intervals, produced_energy, pump_sources, split_sources
 from auxiliary import heater_entities, heater_report
 from alarm_codes import alarm_info, alarm_label
 from savings import PERIOD_DAYS, action_periods, energy_periods, period_bounds
@@ -1019,7 +1019,7 @@ class Insights:
     def energy(self, config, days=None):
         if days is not None and (type(days) is not int or days not in PERIOD_DAYS):
             raise ControlError("Välj en period på 7, 30 eller 90 dagar.")
-        key = ("energy", config["offset_entity"], config["energy_entity"], config["price_entity"], config["price_provider"],
+        key = ("energy", config["offset_entity"], config["energy_entity"], config.get("house_power_entity"), config["price_entity"], config["price_provider"],
                config["max_age_minutes"], days)
 
         def load():
@@ -1065,10 +1065,13 @@ class Insights:
             })
             stamp = datetime.fromtimestamp(start - 3600, timezone.utc).isoformat()
             groups = history_groups(self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query))
+            calibration = None
             if estimate:
                 compressor, heater = estimate
+                calibration = self.compressor_calibration(config, compressor, heater)
                 meter_rows = estimated_power_rows(groups.get(compressor["entity_id"], []), groups.get(heater["entity_id"], []),
-                                                  heater["entity_id"], end)
+                                                  heater["entity_id"], end,
+                                                  calibration["kw"] if calibration and calibration.get("kw") else ESTIMATE_COMPRESSOR_KW)
             else:
                 meter_rows = groups.get(meter_id, [])
             report = consumption_report(meter_rows,
@@ -1090,7 +1093,8 @@ class Insights:
                     "entity_id": meter_id, "automatic": True,
                     "name": "Uppskattning – pumpen saknar elmätare",
                     "estimate": {"compressor_entity": compressor["entity_id"], "heater_entity": heater["entity_id"],
-                                 "compressor_kw": ESTIMATE_COMPRESSOR_KW, "base_kw": ESTIMATE_BASE_KW},
+                                 "compressor_kw": calibration["kw"] if calibration and calibration.get("kw") else ESTIMATE_COMPRESSOR_KW,
+                                 "base_kw": ESTIMATE_BASE_KW, "calibration": calibration},
                 }
             else:
                 report["meter"] = {"entity_id": meter_id, "name": meter["attributes"].get("friendly_name", meter_id),
@@ -1100,6 +1104,41 @@ class Insights:
             report["checked_at"] = time.time()
             return report
         return self.cached(key, 300, load)
+
+    def compressor_calibration(self, config, compressor, heater):
+        """The compressor's power measured against the chosen whole-house sensor, cached for an hour.
+
+        None without a house sensor. A failure (missing sensor, busy history) is reported, never
+        raised: the estimate then uses the default compressor power.
+        """
+        house_id = config.get("house_power_entity")
+        if not house_id:
+            return None
+        key = ("calibration", house_id, compressor["entity_id"], heater["entity_id"])
+
+        def load():
+            now = time.time()
+            state = next((s for s in self.ha.states() if s["entity_id"] == house_id), None)
+            if not state:
+                raise ControlError(f"{house_id} saknas i Home Assistant.")
+            if state["attributes"].get("unit_of_measurement") not in POWER_UNITS:
+                raise ControlError(f"{house_id}: välj en effektgivare i W eller kW för husets förbrukning.")
+            query = urlencode({
+                "filter_entity_id": ",".join((compressor["entity_id"], heater["entity_id"], house_id)),
+                "end_time": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+                "minimal_response": "1",
+            })
+            stamp = datetime.fromtimestamp(now - CALIBRATION_DAYS * 86400, timezone.utc).isoformat()
+            groups = history_groups(self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query))
+            result = calibrate_compressor(groups.get(compressor["entity_id"], []), groups.get(heater["entity_id"], []),
+                                          heater["entity_id"], groups.get(house_id, []), house_id)
+            return {"entity_id": house_id, "name": state["attributes"].get("friendly_name", house_id), "days": CALIBRATION_DAYS,
+                    **(result or {"kw": None, "starts": 0, "samples": 0})}
+
+        try:
+            return self.cached(key, 3600, load)
+        except ControlError as exc:
+            return {"entity_id": house_id, "kw": None, "error": str(exc)}
 
     def sources(self, config):
         """Where the house's electricity came from per hour over the last day, and the pump's estimated share."""
