@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 0.2.51
+
+- Grupperad navigering: översikt, värme, varmvatten, energi, pump och larm
+  samt inställningar visas som egna områden i stället för en lång sida.
+- Den klassiska helsidan finns kvar och kan återställas med ett klick. Valet
+  sparas i webbläsaren, och grupperad vy kommer ihåg senast valda område.
+
 ## 0.2.50
 
 - Ny besparingskalkyl med pumpens faktiska kostnad per dag och månad för

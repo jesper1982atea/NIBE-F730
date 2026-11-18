@@ -31,6 +31,7 @@ let hotWaterBusy = false;
 let energyBusy = false;
 let auxiliaryBusy = false;
 let savingsBusy = false;
+let pageLayoutInitialized = false;
 const pendingRefreshes = new Set();
 const readRequests = new Map();
 let entitiesBusy = false;
@@ -1899,7 +1900,7 @@ async function refreshEnergy() {
 
 function showEnergySection(visible) {
   $("energy-section").hidden = !visible;
-  document.querySelector('.page-nav a[href="#energy-section"]').hidden = !visible;
+  document.querySelector('#classic-nav a[href="#energy-section"]').hidden = !visible;
 }
 
 function savingsDate(period, monthly = false) {
@@ -2883,9 +2884,65 @@ function communityText(community) {
   return `≈ ${n} ${n === 1 ? "installation" : "installationer"} senaste 14 dagarna`;
 }
 
+const GROUPED_VIEWS = new Set(["overview", "heat", "water", "energy", "system", "settings"]);
+
+function setPageLayout(mode, view = $("main").dataset.activeView) {
+  const main = $("main");
+  const selected = GROUPED_VIEWS.has(view) ? view : "overview";
+  main.dataset.layout = mode;
+  main.dataset.activeView = selected;
+  $("group-nav").hidden = mode !== "grouped";
+  $("classic-nav").hidden = mode !== "classic";
+  document.querySelectorAll(".group-tab").forEach((button) => {
+    button.setAttribute("aria-pressed", String(mode === "grouped" && button.dataset.viewTarget === selected));
+  });
+  try {
+    localStorage.setItem("nibe-comfort-layout-mode", mode);
+    localStorage.setItem("nibe-comfort-layout-view", selected);
+  } catch { /* storage blocked */ }
+  window.requestAnimationFrame(() => {
+    for (const chart of main.querySelectorAll(".chart")) {
+      if (chart.getClientRects().length && chart.querySelector("svg")) chartRedraws.get(chart)?.();
+    }
+  });
+}
+
+function initializePageLayout() {
+  if (pageLayoutInitialized) return;
+  pageLayoutInitialized = true;
+  let mode = "grouped", view = "overview";
+  try {
+    if (localStorage.getItem("nibe-comfort-layout-mode") === "classic") mode = "classic";
+    const savedView = localStorage.getItem("nibe-comfort-layout-view");
+    if (GROUPED_VIEWS.has(savedView)) view = savedView;
+  } catch { /* storage blocked */ }
+  setPageLayout(mode, view);
+  document.querySelectorAll(".group-tab").forEach((button) => {
+    button.addEventListener("click", () => setPageLayout("grouped", button.dataset.viewTarget));
+  });
+  $("classic-view-toggle").addEventListener("click", () => setPageLayout("classic"));
+  $("group-view-toggle").addEventListener("click", () => setPageLayout("grouped"));
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest?.('a[href^="#"]');
+    if (!link) return;
+    const target = document.getElementById(decodeURIComponent(link.hash.slice(1)));
+    if (!target) return;
+    const viewOwner = target.closest("[data-view]");
+    if ($("main").dataset.layout === "grouped" && viewOwner) {
+      setPageLayout("grouped", viewOwner.dataset.view);
+    }
+    for (let parent = target; parent; parent = parent.parentElement) {
+      if (parent.tagName === "DETAILS") parent.open = true;
+    }
+  });
+}
+
 async function init() {
+  initializePageLayout();
   makeAdvanced();
   $("adjust-offset-limits").onclick = () => {
+    const view = $("offset-limits").closest("[data-view]")?.dataset.view;
+    if ($("main").dataset.layout === "grouped" && view) setPageLayout("grouped", view);
     $("settings-panel").open = true;
     const id = lastStatus?.control_limit?.direction === "lower" ? "min_offset" : "max_offset";
     $(id).focus({ preventScroll: true });
@@ -2939,10 +2996,6 @@ async function init() {
   });
   $("settings").addEventListener("input", updateSaveState);
   $("settings").addEventListener("change", updateSaveState);
-  document.querySelectorAll(".page-nav a").forEach((link) => link.addEventListener("click", () => {
-    const target = document.querySelector(link.getAttribute("href"));
-    if (target?.tagName === "DETAILS") target.open = true;
-  }));
   document.addEventListener("toggle", (event) => {
     if (event.target.tagName !== "DETAILS" || !event.target.open) return;
     window.requestAnimationFrame(() => {
