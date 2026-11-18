@@ -205,8 +205,48 @@ const server = createServer(async (request, response) => {
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const browser = await (process.env.BROWSER === "webkit" ? webkit : chromium).launch();
 const errors = [];
+async function testPage(options) {
+  const page = await browser.newPage(options);
+  await page.addInitScript(() => {
+    if (location.hostname === "127.0.0.1") localStorage.setItem("nibe-comfort-layout-mode", "classic");
+  });
+  return page;
+}
+
+async function groupedNavigationChecks() {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  assert.equal(await page.locator("#main").getAttribute("data-active-view"), "overview");
+  assert.equal(await page.locator("#status-title").isVisible(), true);
+  assert.equal(await page.locator("#comfort-card").isVisible(), false);
+  await page.locator('[data-view-target="heat"]').click();
+  assert.equal(await page.locator("#comfort-card").isVisible(), true);
+  assert.equal(await page.locator("#hot-water-card").isVisible(), false);
+  await page.locator('[data-view-target="water"]').click();
+  assert.equal(await page.locator("#hot-water-card").isVisible(), true);
+  await page.locator('[data-view-target="energy"]').click();
+  await page.waitForFunction(() => document.querySelectorAll("#savings-daily tbody tr").length === 3);
+  assert.equal(await page.locator("#savings-section").isVisible(), true);
+  assert.equal(await page.locator("#pump-card").isVisible(), false);
+  await page.locator("#classic-view-toggle").click();
+  assert.equal(await page.locator("#main").getAttribute("data-layout"), "classic");
+  assert.equal(await page.locator("#classic-nav").isVisible(), true);
+  assert.equal(await page.locator("#group-nav").isVisible(), false);
+  assert.equal(await page.locator("#pump-card").isVisible(), true);
+  await page.reload();
+  assert.equal(await page.locator("#main").getAttribute("data-layout"), "classic", "Classic layout preference survives reload");
+  await page.locator("#group-view-toggle").click();
+  assert.equal(await page.locator("#main").getAttribute("data-layout"), "grouped");
+  assert.equal(await page.locator("#main").getAttribute("data-active-view"), "energy", "Grouped view returns to the last selected area");
+  assert.equal(await page.locator("#pump-card").isVisible(), false);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, "Grouped navigation fits on mobile");
+  await page.close();
+}
+
 async function dashboardChecks() {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+  const page = await testPage({ viewport: { width: 1440, height: 1100 } });
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("**/api/entities", (route) => route.fulfill({
     status: 502, json: { error: "Tillfälligt anslutningsfel" },
@@ -450,7 +490,7 @@ async function dashboardChecks() {
   await page.locator("#theme-toggle").click();
   assert.equal(await page.locator("#theme-toggle").textContent(), "Tema: auto");
   assert.equal(await theme(), "light");
-  const haPage = await browser.newPage({ viewport: { width: 420, height: 820 }, colorScheme: "light" });
+  const haPage = await testPage({ viewport: { width: 420, height: 820 }, colorScheme: "light" });
   haPage.on("pageerror", (error) => errors.push(error.message));
   await haPage.goto(`http://127.0.0.1:${server.address().port}/ha-parent`);
   const panel = haPage.frameLocator("#panel");
@@ -571,7 +611,7 @@ async function dashboardChecks() {
   await page.waitForFunction(() => document.getElementById("history-status").textContent.includes("Recorder saknas"));
   assert.equal(await page.locator("#temperature-chart svg").count(), 0);
   assert.equal(await page.locator("#enabled").isChecked(), true, "History failure must not change automation");
-  const nordpoolPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const nordpoolPage = await testPage({ viewport: { width: 390, height: 844 } });
   nordpoolPage.on("pageerror", (error) => errors.push(error.message));
   const nordpoolId = "sensor.nord_pool_se3_aktuellt_pris";
   const nordpoolSettings = { ...settings, price_provider: "tibber", price_entity: price, preheat_enabled: false };
@@ -636,7 +676,7 @@ async function dashboardChecks() {
   assert.match(await nordpoolPage.locator("#price-provider-status").textContent(), /Osparat val: Tibber/);
   assert.equal(providerWrites, 1, "Switching back to Tibber also requires saving");
   await nordpoolPage.close();
-  const priorityPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const priorityPage = await testPage({ viewport: { width: 390, height: 844 } });
   priorityPage.on("pageerror", (error) => errors.push(error.message));
   const thirdRoom = entities.find((entity) => entity.name.startsWith("LK Badrum")).entity_id;
   let comfortMode = "heat";
@@ -768,7 +808,7 @@ async function dashboardChecks() {
   assert.deepEqual(priorityConfig.priority_sensors, []);
   assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), false);
   await priorityPage.close();
-  const thermostatPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const thermostatPage = await testPage({ viewport: { width: 1280, height: 1000 } });
   thermostatPage.on("pageerror", (error) => errors.push(error.message));
   let thermostatSettings = { ...settings, room_sensors: [thermostat, thirdRoom], priority_sensors: [],
     nearest_thermostat: "", thermostat_control_enabled: false };
@@ -924,7 +964,7 @@ async function dashboardChecks() {
   assert.equal(await thermostatPage.locator("#plan-details svg").count(), 0, "Opening details must not resurrect cleared stale charts");
   assert.equal(thermostatSaves, savesBeforeDisclosure);
   await thermostatPage.close();
-  const livePage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const livePage = await testPage({ viewport: { width: 1280, height: 1000 } });
   livePage.on("pageerror", (error) => errors.push(error.message));
   await livePage.clock.install({ time: new Date(now * 1000) });
   let liveSettings = { ...settings, target_temperature: 21, room_sensors: [thermostat],
@@ -1061,7 +1101,7 @@ async function dashboardChecks() {
 }
 
 async function fireplaceChecks() {
-  const firePage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const firePage = await testPage({ viewport: { width: 1280, height: 1000 } });
   firePage.on("pageerror", (error) => errors.push(error.message));
   firePage.on("dialog", (dialog) => dialog.accept());
   let fireSettings = { ...defaults, room_sensors: [thermostat, "sensor.living"], priority_sensors: [thermostat],
@@ -1140,7 +1180,7 @@ async function fireplaceChecks() {
   await firePage.close();
 }
 async function cloudAlarmChecks() {
-  const cloudPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const cloudPage = await testPage({ viewport: { width: 1280, height: 1000 } });
   cloudPage.on("pageerror", (error) => errors.push(error.message));
   let accept = false, failRead = false, failReset = false, resetWrites = 0, reads = 0;
   cloudPage.on("dialog", (dialog) => accept ? dialog.accept() : dialog.dismiss());
@@ -1241,7 +1281,7 @@ async function cloudAlarmChecks() {
 }
 
 async function alarmChecks() {
-  const alarmPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const alarmPage = await testPage({ viewport: { width: 1280, height: 1000 } });
   alarmPage.on("pageerror", (error) => errors.push(error.message));
   let accept = false;
   alarmPage.on("dialog", (dialog) => accept ? dialog.accept() : dialog.dismiss());
@@ -1333,7 +1373,7 @@ async function alarmChecks() {
 }
 
 async function savingsChecks() {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = await testPage({ viewport: { width: 1280, height: 900 } });
   page.on("pageerror", (error) => errors.push(error.message));
   let writes = 0;
   page.on("request", (request) => { if (!["GET", "HEAD"].includes(request.method())) writes++; });
@@ -1352,7 +1392,7 @@ async function savingsChecks() {
 }
 
 async function modeDiscoveryChecks() {
-  const page = await browser.newPage();
+  const page = await testPage();
   page.on("pageerror", (error) => errors.push(error.message));
   const otherOffset = "number.other_heating_offset_climate_system_1";
   const hot = "select.pump_hot_water_amount_47041";
@@ -1414,13 +1454,14 @@ async function modeDiscoveryChecks() {
 }
 
 try {
+  await groupedNavigationChecks();
   if (!process.env.ENERGY_ONLY) await dashboardChecks();
   await savingsChecks();
   await modeDiscoveryChecks();
   await alarmChecks();
   await cloudAlarmChecks();
   await fireplaceChecks();
-  const energyPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const energyPage = await testPage({ viewport: { width: 1280, height: 1000 } });
   energyPage.on("pageerror", (error) => errors.push(error.message));
   let energySettings = { ...defaults, room_sensors: ["sensor.living"], offset_entity: offset, price_entity: price };
   let energyWrites = 0, energyReads = 0, energyActive = 0, energyMaxActive = 0;
@@ -1532,7 +1573,7 @@ try {
   assert.equal(energyMaxActive, 1, "Energy reads never overlap");
   assert.equal(energyWrites, 1, "Viewing and refreshing energy does not save settings or control the pump");
   await energyPage.close();
-  const auxiliaryPage = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const auxiliaryPage = await testPage({ viewport: { width: 1280, height: 1000 } });
   auxiliaryPage.on("pageerror", (error) => errors.push(error.message));
   let auxiliaryFail = false, auxiliaryMissing = false, auxiliaryStale = false, auxiliaryEmpty = false, auxiliaryNoCoverage = false;
   let auxiliaryZeroDay = false;
@@ -1644,7 +1685,7 @@ try {
     "The run table scrolls horizontally instead of squeezing headings into individual letters");
   await auxiliaryPage.locator("#auxiliary-section").screenshot({ path: `${artifacts}/auxiliary-mobile.png` });
   await auxiliaryPage.close();
-  const vacationPage = await browser.newPage({ viewport: { width: 390, height: 844 }, timezoneId: "Europe/Stockholm" });
+  const vacationPage = await testPage({ viewport: { width: 390, height: 844 }, timezoneId: "Europe/Stockholm" });
   const vacationNow = Date.parse("2026-11-16T12:00:00+01:00") / 1000;
   await vacationPage.clock.setFixedTime(new Date(vacationNow * 1000));
   vacationPage.on("pageerror", (error) => errors.push(error.message));

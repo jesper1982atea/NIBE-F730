@@ -343,6 +343,18 @@ button.chip:hover{border-color:var(--tone);color:var(--tone);filter:none}
 @media(max-width:480px){#fireplace-manual-start{width:100%}}
 .notify-test{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:12px 0 4px}.notify-test .hint{margin:0}
 #savings-section .section-heading label{margin:0}#savings-days{width:auto;min-width:110px}
+.page-nav{position:sticky;top:0;z-index:20}
+.page-nav .group-tab{background:transparent;color:var(--muted);border:0;padding:8px 14px;font-size:13px;font-weight:650}
+.page-nav .group-tab:hover,.page-nav .group-tab[aria-pressed=true]{background:color-mix(in srgb,var(--green) 12%,transparent);color:var(--green)}
+.page-nav .view-mode-toggle{margin-left:auto;white-space:nowrap;padding:8px 13px;font-size:12px}
+.page-nav[hidden]{display:none}
+main[data-layout=grouped][data-active-view=overview]>[data-view]:not([data-view=overview]),
+main[data-layout=grouped][data-active-view=heat]>[data-view]:not([data-view=heat]),
+main[data-layout=grouped][data-active-view=water]>[data-view]:not([data-view=water]),
+main[data-layout=grouped][data-active-view=energy]>[data-view]:not([data-view=energy]),
+main[data-layout=grouped][data-active-view=system]>[data-view]:not([data-view=system]),
+main[data-layout=grouped][data-active-view=settings]>[data-view]:not([data-view=settings]){display:none}
+@media(max-width:600px){.page-nav .view-mode-toggle{margin-left:0}}
 
 .when-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.when-picker select{width:100%}
 .hero .now-tile a{color:#cfe8dc;font-size:13px;text-decoration:underline;text-decoration-color:rgba(207,232,220,.5);text-underline-offset:3px}.hero .now-tile a:hover{color:#fff}
