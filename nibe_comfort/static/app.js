@@ -1839,13 +1839,13 @@ async function refreshEnergy() {
     const priced = totals.priced_seconds / 3600;
     $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name}. ${dayAndTime(data.start)} – ${clock(data.end)}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
     $("energy-metrics").replaceChildren(
-      metric({ label: `${data.method === "power" ? "Uppskattad el" : "Använd el"} · ${totals.kwh === null ? "endast täckt del" : "hela perioden"}`,
+      metric({ label: `${data.method === "power" || data.method === "estimate" ? "Uppskattad el" : "Använd el"} ·${totals.kwh === null ? "endast täckt del" : "hela perioden"}`,
         value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
       metric({ label: totals.cost === null ? "Beräknad kostnad · endast prissatt del" : "Beräknad kostnad · hela perioden",
         value: priced > 0 ? displayNumber(totals.partial_cost) : null, unit: data.currency || "" }),
       priceShiftMetric(data.price_shift, data.currency || ""),
     );
-    $("energy-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(priced)} av 24 timmar. ${data.method === "power" ? "El och kostnad uppskattas från eleffekt: senaste värdet gäller till nästa rapport, högst 15 minuter mellan rapporter. Ingen extrapolering efter sista rapporten. " : ""}${data.price_error || "Kostnaden är uppskattad utifrån mätarintervall och historiska priser."}`;
+    $("energy-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(priced)} av 24 timmar. ${data.method === "estimate" ? estimateText(data.meter) : data.method === "power" ? "El och kostnad uppskattas från eleffekt: senaste värdet gäller till nästa rapport, högst 15 minuter mellan rapporter. Ingen extrapolering efter sista rapporten. " : ""}${data.price_error || "Kostnaden är uppskattad utifrån mätarintervall och historiska priser."}`;
     const markers = [...historyMarkers(data.changes), ...data.settings_changes.map((change) => ({
       time: change.timestamp, label: "Inställningar sparade", short: "I", className: "done-other", title: change.label,
     }))];
@@ -1900,6 +1900,11 @@ async function refreshEnergy() {
 function showEnergySection(visible) {
   $("energy-section").hidden = !visible;
   document.querySelector('.page-nav a[href="#energy-section"]').hidden = !visible;
+}
+
+function estimateText(meter) {
+  const e = meter?.estimate;
+  return e ? `Pumpen saknar elmätare, så elen uppskattas: kompressorn ${displayNumber(e.compressor_kw)} kW när den går, elpatronens rapporterade effekt och ${displayNumber(e.base_kw * 1000)} W för fläkt och cirkulationspump. Inte uppmätt. ` : "";
 }
 
 function savingsDate(period, monthly = false) {
@@ -1958,7 +1963,7 @@ async function refreshSavings() {
         unit: currency, detail: `${data.actions.observations} jämförelser · inte bevisad effekt.` }),
       metric({ label: "Elpatronens kostnad · ingår i pumpens kostnad", value: heaterCost === null ? null : displayNumber(heaterCost), unit: currency }),
     );
-    $("savings-status").textContent = `Senaste ${days} hela kalenderdagarna · ${data.energy.meter.name}. ${data.energy.method === "power" ? "Pumpens kWh uppskattas från effekthistorik. " : ""}${data.energy.price_error || "Kostnad räknad från vald prisgivare."}${data.heater_error ? ` Elpatron: ${data.heater_error}` : data.heater?.price_error ? ` Elpatron: ${data.heater.price_error}` : ""}`;
+    $("savings-status").textContent = `Senaste ${days} hela kalenderdagarna · ${data.energy.meter.name}. ${data.energy.method === "estimate" ? estimateText(data.energy.meter) : data.energy.method === "power" ? "Pumpens kWh uppskattas från effekthistorik. " : ""}${data.energy.price_error || "Kostnad räknad från vald prisgivare."}${data.heater_error ? ` Elpatron: ${data.heater_error}` : data.heater?.price_error ? ` Elpatron: ${data.heater.price_error}` : ""}`;
     $("savings-coverage").textContent = `Pumpens datatäckning: ${totalCoverage} av ${totalHours} timmar med fullständig elmätning, varav ${totalPriceCoverage} timmar även har fullständigt elpris. Dagar med luckor visar bara kompletta timmar, inte noll. Historiken beror på hur länge Home Assistant sparar Recorder-data.`;
     const heaterCostAt = (item) => item?.cost ?? null;
     const dateStamp = (period) => new Date(`${period}T12:00:00`).getTime() / 1000;

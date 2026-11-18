@@ -276,6 +276,56 @@ class EnergyTests(unittest.TestCase):
                 period_bounds(now, invalid)
 
 
+COMPRESSOR = "sensor.f370_status_compressor"
+HEATER = "sensor.f370_power_internal_add_heat_43084"
+
+
+def compressor_rows(changes=((0, "Operating"), (6, "Off"), (7, "Operating"))):
+    return [row(COMPRESSOR, state, START + hours * 3600, device_class="enum") for hours, state in changes]
+
+
+def heater_rows(changes=((0, 0), (2, 3), (3, 0))):
+    return [row(HEATER, kw, START + hours * 3600, device_class="power", unit_of_measurement="kW")
+            for hours, kw in changes]
+
+
+def estimate_report(compressor=None, heater=None):
+    from energy import ESTIMATE_ID, estimated_power_rows
+    rows = estimated_power_rows(compressor_rows() if compressor is None else compressor,
+                                heater_rows() if heater is None else heater, HEATER, END)
+    return consumption_report(rows, price_rows(), ESTIMATE_ID, PRICE, START, END, 7200, power=True)
+
+
+class EstimateTests(unittest.TestCase):
+    def test_compressor_aux_and_base_add_up_over_held_states(self):
+        # 23 h compressor at 0.5 kW + 1 h aux at 3 kW + 24 h base at 0.05 kW.
+        data = estimate_report()
+        self.assertAlmostEqual(data["totals"]["kwh"], 23 * 0.5 + 3 + 24 * 0.05)
+        hours = data["hours"]
+        self.assertAlmostEqual(hours[0]["kwh"], 0.55)
+        self.assertAlmostEqual(hours[2]["kwh"], 3.55, msg="Aux heater on top of the compressor")
+        self.assertAlmostEqual(hours[6]["kwh"], 0.05, msg="Compressor off: only fans and pump")
+        self.assertAlmostEqual(data["totals"]["cost"], data["totals"]["kwh"] * 2)
+
+    def test_unknown_state_is_a_gap_not_zero(self):
+        data = estimate_report(compressor_rows(((0, "Operating"), (5, "unavailable"), (8, "Operating"))))
+        self.assertIsNone(data["totals"]["kwh"], "A period with a gap is not complete")
+        self.assertIsNone(data["hours"][6]["kwh"])
+        self.assertAlmostEqual(data["hours"][9]["kwh"], 0.55)
+
+    def test_off_states_and_discovery_needs_both_sensors(self):
+        from energy import compressor_running, discover_estimate
+        for state in ("Off", "standby", "Stopped", "Blocked"):
+            self.assertFalse(compressor_running(state))
+        self.assertTrue(compressor_running("Operating"))
+        self.assertIsNone(compressor_running("unavailable"))
+        states = [compressor_rows()[0], heater_rows()[0], {**heater_rows()[0], "entity_id": "sensor.other_power_internal_add_heat"}]
+        found = discover_estimate(states, {COMPRESSOR, HEATER})
+        self.assertEqual([s["entity_id"] for s in found], [COMPRESSOR, HEATER])
+        self.assertIsNone(discover_estimate(states, {COMPRESSOR}), "No aux power on the pump: no estimate")
+        self.assertIsNone(discover_estimate(states, {HEATER}))
+
+
 class EnergyIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -329,6 +379,30 @@ class EnergyIntegrationTests(unittest.TestCase):
         self.assertEqual(cfg["energy_entity"], "")
         self.ha.set_offset.assert_not_called()
         self.ha.set_thermostat.assert_not_called()
+
+    def test_pump_without_meter_gets_an_estimate_labelled_as_such(self):
+        self.ha.integration_registry.return_value = [
+            {"entity_id": self.cfg["offset_entity"], "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": COMPRESSOR, "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": HEATER, "device_id": "pump", "platform": "myuplink"},
+            {"entity_id": PRICE, "device_id": "home", "platform": "tibber"},
+        ]
+        self.ha.states.return_value = [compressor_rows()[-1], heater_rows()[-1], price_rows()[-1]]
+        self.ha.request.return_value = [compressor_rows(), heater_rows(), price_rows()]
+        with patch("insights.time.time", return_value=END + 60):
+            data = self.insights.energy({**self.cfg, "energy_entity": ""})
+        self.assertEqual(data["method"], "estimate")
+        self.assertIn("Uppskattning", data["meter"]["name"])
+        self.assertEqual(data["meter"]["estimate"]["compressor_entity"], COMPRESSOR)
+        self.assertAlmostEqual(data["totals"]["kwh"], 23 * 0.5 + 3 + 24 * 0.05)
+        query = parse_qs(urlsplit(self.ha.request.call_args.args[0]).query)
+        self.assertEqual(query["filter_entity_id"], [f"{COMPRESSOR},{HEATER},{PRICE}"])
+        self.ha.set_offset.assert_not_called()
+        # Without the compressor status the original explanation remains.
+        self.ha.states.return_value = [heater_rows()[-1], price_rows()[-1]]
+        self.insights = Insights(self.ha, tempfile.mkdtemp(dir=self.temp.name))
+        with self.assertRaisesRegex(ControlError, "Ingen entydig ackumulerad elmätare"):
+            self.insights.energy({**self.cfg, "energy_entity": ""})
 
     def test_discovery_excludes_other_pumps_production_period_counters_and_ambiguous_names(self):
         registry = self.pump_registry()

@@ -14,7 +14,7 @@ from urllib.parse import quote, urlencode
 
 from controller import SOURCE_ENTITIES, ControlError, alarm_code, atomic_json, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
-from energy import ENERGY_UNITS, POWER_UNITS, consumption_report, discover_meter, hourly_energy, meter_error, price_intervals, produced_energy, pump_sources, split_sources
+from energy import ENERGY_UNITS, ESTIMATE_BASE_KW, ESTIMATE_COMPRESSOR_KW, ESTIMATE_ID, POWER_UNITS, consumption_report, discover_estimate, discover_meter, estimated_power_rows, hourly_energy, meter_error, price_intervals, produced_energy, pump_sources, split_sources
 from auxiliary import heater_entities, heater_report
 from alarm_codes import alarm_info, alarm_label
 from savings import PERIOD_DAYS, action_periods, energy_periods, period_bounds
@@ -1031,14 +1031,26 @@ class Insights:
                 start, end = period_bounds(now, days)
             states = {s["entity_id"]: s for s in self.ha.states()}
             automatic = not config["energy_entity"]
-            meter = (discover_meter(states.values(), self.registry(), config["offset_entity"])
-                     if automatic else states.get(config["energy_entity"]))
-            if not meter:
-                raise ControlError("Den valda elmätaren saknas i Home Assistant.")
-            error = meter_error(meter)
-            if error:
-                raise ControlError(error)
-            meter_id = meter["entity_id"]
+            estimate = None
+            if automatic:
+                try:
+                    meter = discover_meter(states.values(), self.registry(), config["offset_entity"])
+                except ControlError:
+                    # No meter on the pump (e.g. F370): estimate from compressor status and auxiliary power.
+                    estimate = discover_estimate(states.values(), pump_device_entities(self.registry(), config["offset_entity"]))
+                    if not estimate:
+                        raise
+                    meter = None
+            else:
+                meter = states.get(config["energy_entity"])
+                if not meter:
+                    raise ControlError("Den valda elmätaren saknas i Home Assistant.")
+            if meter is not None:
+                error = meter_error(meter)
+                if error:
+                    raise ControlError(error)
+            meter_id = ESTIMATE_ID if estimate else meter["entity_id"]
+            history_ids = [s["entity_id"] for s in estimate] if estimate else [meter_id]
             price_id = config["price_entity"]
             price_problem = None
             if price_id:
@@ -1047,25 +1059,42 @@ class Insights:
                         or config["price_provider"] == "nordpool" and platform == "tibber"):
                     price_problem = "Prisgivaren hör inte till din sparade elpriskälla. Välj rätt källa och givare i inställningarna."
             query = urlencode({
-                "filter_entity_id": ",".join(filter(None, (meter_id, price_id))),
+                "filter_entity_id": ",".join(filter(None, (*history_ids, price_id))),
                 "end_time": datetime.fromtimestamp(now, timezone.utc).isoformat(),
                 "significant_changes_only": "0",
             })
             stamp = datetime.fromtimestamp(start - 3600, timezone.utc).isoformat()
             groups = history_groups(self.history_request("/history/period/" + quote(stamp, safe="") + "?" + query))
-            report = consumption_report(groups.get(meter_id, []),
+            if estimate:
+                compressor, heater = estimate
+                meter_rows = estimated_power_rows(groups.get(compressor["entity_id"], []), groups.get(heater["entity_id"], []),
+                                                  heater["entity_id"], end)
+            else:
+                meter_rows = groups.get(meter_id, [])
+            report = consumption_report(meter_rows,
                                         [] if price_problem else groups.get(price_id, []),
                                         meter_id, price_id, start, end,
                                         min(config["max_age_minutes"] * 60, 7200),
-                                        power=meter["attributes"].get("device_class") == "power")
+                                        power=bool(estimate) or meter["attributes"].get("device_class") == "power")
+            if estimate:
+                report["method"] = "estimate"
             if price_problem:
                 report["price_error"] = price_problem
             segments, _, _ = price_intervals(
                 [] if price_problem else groups.get(price_id, []), price_id, end,
                 min(config["max_age_minutes"] * 60, 7200))
             report.update(energy_periods(report["hours"], segments))
-            report["meter"] = {"entity_id": meter_id, "name": meter["attributes"].get("friendly_name", meter_id),
-                               "automatic": automatic}
+            if estimate:
+                compressor, heater = estimate
+                report["meter"] = {
+                    "entity_id": meter_id, "automatic": True,
+                    "name": "Uppskattning – pumpen saknar elmätare",
+                    "estimate": {"compressor_entity": compressor["entity_id"], "heater_entity": heater["entity_id"],
+                                 "compressor_kw": ESTIMATE_COMPRESSOR_KW, "base_kw": ESTIMATE_BASE_KW},
+                }
+            else:
+                report["meter"] = {"entity_id": meter_id, "name": meter["attributes"].get("friendly_name", meter_id),
+                                   "automatic": automatic}
             report["price_entity"] = price_id
             report["price_provider"] = config["price_provider"]
             report["checked_at"] = time.time()
