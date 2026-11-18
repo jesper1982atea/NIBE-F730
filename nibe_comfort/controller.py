@@ -152,6 +152,10 @@ AUX_RESTORE_RETRY_SECONDS = 300
 # myUplink often drops the pump's values for a few minutes right after a write. A limit in force
 # survives such a gap; values missing for longer lift it as before.
 AUX_OUTAGE_GRACE_SECONDS = 600
+# Room sensors report in 0.1-0.2 °C steps, so a mean right at the cold-house limit flips with a
+# single step and each flip is a cloud write. A limit in force is lifted for a cold house only
+# once the mean is this much below the limit; a new limit still needs the mean at the limit.
+AUX_INDOOR_HYSTERESIS = 0.2
 # Automatic base correction: one curve step per degree of lasting deviation and day. Small
 # deviations are ignored so sensor noise does not walk the correction.
 AUTO_BASE_RATE = 1 / 86400
@@ -1891,9 +1895,12 @@ class Controller:
                     reason = "dyr el (väntar på tydligt lägre pris)"
         guard = None
         indoor, outdoor = result.get("indoor"), result.get("outdoor")
+        cold_limit = config["target_temperature"] - config["aux_limit_max_drop"]
+        if self.aux_limited and self.aux_restore["phase"] in ("lowering", "limited"):
+            cold_limit -= AUX_INDOOR_HYSTERESIS
         if reason and (result.get("price") is None or result.get("price_error")):
             guard = "Elpriset saknas eller är osäkert: elpatronen begränsas inte."
-        elif reason and (indoor is None or indoor < config["target_temperature"] - config["aux_limit_max_drop"]):
+        elif reason and (indoor is None or indoor < round(cold_limit, 2)):
             guard = "För kallt inne: elpatronen får full effekt."
         elif reason and outdoor is None:
             guard = "Utetemperaturen saknas: elpatronen får full effekt."
@@ -1957,9 +1964,14 @@ class Controller:
                     return report
                 report["error"] = self.lift_aux_limit("väntar på återställning", entities=entities, now=now)
                 return report
-            if (self.aux_restart_restore or not config["aux_limit_enabled"] or not config["enabled"] or hold
-                    or desired == normal):
-                report["error"] = self.lift_aux_limit("styrningen behöver återställning", entities=entities, now=now)
+            cause = ("efter omstart" if self.aux_restart_restore
+                     else "elpatronbegränsningen är avstängd" if not config["aux_limit_enabled"]
+                     else "övervakningsläge" if not config["enabled"]
+                     else "test, semester eller larm pågår" if hold
+                     else report["reason"].split(":")[0].rstrip(".").lower() if desired == normal
+                     else None)
+            if cause:
+                report["error"] = self.lift_aux_limit(cause, entities=entities, now=now)
                 return report
             if current == limited and plan["phase"] == "lowering":
                 self.store_aux_limited({**plan, "phase": "limited"})

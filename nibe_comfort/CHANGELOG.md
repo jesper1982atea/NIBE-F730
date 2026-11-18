@@ -1,5 +1,15 @@
 # Ändringslogg
 
+## Ej släppt
+
+- "För kallt inne" släpper en begränsning som gäller först när rummen är
+  0,2 °C under gränsen. Ett enda givarsteg precis vid gränsen gav annars en
+  återställning via molnet inom några minuter. En ny begränsning kräver
+  fortfarande att rummen ligger på gränsen.
+- Händelsen för återställning anger den verkliga orsaken, till exempel
+  "för kallt inne" eller "efter omstart", i stället för "styrningen behöver
+  återställning".
+
 ## 0.2.50
 
 - Ny besparingskalkyl med pumpens faktiska kostnad per dag och månad för
