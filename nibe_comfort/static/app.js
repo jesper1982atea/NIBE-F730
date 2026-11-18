@@ -24,6 +24,7 @@ let modeDiscoveryRequest = 0;
 let modeDiscoveryError = "";
 let modeDiscoveryOffset = null;
 let dashboardBusy = false;
+let overviewBusy = false;
 let historyBusy = false;
 let planBusy = false;
 let learningBusy = false;
@@ -72,9 +73,15 @@ async function api(path, options = {}) {
       const source = (response.headers.get("Content-Type") || "").includes("text/html")
         ? "Home Assistants ingress gav en webbsida i stället för API-data"
         : "API-svaret innehöll inte giltig JSON";
-      throw new Error(`${source} (api/${path}, HTTP ${response.status})`, { cause: error });
+      const apiError = new Error(`${source} (api/${path}, HTTP ${response.status})`, { cause: error });
+      apiError.status = response.status;
+      throw apiError;
     }
-    if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : `api/${path}: HTTP ${response.status}`);
+    if (!response.ok) {
+      const apiError = new Error(typeof body?.error === "string" ? body.error : `api/${path}: HTTP ${response.status}`);
+      apiError.status = response.status;
+      throw apiError;
+    }
     return body;
   } finally {
     window.clearTimeout(timeout);
@@ -1735,24 +1742,35 @@ async function pauseAlarmThermostats() {
 }
 
 async function refreshOverview() {
+  if (overviewBusy) return;
+  overviewBusy = true;
+  $("refresh-overview").disabled = true;
   void refreshAlarms();
   void refreshCloudAlarms();
   const provider = settings.price_provider;
   try {
     const data = await api("overview");
     if (provider !== settings.price_provider) return;
-    // Readings without a value are listed on one line; alarms are always shown as tiles.
+    // Keep the main panel to actionable pump state; secondary readings stay available on demand.
     const known = data.pump.filter((item) => item.key === "alarm" || item.value !== null || item.active === true);
     const missing = data.pump.filter((item) => !known.includes(item));
-    $("pump-metrics").replaceChildren(...known.map((item) => {
+    const primaryKeys = new Set(["alarm", "compressor", "operation", "additional_heat"]);
+    const primary = known.filter((item) => primaryKeys.has(item.key));
+    const extra = known.filter((item) => !primaryKeys.has(item.key));
+    const renderPumpMetric = (item) => {
       const block = metric(item);
       const value = String(item.value ?? "");
       block.dataset.state = item.active === true ? "alarm" : /^(I drift|Värme|Varmvatten)$/.test(value) ? "on"
         : /^(Av|Stoppad|Vilar|Viloläge)$/.test(value) ? "off" : "value";
       return block;
-    }));
-    $("pump-missing").textContent = missing.length ? `Saknas: ${missing.map((item) => `${item.label}: ${item.error || "Aktuellt värde saknas"}`).join(" · ")}` : "";
-    $("pump-missing").hidden = !missing.length;
+    };
+    $("pump-metrics").replaceChildren(...primary.map(renderPumpMetric));
+    $("pump-extra-metrics").replaceChildren(...extra.map(renderPumpMetric));
+    $("pump-extra-summary").textContent = `Visa fler pumpvärden · ${extra.length}`;
+    $("pump-extra-details").hidden = !extra.length;
+    $("pump-missing").textContent = missing.map((item) => `${item.label}: ${item.error || "Aktuellt värde saknas"}`).join(" · ");
+    $("pump-missing-summary").textContent = `${missing.length} pumpvärden saknas eller är gamla`;
+    $("pump-missing-details").hidden = !missing.length;
     const compressor = data.pump.find((item) => item.label === "Kompressor")?.value;
     const [tone, text] = data.pump.some((item) => item.active === true) ? ["red", "Larm"]
       : compressor === "I drift" ? ["green", "Kompressor i drift"]
@@ -1768,10 +1786,22 @@ async function refreshOverview() {
   } catch (error) {
     if (provider !== settings.price_provider) return;
     $("pump-metrics").replaceChildren();
-    $("pump-missing").hidden = true;
+    $("pump-extra-metrics").replaceChildren();
+    $("pump-extra-details").hidden = true;
+    $("pump-missing-details").hidden = true;
     featureTone("pump-card", "pump-pill", "muted", "Kan inte läsas");
     $("electricity-metrics").replaceChildren();
-    $("overview-status").textContent = `Kunde inte läsa pumpstatus: ${error.message}`;
+    const homeAssistantUnauthorized = /Home Assistant svarade med HTTP 401/.test(error.message);
+    const ingressUnauthorized = error.status === 401;
+    const guidance = homeAssistantUnauthorized
+      ? "Home Assistant nekar tilläggets Supervisor-token. Kontrollera tilläggsloggen; om felet kvarstår, starta om NIBE Comfort-tillägget."
+      : ingressUnauthorized
+        ? "Home Assistant nekade webbpanelens inloggningssession. Öppna tillägget igen från sidomenyn och uppdatera."
+        : error.message;
+    $("overview-status").textContent = `Kunde inte läsa pumpstatus: ${guidance}`;
+  } finally {
+    overviewBusy = false;
+    $("refresh-overview").disabled = false;
   }
 }
 
@@ -3072,6 +3102,7 @@ async function init() {
   $("fireplace_enabled").addEventListener("change", updateSaveState);
   $("fireplace_rooms").addEventListener("change", updateSaveState);
   $("fireplace_max_age_minutes").addEventListener("input", updateSaveState);
+  $("refresh-overview").addEventListener("click", () => void refreshOverview());
   $("refresh-alarms").addEventListener("click", () => { void refreshAlarms(); void refreshCloudAlarms(); });
   $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
   $("aux-recovery-ack").addEventListener("click", () => void acknowledgeAuxRecovery());

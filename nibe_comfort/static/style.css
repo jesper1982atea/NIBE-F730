@@ -64,6 +64,31 @@
 :root[data-theme=dark] .test-values div{background:#25302c}
 .chart-band.fireplace{fill:#d89020;opacity:.14}.key.fireplace{color:#a56a11}
 
+.dashboard-context{margin:0 0 20px;padding:16px 18px;background:var(--paper);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}
+.dashboard-context-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.dashboard-context-head .section-number{margin-right:auto}
+.dashboard-context-head small{color:var(--muted);font-size:12px}
+.dashboard-context-head button{padding:7px 12px;font-size:12px}
+.dashboard-context .now-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.dashboard-context .now-tile{background:var(--soft);border:1px solid var(--line);color:var(--ink);padding:12px 14px}
+.dashboard-context .now-tile>span,.dashboard-context .now-tile>small{color:var(--muted)}
+.dashboard-context .now-tile>strong{font-size:24px;line-height:1.25}
+.dashboard-context .now-tile small{font-size:11px}
+.dashboard-context .target-tile label{margin:0 0 5px;color:var(--muted);font-size:12px}
+.dashboard-context .target-control{gap:7px}
+.dashboard-context .target-control input{font-size:24px;padding:5px}
+.dashboard-context .target-control button{font-size:20px;padding:4px 12px}
+.dashboard-context #save-target{margin-top:7px;padding:7px 10px;font-size:12px}
+.dashboard-context .next-tile strong{font-size:18px}
+.dashboard-context .next-tile a{font-size:11px}
+.dashboard-context .offset-now{padding-top:2px}
+#pump-extra-details[hidden],#pump-missing-details[hidden]{display:none}
+#pump-extra-metrics{margin-top:12px}
+#pump-missing-details{font-size:12px}
+#pump-missing-details>summary{color:var(--muted);padding:11px 0}
+@media(max-width:900px){.dashboard-context .now-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.dashboard-context{padding:12px}.dashboard-context-head{flex-wrap:wrap}.dashboard-context .now-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.dashboard-context .target-tile,.dashboard-context .next-tile{grid-column:span 2}}
+
 /* Modern look: softer surfaces, depth instead of borders, clearer controls. Layout and behaviour are unchanged. */
 :root{--bg:#eef2ef;--paper:#fff;--line:#e2e8e4;--ink:#14302a;--muted:#5b6d67;--green:#0f7a58;--accent:#e3a947;--soft:#f3f7f4;--radius:20px;--shadow:0 1px 2px rgba(16,40,32,.05),0 8px 24px -12px rgba(16,40,32,.16);--shadow-hover:0 2px 4px rgba(16,40,32,.06),0 16px 36px -14px rgba(16,40,32,.24);--hero:linear-gradient(135deg,#0f3b30 0%,#13584a 55%,#1b6f63 100%);font-feature-settings:"tnum" 1,"cv11" 1;-webkit-font-smoothing:antialiased}
 :root[data-theme=dark]{--bg:#0d1211;--paper:#161d1b;--line:#26302d;--ink:#e6efea;--muted:#98aba3;--green:#4cc08f;--soft:#1c2522;--shadow:0 1px 0 rgba(255,255,255,.03) inset,0 10px 30px -14px rgba(0,0,0,.7);--shadow-hover:0 1px 0 rgba(255,255,255,.05) inset,0 16px 40px -14px rgba(0,0,0,.8);--hero:linear-gradient(135deg,#0b2a22 0%,#10392f 55%,#154a40 100%)}
