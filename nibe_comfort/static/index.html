@@ -41,19 +41,11 @@
       <a href="#log-panel">Ändringslogg</a>
       <button type="button" id="group-view-toggle" class="secondary view-mode-toggle">Visa grupperad vy</button>
     </nav>
-    <div id="notice" role="status" hidden></div>
-    <section class="hero card" data-view="overview" aria-labelledby="status-title">
-      <div class="hero-head">
-        <span class="eyebrow">HEMMA JUST NU</span>
-        <h2 id="status-title">Välkommen till enklare värme</h2>
-        <p id="status-message">Välj rum och ställ in din temperatur.</p>
-        <ul id="status-warnings" class="hint warning" hidden></ul>
-      </div>
-      <div id="warm-room-warning" class="warm-room-warning" role="status" hidden>
-        <strong>Andra rum är redan för varma</strong>
-        <p id="warm-room-summary"></p>
-        <ul id="warm-room-list"></ul>
-        <p>Förskjutningen påverkar hela huset. Mer värme för prioriterade rum kan även värma dessa rum. Varningen stoppar inte automatiken. Temperaturökningen är uppmätt, inte en säker effekt av pumpens ändring.</p>
+    <section id="dashboard-context" class="dashboard-context" aria-label="Temperatur och nästa värmejustering">
+      <div class="dashboard-context-head">
+        <span class="section-number">HUSETS VÄRME</span>
+        <small id="overview-status" role="status">Hämtar pumpstatus…</small>
+        <button type="button" id="refresh-overview" class="secondary">Uppdatera</button>
       </div>
       <div class="now-grid">
         <div class="now-tile"><span id="indoor-label">Inne nu</span><strong><span id="indoor">—</span> °C</strong><small id="indoor-diff">Medel av dina valda rum</small><small>Alla valda givare: <b id="house-indoor">—</b> °C</small></div>
@@ -70,6 +62,21 @@
         </div>
         <div class="now-tile"><span>Ute nu</span><strong><span id="outdoor-now">—</span> °C</strong><small id="outdoor-forecast">Hämtar prognos…</small></div>
         <div class="now-tile next-tile"><span>Nästa justering</span><strong id="next-change">—</strong><small id="next-change-why">Hämtar plan…</small><a id="adjust-offset-limits" href="#offset-limits" hidden>Ändra tillåten förskjutning</a><small class="offset-now">Kurvförskjutning nu: <b id="hero-offset">—</b><span id="hero-offset-base"></span></small></div>
+      </div>
+    </section>
+    <div id="notice" role="status" hidden></div>
+    <section class="hero card" data-view="overview" aria-labelledby="status-title">
+      <div class="hero-head">
+        <span class="eyebrow">HEMMA JUST NU</span>
+        <h2 id="status-title">Välkommen till enklare värme</h2>
+        <p id="status-message">Välj rum och ställ in din temperatur.</p>
+        <ul id="status-warnings" class="hint warning" hidden></ul>
+      </div>
+      <div id="warm-room-warning" class="warm-room-warning" role="status" hidden>
+        <strong>Andra rum är redan för varma</strong>
+        <p id="warm-room-summary"></p>
+        <ul id="warm-room-list"></ul>
+        <p>Förskjutningen påverkar hela huset. Mer värme för prioriterade rum kan även värma dessa rum. Varningen stoppar inte automatiken. Temperaturökningen är uppmätt, inte en säker effekt av pumpens ändring.</p>
       </div>
       <p id="hero-extra" class="hero-extra"></p>
       <p id="updated" class="muted"></p>
@@ -301,11 +308,17 @@
 
     <section class="card dashboard" id="pump-card" data-view="system" data-tone="muted">
       <div class="feature-head"><div class="feature-icon icon-pump" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="3"/><circle cx="12" cy="11" r="4"/><path d="M12 7v1.5M12 13.5V15M8 11h1.5M14.5 11H16M8 18h8"/></svg></div><div><span class="section-number">PUMPEN JUST NU</span><h2>Värme, drift och el</h2></div><span id="pump-pill" class="feature-pill">Hämtar…</span></div>
-      <p id="overview-status" role="status">Hämtar pumpstatus…</p>
       <p class="section-intro">Rapporterad drift och eventuella larm. Saknad information betyder inte att pumpen är avstängd.</p>
       <p class="hint">Kodnamn är möjliga tolkningar för F-serien och kan skilja sig på andra modeller. Kontrollera pumpens handbok.</p>
       <div id="pump-metrics" class="live-grid pump-grid"></div>
-      <p id="pump-missing" class="hint" hidden></p>
+      <details class="disclosure" id="pump-extra-details">
+        <summary id="pump-extra-summary">Visa fler pumpvärden</summary>
+        <div id="pump-extra-metrics" class="live-grid"></div>
+      </details>
+      <details class="disclosure" id="pump-missing-details" hidden>
+        <summary id="pump-missing-summary">Värden som saknas</summary>
+        <p id="pump-missing" class="hint"></p>
+      </details>
       <details class="disclosure" id="electricity-details">
         <summary>Visa elförbrukning · pumpen jämfört med hela huset</summary>
       <h3>Elförbrukning</h3>

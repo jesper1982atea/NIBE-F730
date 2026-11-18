@@ -17,6 +17,7 @@ let writes = 0;
 let pumpTest = null;
 let testWrites = 0;
 let failHistory = false;
+let failOverview = false;
 const now = Date.now() / 1000;
 const entities = [
   { entity_id: "sensor.living", name: "Vardagsrum", state: "22", unit: "°C", device_class: "temperature" },
@@ -139,7 +140,12 @@ const server = createServer(async (request, response) => {
     data = { now, duration_seconds: 600, test: pumpTest };
   }
   else if (path === "/api/test") data = { now, duration_seconds: 600, test: pumpTest };
-  else if (path === "/api/overview") data = overview;
+  else if (path === "/api/overview") {
+    if (failOverview) {
+      response.writeHead(502);
+      data = { error: "Home Assistant svarade med HTTP 401. Kontrollera integration och behörighet." };
+    } else data = overview;
+  }
   else if (path.startsWith("/api/savings")) data = savingsFixture(Number(new URL(request.url, "http://localhost").searchParams.get("days")) || 30);
   else if (path === "/api/alarms") data = {
     active: true, code: 229, error: null, checked_at: now, rooms: [], observations: [],
@@ -226,9 +232,14 @@ async function groupedNavigationChecks() {
   await page.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   assert.equal(await page.locator("#main").getAttribute("data-active-view"), "overview");
   assert.equal(await page.locator("#status-title").isVisible(), true);
+  assert.equal(await page.locator("#dashboard-context").isVisible(), true);
+  assert.equal(await page.locator("#target_temperature").isVisible(), true);
   assert.equal(await page.locator("#comfort-card").isVisible(), false);
   await page.locator('[data-view-target="heat"]').click();
   assert.equal(await page.locator("#comfort-card").isVisible(), true);
+  assert.equal(await page.locator("#dashboard-context").isVisible(), true);
+  assert.equal(await page.locator("#outdoor-now").isVisible(), true);
+  assert.equal(await page.locator("#next-change").isVisible(), true);
   assert.equal(await page.locator("#hot-water-card").isVisible(), false);
   await page.locator('[data-view-target="water"]').click();
   assert.equal(await page.locator("#hot-water-card").isVisible(), true);
@@ -1396,6 +1407,15 @@ async function savingsChecks() {
   assert.match(await page.locator("#savings-daily thead").textContent(), /Prisets tidpunkt.*Före\/efter · skillnad/);
   assert.match(await page.locator("#savings-actions").textContent(), /Kurvförskjutning.*styrbidrag/);
   assert.match(await page.locator("#savings-settings").textContent(), /Förvärmning: av → på/);
+  assert.equal(await page.locator("#pump-metrics .live-metric").count(), 2, "Only key pump state and alarm are shown up front");
+  assert.equal(await page.locator("#pump-extra-metrics .live-metric").count(), 1, "Secondary pump readings are grouped behind a disclosure");
+  assert.equal(await page.locator("#pump-missing-details").isVisible(), true, "Missing values are grouped in one disclosure");
+  failOverview = true;
+  await page.locator("#refresh-overview").click();
+  await page.waitForFunction(() => document.getElementById("overview-status").textContent.includes("Home Assistant nekar tilläggets Supervisor-token"));
+  failOverview = false;
+  await page.locator("#refresh-overview").click();
+  await page.waitForFunction(() => document.getElementById("overview-status").textContent.includes("Senast hämtat"));
   assert.equal(await page.locator("#savings-heater-runs tbody tr").count(), 1);
   assert.match(await page.locator("#savings-heater-runs").textContent(), /Värme/);
   await page.selectOption("#savings-days", "7");
