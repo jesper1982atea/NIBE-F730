@@ -14,9 +14,10 @@ from urllib.parse import quote, urlencode
 
 from controller import SOURCE_ENTITIES, ControlError, alarm_code, atomic_json, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
-from energy import ENERGY_UNITS, POWER_UNITS, consumption_report, discover_meter, hourly_energy, meter_error, produced_energy, pump_sources, split_sources
+from energy import ENERGY_UNITS, POWER_UNITS, consumption_report, discover_meter, hourly_energy, meter_error, price_intervals, produced_energy, pump_sources, split_sources
 from auxiliary import heater_entities, heater_report
 from alarm_codes import alarm_info, alarm_label
+from savings import PERIOD_DAYS, action_periods, energy_periods, period_bounds
 
 
 def discover_tibber(states, registry):
@@ -1015,14 +1016,19 @@ class Insights:
         )
         return alarm
 
-    def energy(self, config):
+    def energy(self, config, days=None):
+        if days is not None and (type(days) is not int or days not in PERIOD_DAYS):
+            raise ControlError("Välj en period på 7, 30 eller 90 dagar.")
         key = ("energy", config["offset_entity"], config["energy_entity"], config["price_entity"], config["price_provider"],
-               config["max_age_minutes"])
+               config["max_age_minutes"], days)
 
         def load():
             now = time.time()
-            end = int(now // 3600) * 3600
-            start = end - 86400
+            if days is None:
+                end = int(now // 3600) * 3600
+                start = end - 86400
+            else:
+                start, end = period_bounds(now, days)
             states = {s["entity_id"]: s for s in self.ha.states()}
             automatic = not config["energy_entity"]
             meter = (discover_meter(states.values(), self.registry(), config["offset_entity"])
@@ -1054,6 +1060,10 @@ class Insights:
                                         power=meter["attributes"].get("device_class") == "power")
             if price_problem:
                 report["price_error"] = price_problem
+            segments, _, _ = price_intervals(
+                [] if price_problem else groups.get(price_id, []), price_id, end,
+                min(config["max_age_minutes"] * 60, 7200))
+            report.update(energy_periods(report["hours"], segments))
             report["meter"] = {"entity_id": meter_id, "name": meter["attributes"].get("friendly_name", meter_id),
                                "automatic": automatic}
             report["price_entity"] = price_id
@@ -1109,14 +1119,19 @@ class Insights:
             return result
         return self.cached(key, 300, load)
 
-    def auxiliary(self, config):
+    def auxiliary(self, config, days=None):
+        if days is not None and (type(days) is not int or days not in PERIOD_DAYS):
+            raise ControlError("Välj en period på 7, 30 eller 90 dagar.")
         key = ("auxiliary", config["offset_entity"], config["price_entity"], config["price_provider"],
-               config["max_age_minutes"])
+               config["max_age_minutes"], days)
 
         def load():
             now = time.time()
-            end = int(now // 3600) * 3600
-            start = end - 86400
+            if days is None:
+                end = int(now // 3600) * 3600
+                start = end - 86400
+            else:
+                start, end = period_bounds(now, days)
             states = self.ha.states()
             registry = self.registry()
             power, contexts = heater_entities(states, pump_device_entities(registry, config["offset_entity"]))
@@ -1145,6 +1160,10 @@ class Insights:
                                    start, end, min(config["max_age_minutes"] * 60, 7200))
             if price_problem:
                 report["price_error"] = price_problem
+            segments, _, _ = price_intervals(
+                [] if price_problem else groups.get(price_id, []), price_id, end,
+                min(config["max_age_minutes"] * 60, 7200))
+            report.update(energy_periods(report["hours"], segments))
             current = {"kw": None, "active": None, "error": None, "reported_at": power.get("last_updated")}
             try:
                 fresh_entity({s["entity_id"]: s for s in states}, power_id, config["max_age_minutes"], now,

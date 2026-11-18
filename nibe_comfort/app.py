@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 from controller import ControlError, Controller, HomeAssistant, temperature
 from insights import Insights, control_history
 from energy import change_comparisons, meter_error
+from savings import action_periods
 from myuplink import MyUplink
 from community import Community
 
@@ -225,6 +226,48 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                     self.respond(200, insights.auxiliary(controller.settings()))
                 elif path == "/api/sources":
                     self.respond(200, insights.sources(controller.settings()))
+                elif path == "/api/savings":
+                    values = parse_qs(urlsplit(self.path).query, keep_blank_values=True).get("days", ["30"])
+                    if len(values) != 1 or not values[0].isascii() or not values[0].isdigit() or int(values[0]) not in (7, 30, 90):
+                        self.respond(400, {"error": "Välj en period på 7, 30 eller 90 dagar."})
+                        return
+                    days = int(values[0])
+                    config = controller.settings()
+                    report = insights.energy(config, days)
+                    heater = None
+                    heater_error = None
+                    try:
+                        heater = insights.auxiliary(config, days)
+                    except ControlError as exc:
+                        heater_error = str(exc)
+                    actions, action_error = {"by_kind": [], "daily": [], "monthly": [], "observations": 0}, None
+                    try:
+                        events = controller.events.history(report["start"], report["end"])
+                        changes = [
+                            {**change, "timestamp": change["outcome_at"]}
+                            for change in control_history(events, config, report["start"], report["end"])
+                            if change["status"] == "confirmed" and change.get("outcome_at") is not None
+                            and report["start"] <= change["outcome_at"] <= report["end"]
+                        ]
+                        actions = action_periods(change_comparisons(report["hours"], changes, limit=None))
+                    except (sqlite3.Error, OSError):
+                        LOG.exception("Kunde inte läsa ändringsloggen för besparingskalkylen")
+                        action_error = "Ändringsloggen kunde inte läsas; åtgärdernas före/efter-uppskattning saknas."
+                    result = {
+                        "days": days, "start": report["start"], "end": report["end"],
+                        "energy": {
+                            "meter": report["meter"], "method": report["method"], "currency": report["currency"],
+                            "price_error": report["price_error"], "daily": report["daily"], "monthly": report["monthly"],
+                        },
+                        "heater": ({
+                            "meter": heater["meter"], "daily": heater["daily"], "monthly": heater["monthly"],
+                            "totals": heater["totals"], "runtime_seconds": heater["runtime_seconds"],
+                            "run_count": len(heater["runs"]), "runs": list(reversed(heater["runs"][-50:])),
+                            "runs_truncated": len(heater["runs"]) > 50, "price_error": heater["price_error"],
+                        } if heater else None),
+                        "heater_error": heater_error, "actions": actions, "action_error": action_error,
+                    }
+                    self.respond(200, result)
                 elif path == "/api/energy":
                     config = controller.settings()
                     report = insights.energy(config)

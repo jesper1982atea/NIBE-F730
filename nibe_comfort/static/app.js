@@ -30,6 +30,7 @@ let learningBusy = false;
 let hotWaterBusy = false;
 let energyBusy = false;
 let auxiliaryBusy = false;
+let savingsBusy = false;
 const pendingRefreshes = new Set();
 const readRequests = new Map();
 let entitiesBusy = false;
@@ -57,9 +58,10 @@ async function api(path, options = {}) {
   const controller = new AbortController();
   const read = !options.method || options.method === "GET";
   if (read) readRequests.set(path, controller);
-  const timeout = window.setTimeout(() => controller.abort(new Error("Hämtningen tog för lång tid. Försöker igen automatiskt.")), 20000);
+  const { timeoutMs = 20000, ...requestOptions } = options;
+  const timeout = window.setTimeout(() => controller.abort(new Error("Hämtningen tog för lång tid. Försöker igen automatiskt.")), timeoutMs);
   try {
-    const response = await fetch(`./api/${path}`, { cache: "no-store", ...options, signal: controller.signal });
+    const response = await fetch(`./api/${path}`, { cache: "no-store", ...requestOptions, signal: controller.signal });
     let body;
     try {
       body = await response.json();
@@ -1199,7 +1201,7 @@ async function refreshSavedSettings() {
         .some((key) => latest[key] !== settings[key]);
       settings = latest;
       renderSettings(merged, true);
-      if (energyChanged) { void refreshEnergy(); void refreshAuxiliary(); void refreshSources(); }
+      if (energyChanged) { void refreshEnergy(); void refreshAuxiliary(); void refreshSources(); void refreshSavings(); }
     }
     renderSavedSettingsStatus();
   } catch (error) {
@@ -1348,6 +1350,7 @@ async function save(config) {
     void refreshLearning();
     void refreshEnergy();
     void refreshAuxiliary(); void refreshSources();
+    void refreshSavings();
   } catch (error) {
     notice(`Kunde inte spara: ${error.message}`, true);
   } finally {
@@ -1897,6 +1900,127 @@ async function refreshEnergy() {
 function showEnergySection(visible) {
   $("energy-section").hidden = !visible;
   document.querySelector('.page-nav a[href="#energy-section"]').hidden = !visible;
+}
+
+function savingsDate(period, monthly = false) {
+  const [year, month, day] = period.split("-").map(Number);
+  return monthly
+    ? new Date(year, month - 1, 15).toLocaleDateString("sv-SE", { month: "long", year: "numeric" })
+    : new Date(year, month - 1, day, 12).toLocaleDateString("sv-SE", { weekday: "short", day: "numeric", month: "short" });
+}
+
+function savingsTable(container, headers, rows) {
+  const table = document.createElement("table");
+  const head = table.createTHead().insertRow();
+  for (const label of headers) {
+    const cell = document.createElement("th");
+    cell.textContent = label;
+    head.append(cell);
+  }
+  const body = table.createTBody();
+  for (const values of rows) {
+    const row = body.insertRow();
+    for (const value of values) row.insertCell().textContent = String(value);
+  }
+  container.replaceChildren(table);
+}
+
+async function refreshSavings() {
+  if (savingsBusy) { pendingRefreshes.add("savings"); return; }
+  savingsBusy = true;
+  const days = $("savings-days").value;
+  $("savings-status").textContent = `Hämtar pumpens och elpatronens historik för ${days} dagar…`;
+  $("savings-data").hidden = true;
+  try {
+    const data = await api(`savings?days=${encodeURIComponent(days)}`, { timeoutMs: 60000 });
+    if ($("savings-days").value !== days) { pendingRefreshes.add("savings"); return; }
+    const dailyHeater = new Map((data.heater?.daily || []).map((item) => [item.period, item]));
+    const monthlyHeater = new Map((data.heater?.monthly || []).map((item) => [item.period, item]));
+    const dailyActions = new Map(data.actions.daily.map((item) => [item.period, item]));
+    const monthlyActions = new Map(data.actions.monthly.map((item) => [item.period, item]));
+    const completeCost = (items) => items.filter((item) => item.cost !== null).reduce((sum, item) => sum + item.cost, 0);
+    const hasCost = (items) => items.some((item) => item.cost !== null);
+    const dailyShift = data.energy.daily.filter((item) => item.price_shift)
+      .reduce((sum, item) => sum + item.price_shift.difference, 0);
+    const hasShift = data.energy.daily.some((item) => item.price_shift);
+    const actionSavings = data.actions.by_kind.reduce((sum, item) => sum + item.estimated_savings, 0);
+    const totalCoverage = data.energy.daily.reduce((sum, item) => sum + item.complete_hours, 0);
+    const totalPriceCoverage = data.energy.daily.reduce((sum, item) => sum + item.priced_complete_hours, 0);
+    const totalHours = data.energy.daily.reduce((sum, item) => sum + item.total_hours, 0);
+    const heaterDays = data.heater?.daily || [];
+    const heaterCost = hasCost(heaterDays) ? completeCost(heaterDays) : null;
+    const currency = data.energy.currency || "";
+    $("savings-metrics").replaceChildren(
+      metric({ label: "Pumpens faktiska kostnad · täckta timmar", value: hasCost(data.energy.daily) ? displayNumber(completeCost(data.energy.daily)) : null, unit: currency }),
+      metric({ label: "Uppskattad skillnad av prisets tidpunkt", value: hasShift ? `${dailyShift > 0 ? "+" : ""}${displayNumber(dailyShift)}` : null,
+        unit: currency, detail: "Samma kWh värderade mot respektive dags snittpris." }),
+      metric({ label: "Uppskattad skillnad efter bekräftade ändringar", value: data.actions.observations ? `${actionSavings > 0 ? "+" : ""}${displayNumber(actionSavings)}` : null,
+        unit: currency, detail: `${data.actions.observations} jämförelser · inte bevisad effekt.` }),
+      metric({ label: "Elpatronens kostnad · ingår i pumpens kostnad", value: heaterCost === null ? null : displayNumber(heaterCost), unit: currency }),
+    );
+    $("savings-status").textContent = `Senaste ${days} hela kalenderdagarna · ${data.energy.meter.name}. ${data.energy.method === "power" ? "Pumpens kWh uppskattas från effekthistorik. " : ""}${data.energy.price_error || "Kostnad räknad från vald prisgivare."}${data.heater_error ? ` Elpatron: ${data.heater_error}` : data.heater?.price_error ? ` Elpatron: ${data.heater.price_error}` : ""}`;
+    $("savings-coverage").textContent = `Pumpens datatäckning: ${totalCoverage} av ${totalHours} timmar med fullständig elmätning, varav ${totalPriceCoverage} timmar även har fullständigt elpris. Dagar med luckor visar bara kompletta timmar, inte noll. Historiken beror på hur länge Home Assistant sparar Recorder-data.`;
+    const heaterCostAt = (item) => item?.cost ?? null;
+    const dateStamp = (period) => new Date(`${period}T12:00:00`).getTime() / 1000;
+    drawChart($("savings-chart"), [
+      { name: "Pumpens kostnad", points: data.energy.daily.map((item) => [dateStamp(item.period), item.cost]), until: data.end },
+      { name: "Elpatron (ingår i pumpen)", points: data.energy.daily.map((item) => [dateStamp(item.period), heaterCostAt(dailyHeater.get(item.period))]), until: data.end },
+    ], { start: data.start, end: data.end, unit: ` ${currency}`, integer: false, left: 96, pad: 0.1,
+      empty: "Inga hela dagar med komplett elmätning och pris.", label: "Pumpens och elpatronens kostnad dag för dag" });
+    const dailyRows = data.energy.daily.map((item) => {
+      const heater = dailyHeater.get(item.period);
+      const action = dailyActions.get(item.period);
+      return [
+        savingsDate(item.period), displayNumber(item.kwh), displayNumber(item.cost), displayNumber(item.price_shift?.difference),
+        action ? `${action.estimated_savings > 0 ? "+" : ""}${displayNumber(action.estimated_savings)}` : "—",
+        displayNumber(heater?.kwh), displayNumber(heater?.cost), `${item.priced_complete_hours}/${item.total_hours} h`,
+      ];
+    });
+    savingsTable($("savings-daily"), ["Dag", "Pump · kWh", `Pump · ${currency}`, `Prisflytt · ${currency}`, `Före/efter · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], dailyRows);
+    const monthlyRows = data.energy.monthly.map((item) => {
+      const heater = monthlyHeater.get(item.period);
+      const action = monthlyActions.get(item.period);
+      return [
+        savingsDate(item.period, true), displayNumber(item.kwh), displayNumber(item.cost), displayNumber(item.price_shift?.difference),
+        action ? `${action.estimated_savings > 0 ? "+" : ""}${displayNumber(action.estimated_savings)}` : "—",
+        displayNumber(heater?.kwh), displayNumber(heater?.cost), `${item.priced_complete_hours}/${item.total_hours} h`,
+      ];
+    });
+    savingsTable($("savings-monthly"), ["Månad", "Pump · kWh", `Pump · ${currency}`, `Prisflytt · ${currency}`, `Före/efter · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], monthlyRows);
+    const actionRows = [...data.actions.by_kind].sort((a, b) => b.estimated_savings - a.estimated_savings)
+      .map((item) => {
+        const label = item.estimated_savings > 0 ? "lägre kostnad efteråt" : item.estimated_savings < 0 ? "högre kostnad efteråt" : "ingen observerad kostnadsskillnad";
+        const li = document.createElement("li");
+        li.textContent = `${item.label}: ${item.estimated_savings > 0 ? "+" : ""}${displayNumber(item.estimated_savings)} ${currency} uppskattad skillnad, ${displayNumber(item.estimated_kwh_change)} kWh skillnad efter minus före; ${item.observations} bekräftade ändringar. ${label}.`;
+        return li;
+      });
+    $("savings-actions").replaceChildren(...actionRows);
+    if (data.action_error) $("savings-actions").textContent = data.action_error;
+    else if (!actionRows.length) $("savings-actions").textContent = "Inga bekräftade kurv- eller termostatändringar med kompletta kostnadstimmar att jämföra i perioden.";
+    const runRows = (data.heater?.runs || []).map((run) => {
+      const context = ["operation", "outdoor", "degree_minutes", "hot_water"].map((key) => {
+        const point = run.context[key];
+        const label = { operation: "Drift", outdoor: "Ute", degree_minutes: "Gradminuter", hot_water: "Varmvatten" }[key];
+        return `${label}: ${point ? `${operationText(point.value)} ${point.unit}`.trim() : "okänt"}`;
+      }).join(" · ");
+      return [
+        `${new Date(run.start * 1000).toLocaleString("sv-SE")}–${new Date(run.end * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}`,
+        duration(run.seconds), `${displayNumber(run.max_kw)} kW`, `${displayNumber(run.kwh)} kWh`,
+        `${displayNumber(run.cost)} ${currency}${run.cost === null ? " (saknar fullständigt pris)" : ""}`, context,
+      ];
+    });
+    $("savings-heater-status").textContent = data.heater_error || (data.heater
+      ? `${data.heater.run_count} observerade perioder totalt. ${data.heater.runs_truncated ? "Visar de 50 senaste. " : ""}Uppskattad elpatronkostnad ingår redan i pumpens kostnad. Början/slut kan vara okända vid dataluckor.`
+      : "Elpatronhistorik saknas.");
+    savingsTable($("savings-heater-runs"), ["Körperiod", "Drifttid", "Högsta effekt", "El", "Kostnad", "Samtidiga värden · inte säker orsak"], runRows);
+    $("savings-data").hidden = false;
+    chartRedraws.get($("savings-chart"))?.();
+  } catch (error) {
+    $("savings-status").textContent = `Kunde inte läsa besparingskalkylen: ${error.message}. Försöker igen vid nästa uppdatering.`;
+  } finally {
+    savingsBusy = false;
+    if (pendingRefreshes.delete("savings")) void refreshSavings();
+  }
 }
 
 let sourcesBusy = false;
@@ -2897,6 +3021,8 @@ async function init() {
   $("price_mode").addEventListener("change", renderPriceMode);
   $("refresh-history").addEventListener("click", () => void refreshHistory());
   $("refresh-energy").addEventListener("click", () => void refreshEnergy());
+  $("refresh-savings").addEventListener("click", () => void refreshSavings());
+  $("savings-days").addEventListener("change", () => void refreshSavings());
   $("refresh-sources").addEventListener("click", () => void refreshSources());
   $("refresh-auxiliary").addEventListener("click", () => void refreshAuxiliary());
   $("history-entity").addEventListener("change", () => { if (historyData) renderHistory(); });
@@ -2924,6 +3050,7 @@ async function init() {
   void refreshHotWater();
   void refreshLearning();
   void refreshEnergy();
+  void refreshSavings();
   void refreshAuxiliary(); void refreshSources();
   window.setInterval(refreshStatus, 15000);
   window.setInterval(refreshLearning, 900000);
@@ -2931,6 +3058,7 @@ async function init() {
   window.setInterval(refreshDashboard, 60000);
   window.setInterval(refreshHistory, 300000);
   window.setInterval(refreshEnergy, 300000);
+  window.setInterval(refreshSavings, 900000);
   window.setInterval(refreshAuxiliary, 120000);
   window.setInterval(refreshSources, 300000);
   window.setInterval(refreshForecast, 1800000);

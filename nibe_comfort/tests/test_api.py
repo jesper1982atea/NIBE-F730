@@ -334,6 +334,36 @@ class ApiTests(unittest.TestCase):
         self.ha.set_thermostat.assert_not_called()
         self.assertEqual(self.request("/api/energy", token=False)[0], 401)
 
+    def test_savings_report_validates_period_and_returns_read_only_summaries(self):
+        energy = {
+            "start": START, "end": END, "hours": [], "method": "counter",
+            "meter": {"entity_id": METER, "name": "Pumpens elmätare"},
+            "currency": "SEK", "price_error": None, "daily": [{"period": "2026-11-01", "cost": 10}],
+            "monthly": [{"period": "2026-11", "cost": 10}],
+        }
+        heater = {
+            "meter": {"entity_id": POWER, "name": "Elpatron"},
+            "daily": [{"period": "2026-11-01", "cost": 2}],
+            "monthly": [{"period": "2026-11", "cost": 2}],
+            "totals": {}, "runtime_seconds": 600, "runs": [{"start": START, "end": START + 600}],
+            "price_error": None,
+        }
+        self.controller.events.history = Mock(return_value=[])
+        with patch.object(Insights, "energy", return_value=energy) as energy_report, \
+                patch.object(Insights, "auxiliary", return_value=heater) as heater_report:
+            status, data = self.request("/api/savings?days=30")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["energy"]["daily"], energy["daily"])
+        self.assertEqual(data["heater"]["run_count"], 1)
+        self.assertEqual(data["heater"]["runs"][0]["start"], START)
+        energy_report.assert_called_once_with(self.controller.settings(), 30)
+        heater_report.assert_called_once_with(self.controller.settings(), 30)
+        self.ha.set_offset.assert_not_called()
+        self.ha.set_select.assert_not_called()
+        self.assertEqual(self.request("/api/savings?days=14")[0], 400)
+        self.assertEqual(self.request("/api/savings?days=7&days=30")[0], 400)
+        self.assertEqual(self.request("/api/savings?days=30", token=False)[0], 401)
+
     def test_energy_missing_meter_and_log_failure_are_explicit(self):
         self.assertEqual(self.request("/api/energy")[0], 502)
         self.controller.save(config(energy_entity=METER, price_entity=PRICE))

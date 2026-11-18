@@ -1,5 +1,16 @@
 # Ändringslogg
 
+## 0.2.50
+
+- Ny besparingskalkyl med pumpens faktiska kostnad per dag och månad för
+  7, 30 eller 90 hela kalenderdagar. Saknade mät- eller prisperioder redovisas
+  som dataluckor och räknas inte som noll.
+- Visar prisets tidsfördelning separat från förbrukningen och uppskattade
+  kostnadsskillnader runt bekräftade kurv- och termostatändringar. Dessa
+  uppskattningar är inte bevis på orsak eller garanterad besparing.
+- Visar elpatronens kostnad och observerade körperioder; kostnaden ingår redan
+  i pumpens totala kostnad.
+
 ## 0.2.49
 
 - Elpatronbegränsningen håller vid korta myUplink-avbrott: en begränsning som
@@ -20,27 +31,6 @@
   förbrukning.
 - Sidfoten visar ungefärligt antal installationer senaste 14 dagarna, från
   GitHubs klonstatistik. Inget skickas från din installation.
-
-## Opublicerat
-
-Fyra nya val, alla av från början. Tre av dem har ett skuggläge som bara
-skriver i händelseloggen vad regeln hade gjort, utan att ändra något.
-
-- Behovsanpassad sänkning vid dyr el: den inlärda husmodellen väljer den
-  största sänkningen (högst den inställda) där de två kallaste styrande rummen
-  förutsägs hålla sig över målet minus toleransen tills den dyra perioden är
-  slut. Pumpens fördröjning räknas med, och bara sänkningens effekt tas från
-  modellen. Annars gäller den vanliga sänkningen.
-- Solvärme (bara med en vald solcellseffektgivare): värmer solen huset sänks
-  målet 0,3 °C och baskorrigeringen står still; väntas sol de närmaste
-  12 timmarna minskas förvärmning och billig-el-höjning med 0,5.
-- Varmvatten efter vanor: duschtider per timme för vardagar och helg lärs ur
-  BT6 och sparas i tillägget (fyra veckor). Är det dyrt men en dusch brukar
-  komma inom två timmar väljs läget för billig el ändå.
-- Baskorrigeringens minne i dygn: korrigeringen bleknar mot noll, så att en
-  missad värmekälla inte gör huset för kallt i flera dygn efteråt.
-
-Idéerna kommer från EnergyWizard (murre87/energywizard); koden är egen.
 
 ## 0.2.48
 

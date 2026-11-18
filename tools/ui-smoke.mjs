@@ -73,6 +73,31 @@ const overview = {
   price: { label: "Aktuellt elpris", value: "1.4", unit: "SEK/kWh" },
   electricity_note: "Husets Tibber-värden gäller hela huset, inte bara pumpen.",
 };
+const savingsDate = (daysAgo) => new Date(now - daysAgo * 86400).toLocaleDateString("sv-SE");
+const savingsDaily = [2, 1, 0].map((daysAgo, index) => ({
+  period: savingsDate(daysAgo), kwh: 4 + index, cost: 8 + index * 2,
+  coverage_hours: 24, priced_hours: 24, complete_hours: 24, priced_complete_hours: 24, total_hours: 24,
+  price_shift: { difference: index ? 1 : -0.5 },
+}));
+const savingsFixture = (days = 30) => ({
+  days, start: now - days * 86400, end: now,
+  energy: { meter: { entity_id: "sensor.pump_energy_consumed", name: "Pumpens elmätare" },
+    method: "counter", currency: "SEK", price_error: null, daily: savingsDaily,
+    monthly: [{ period: savingsDate(0).slice(0, 7), kwh: 12, cost: 26, coverage_hours: 72,
+      priced_hours: 72, complete_hours: 72, priced_complete_hours: 72, total_hours: 72, price_shift: { difference: 1.5 } }] },
+  heater: { meter: { name: "Elpatronens effekt" }, daily: savingsDaily.map((day) => ({ ...day, kwh: 1, cost: 2 })),
+    monthly: [{ period: savingsDate(0).slice(0, 7), kwh: 3, cost: 6, complete_hours: 72,
+      priced_complete_hours: 72, total_hours: 72 }],
+    totals: {}, runtime_seconds: 900, run_count: 1, runs_truncated: false, price_error: null,
+    runs: [{ start: now - 7200, end: now - 6300, seconds: 900, max_kw: 2, kwh: 0.5, cost: 1,
+      context: { operation: { value: "Heating", unit: "" }, outdoor: { value: "3", unit: "°C" },
+        degree_minutes: null, hot_water: null } }] },
+  heater_error: null, action_error: null,
+  actions: { observations: 2, by_kind: [{ kind: "offset", label: "Kurvförskjutning", observations: 2,
+    estimated_savings: 1.25, estimated_kwh_change: 0.5 }],
+    daily: [{ period: savingsDate(1), observations: 1, estimated_savings: 0.75 }],
+    monthly: [{ period: savingsDate(0).slice(0, 7), observations: 2, estimated_savings: 1.25 }] },
+});
 const server = createServer(async (request, response) => {
   const path = request.url.slice(prefix.length);
   response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -108,6 +133,7 @@ const server = createServer(async (request, response) => {
   }
   else if (path === "/api/test") data = { now, duration_seconds: 600, test: pumpTest };
   else if (path === "/api/overview") data = overview;
+  else if (path.startsWith("/api/savings")) data = savingsFixture(Number(new URL(request.url, "http://localhost").searchParams.get("days")) || 30);
   else if (path === "/api/alarms") data = {
     active: true, code: 229, error: null, checked_at: now, rooms: [], observations: [],
     can_pause: false, reset_supported: false,
@@ -1306,6 +1332,25 @@ async function alarmChecks() {
   await alarmPage.close();
 }
 
+async function savingsChecks() {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.on("pageerror", (error) => errors.push(error.message));
+  let writes = 0;
+  page.on("request", (request) => { if (!["GET", "HEAD"].includes(request.method())) writes++; });
+  await page.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await page.waitForFunction(() => document.querySelectorAll("#savings-daily tbody tr").length === 3);
+  assert.equal(await page.locator("#savings-monthly tbody tr").count(), 1);
+  assert.match(await page.locator("#savings-metrics").textContent(), /Pumpens faktiska kostnad/);
+  assert.match(await page.locator("#savings-metrics").textContent(), /Elpatronens kostnad/);
+  assert.match(await page.locator("#savings-actions").textContent(), /Kurvförskjutning/);
+  assert.equal(await page.locator("#savings-heater-runs tbody tr").count(), 1);
+  assert.match(await page.locator("#savings-heater-runs").textContent(), /Värme/);
+  await page.selectOption("#savings-days", "7");
+  await page.waitForFunction(() => document.getElementById("savings-status").textContent.includes("Senaste 7 hela kalenderdagarna"));
+  assert.equal(writes, 0, "Savings reporting and period changes are read-only");
+  await page.close();
+}
+
 async function modeDiscoveryChecks() {
   const page = await browser.newPage();
   page.on("pageerror", (error) => errors.push(error.message));
@@ -1370,6 +1415,7 @@ async function modeDiscoveryChecks() {
 
 try {
   if (!process.env.ENERGY_ONLY) await dashboardChecks();
+  await savingsChecks();
   await modeDiscoveryChecks();
   await alarmChecks();
   await cloudAlarmChecks();
