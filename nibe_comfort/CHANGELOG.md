@@ -1,6 +1,6 @@
 # Ändringslogg
 
-## Ej släppt
+## 0.2.53
 
 - Pumpar utan elmätare (t.ex. F370) får en uppskattad elförbrukning i stället
   för ett felmeddelande: kompressorn räknas som 0,5 kW när den går (fast
