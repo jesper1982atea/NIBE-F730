@@ -93,10 +93,17 @@ const savingsFixture = (days = 30) => ({
       context: { operation: { value: "Heating", unit: "" }, outdoor: { value: "3", unit: "°C" },
         degree_minutes: null, hot_water: null } }] },
   heater_error: null, action_error: null,
-  actions: { observations: 2, by_kind: [{ kind: "offset", label: "Kurvförskjutning", observations: 2,
+ actions: { observations: 2, by_kind: [{ kind: "offset", label: "Kurvförskjutning", observations: 2,
     estimated_savings: 1.25, estimated_kwh_change: 0.5 }],
     daily: [{ period: savingsDate(1), observations: 1, estimated_savings: 0.75 }],
-    monthly: [{ period: savingsDate(0).slice(0, 7), observations: 2, estimated_savings: 1.25 }] },
+   monthly: [{ period: savingsDate(0).slice(0, 7), observations: 2, estimated_savings: 1.25 }],
+   items: [{ timestamp: now - 7200, kind: "offset", label: "Kurvförskjutning", previous: 0, value: 1,
+     unit: "steg", before: { cost: 2, kwh: 1 }, after: { cost: 1, kwh: 0.5 },
+     estimated_savings: 1, estimated_kwh_change: 0.5, contributions: { room: -1, price: 0.5 },
+     price: 1.5, price_unit: "kr/kWh", preheat: "coast" }] },
+ settings_changes: [{ timestamp: now - 3600, message: "Inställningar sparade.",
+   changes: { preheat_enabled: { from: false, to: true } } }],
+ settings_error: null,
 });
 const server = createServer(async (request, response) => {
   const path = request.url.slice(prefix.length);
@@ -1380,9 +1387,15 @@ async function savingsChecks() {
   await page.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
   await page.waitForFunction(() => document.querySelectorAll("#savings-daily tbody tr").length === 3);
   assert.equal(await page.locator("#savings-monthly tbody tr").count(), 1);
-  assert.match(await page.locator("#savings-metrics").textContent(), /Pumpens faktiska kostnad/);
-  assert.match(await page.locator("#savings-metrics").textContent(), /Elpatronens kostnad/);
-  assert.match(await page.locator("#savings-actions").textContent(), /Kurvförskjutning/);
+  const savingsMetrics = await page.locator("#savings-metrics").textContent();
+  assert.match(savingsMetrics, /Pumpens faktiska kostnad/);
+  assert.match(savingsMetrics, /Elpatronens kostnad/);
+  assert.match(savingsMetrics, /lägre kostnad än snittpris/);
+  assert.match(savingsMetrics, /Jämförda styrändringar/);
+  assert.doesNotMatch(savingsMetrics, /\+\s*\d/);
+  assert.match(await page.locator("#savings-daily thead").textContent(), /Prisets tidpunkt.*Före\/efter · skillnad/);
+  assert.match(await page.locator("#savings-actions").textContent(), /Kurvförskjutning.*styrbidrag/);
+  assert.match(await page.locator("#savings-settings").textContent(), /Förvärmning: av → på/);
   assert.equal(await page.locator("#savings-heater-runs tbody tr").count(), 1);
   assert.match(await page.locator("#savings-heater-runs").textContent(), /Värme/);
   await page.selectOption("#savings-days", "7");

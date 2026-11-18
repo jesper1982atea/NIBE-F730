@@ -1,5 +1,14 @@
 # Ändringslogg
 
+## 0.2.52
+
+- Besparingskalkylen visar kostnad och kWh före/efter varje bekräftad
+  kurv- eller termostatändring, tillsammans med de styrbidrag som ledde till
+  ändringen. Inställningsändringar visas separat med tidpunkt och värden.
+- Tar bort en missvisande sammanlagd styrändringssumma. Dag- och månadsvärden
+  markeras som observerade jämförelser, inte som bevisad eller garanterad
+  besparing; inställningsloggarna visar inte i sig deras ekonomiska effekt.
+
 ## 0.2.51
 
 - Grupperad navigering: översikt, värme, varmvatten, energi, pump och larm

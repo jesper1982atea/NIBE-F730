@@ -373,7 +373,11 @@ def change_comparisons(hours, changes, limit=20):
         after = by_start.get(boundary + 3600)
         result.append({
             "timestamp": stamp, "kind": change["kind"], "entity_id": change.get("entity_id"),
-            "value": change.get("value"), "label": change.get("label", "Återläst ändring"),
+            "previous": change.get("previous"), "value": change.get("value"),
+            "unit": change.get("unit", ""), "label": change.get("label", "Återläst ändring"),
+            "contributions": change.get("contributions"), "price": change.get("price"),
+            "price_unit": change.get("price_unit"), "target": change.get("target"),
+            "preheat": change.get("preheat"),
             "before": before, "after": after,
             "difference_kwh": after["kwh"] - before["kwh"]
             if before and after and before["kwh"] is not None and after["kwh"] is not None else None,
