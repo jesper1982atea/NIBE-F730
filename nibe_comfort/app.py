@@ -240,7 +240,10 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                         heater = insights.auxiliary(config, days)
                     except ControlError as exc:
                         heater_error = str(exc)
-                    actions, action_error = {"by_kind": [], "daily": [], "monthly": [], "observations": 0}, None
+                    actions, action_error, settings_changes = {
+                        "by_kind": [], "daily": [], "monthly": [], "items": [], "observations": 0,
+                    }, None, []
+                    settings_error = None
                     try:
                         events = controller.events.history(report["start"], report["end"])
                         changes = [
@@ -250,9 +253,17 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                             and report["start"] <= change["outcome_at"] <= report["end"]
                         ]
                         actions = action_periods(change_comparisons(report["hours"], changes, limit=None))
+                        settings_changes = [
+                            {"timestamp": event["timestamp"], "message": event["message"],
+                             "changes": event["details"].get("changes", {})}
+                            for event in events if event["kind"] == "settings_saved"
+                            and report["start"] <= event["timestamp"] <= report["end"]
+                            and event["details"].get("changes")
+                        ]
                     except (sqlite3.Error, OSError):
                         LOG.exception("Kunde inte läsa ändringsloggen för besparingskalkylen")
                         action_error = "Ändringsloggen kunde inte läsas; åtgärdernas före/efter-uppskattning saknas."
+                        settings_error = "Ändringsloggen kunde inte läsas; inställningshistoriken saknas."
                     result = {
                         "days": days, "start": report["start"], "end": report["end"],
                         "energy": {
@@ -266,6 +277,7 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                             "runs_truncated": len(heater["runs"]) > 50, "price_error": heater["price_error"],
                         } if heater else None),
                         "heater_error": heater_error, "actions": actions, "action_error": action_error,
+                        "settings_changes": settings_changes, "settings_error": settings_error,
                     }
                     self.respond(200, result)
                 elif path == "/api/energy":

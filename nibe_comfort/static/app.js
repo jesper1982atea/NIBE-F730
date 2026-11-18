@@ -31,6 +31,7 @@ let hotWaterBusy = false;
 let energyBusy = false;
 let auxiliaryBusy = false;
 let savingsBusy = false;
+let pageLayoutInitialized = false;
 const pendingRefreshes = new Set();
 const readRequests = new Map();
 let entitiesBusy = false;
@@ -1900,7 +1901,7 @@ async function refreshEnergy() {
 
 function showEnergySection(visible) {
   $("energy-section").hidden = !visible;
-  document.querySelector('.page-nav a[href="#energy-section"]').hidden = !visible;
+  document.querySelector('#classic-nav a[href="#energy-section"]').hidden = !visible;
 }
 
 function estimateText(meter) {
@@ -1955,7 +1956,9 @@ async function refreshSavings() {
     const dailyShift = data.energy.daily.filter((item) => item.price_shift)
       .reduce((sum, item) => sum + item.price_shift.difference, 0);
     const hasShift = data.energy.daily.some((item) => item.price_shift);
-    const actionSavings = data.actions.by_kind.reduce((sum, item) => sum + item.estimated_savings, 0);
+    const timingDirection = !hasShift ? "Prisets tidpunkt"
+      : dailyShift > 0 ? "Prisets tidpunkt · lägre kostnad än snittpris"
+        : dailyShift < 0 ? "Prisets tidpunkt · högre kostnad än snittpris" : "Prisets tidpunkt · ingen skillnad mot snittpris";
     const totalCoverage = data.energy.daily.reduce((sum, item) => sum + item.complete_hours, 0);
     const totalPriceCoverage = data.energy.daily.reduce((sum, item) => sum + item.priced_complete_hours, 0);
     const totalHours = data.energy.daily.reduce((sum, item) => sum + item.total_hours, 0);
@@ -1964,14 +1967,14 @@ async function refreshSavings() {
     const currency = data.energy.currency || "";
     $("savings-metrics").replaceChildren(
       metric({ label: "Pumpens faktiska kostnad · täckta timmar", value: hasCost(data.energy.daily) ? displayNumber(completeCost(data.energy.daily)) : null, unit: currency }),
-      metric({ label: "Uppskattad skillnad av prisets tidpunkt", value: hasShift ? `${dailyShift > 0 ? "+" : ""}${displayNumber(dailyShift)}` : null,
-        unit: currency, detail: "Samma kWh värderade mot respektive dags snittpris." }),
-      metric({ label: "Uppskattad skillnad efter bekräftade ändringar", value: data.actions.observations ? `${actionSavings > 0 ? "+" : ""}${displayNumber(actionSavings)}` : null,
-        unit: currency, detail: `${data.actions.observations} jämförelser · inte bevisad effekt.` }),
+      metric({ label: timingDirection, value: hasShift ? displayNumber(Math.abs(dailyShift)) : null,
+        unit: currency, detail: "Jämför samma uppmätta kWh med dygnets snittpris. Visar inte om värmen eller förbrukningen ökade." }),
+      metric({ label: "Jämförda styrändringar", value: displayNumber(data.actions.observations),
+        unit: "tillfällen", detail: "Se kostnad och kWh före/efter för varje tillfälle nedan. Det är observationer, inte en summerad eller bevisad besparing." }),
       metric({ label: "Elpatronens kostnad · ingår i pumpens kostnad", value: heaterCost === null ? null : displayNumber(heaterCost), unit: currency }),
     );
     $("savings-status").textContent = `Senaste ${days} hela kalenderdagarna · ${data.energy.meter.name}. ${data.energy.method === "estimate" ? estimateText(data.energy.meter) : data.energy.method === "power" ? "Pumpens kWh uppskattas från effekthistorik. " : ""}${data.energy.price_error || "Kostnad räknad från vald prisgivare."}${data.heater_error ? ` Elpatron: ${data.heater_error}` : data.heater?.price_error ? ` Elpatron: ${data.heater.price_error}` : ""}`;
-    $("savings-coverage").textContent = `Pumpens datatäckning: ${totalCoverage} av ${totalHours} timmar med fullständig elmätning, varav ${totalPriceCoverage} timmar även har fullständigt elpris. Dagar med luckor visar bara kompletta timmar, inte noll. Historiken beror på hur länge Home Assistant sparar Recorder-data.`;
+    $("savings-coverage").textContent = `Pumpens datatäckning: ${totalCoverage} av ${totalHours} timmar med fullständig elmätning, varav ${totalPriceCoverage} timmar även har fullständigt elpris. Dagar med luckor visar bara kompletta timmar, inte noll. Historiken beror på hur länge Home Assistant sparar Recorder-data. I tabellen betyder + lägre kostnad och − högre jämfört med respektive kolumns jämförelse.`;
     const heaterCostAt = (item) => item?.cost ?? null;
     const dateStamp = (period) => new Date(`${period}T12:00:00`).getTime() / 1000;
     drawChart($("savings-chart"), [
@@ -1988,7 +1991,7 @@ async function refreshSavings() {
         displayNumber(heater?.kwh), displayNumber(heater?.cost), `${item.priced_complete_hours}/${item.total_hours} h`,
       ];
     });
-    savingsTable($("savings-daily"), ["Dag", "Pump · kWh", `Pump · ${currency}`, `Prisflytt · ${currency}`, `Före/efter · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], dailyRows);
+    savingsTable($("savings-daily"), ["Dag", "Pump · kWh", `Pump · ${currency}`, `Prisets tidpunkt · ${currency}`, `Före/efter · skillnad · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], dailyRows);
     const monthlyRows = data.energy.monthly.map((item) => {
       const heater = monthlyHeater.get(item.period);
       const action = monthlyActions.get(item.period);
@@ -1998,17 +2001,44 @@ async function refreshSavings() {
         displayNumber(heater?.kwh), displayNumber(heater?.cost), `${item.priced_complete_hours}/${item.total_hours} h`,
       ];
     });
-    savingsTable($("savings-monthly"), ["Månad", "Pump · kWh", `Pump · ${currency}`, `Prisflytt · ${currency}`, `Före/efter · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], monthlyRows);
-    const actionRows = [...data.actions.by_kind].sort((a, b) => b.estimated_savings - a.estimated_savings)
+    savingsTable($("savings-monthly"), ["Månad", "Pump · kWh", `Pump · ${currency}`, `Prisets tidpunkt · ${currency}`, `Före/efter · skillnad · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], monthlyRows);
+    const actionRows = [...(data.actions.items || [])].reverse()
       .map((item) => {
-        const label = item.estimated_savings > 0 ? "lägre kostnad efteråt" : item.estimated_savings < 0 ? "högre kostnad efteråt" : "ingen observerad kostnadsskillnad";
+        const costDirection = item.estimated_savings > 0 ? "lägre kostnad efteråt"
+          : item.estimated_savings < 0 ? "högre kostnad efteråt" : "oförändrad kostnad";
+        const kwhDirection = item.estimated_kwh_change == null ? "kWh saknas"
+          : item.estimated_kwh_change > 0 ? `${displayNumber(Math.abs(item.estimated_kwh_change))} kWh lägre förbrukning efteråt`
+            : item.estimated_kwh_change < 0 ? `${displayNumber(Math.abs(item.estimated_kwh_change))} kWh högre förbrukning efteråt`
+              : "oförändrad förbrukning";
+        const control = item.kind === "offset" ? "Kurvförskjutning" : "Termostat";
+        const unit = item.unit || (item.kind === "offset" ? "steg" : "°C");
+        const change = `${displayNumber(item.previous)} → ${displayNumber(item.value)} ${unit}`;
+        const factors = item.contributions ? Object.entries({
+          room: "rum", weather: "väder", price: "pris", fireplace: "kamin", base_correction: "baskorrigering",
+        }).filter(([key]) => item.contributions[key] != null && item.contributions[key] !== 0)
+          .map(([key, label]) => `${label} ${displayNumber(item.contributions[key])}`).join(", ") : "";
+        const context = [
+          item.price != null ? `elpris ${displayNumber(item.price)} ${item.price_unit || ""}`.trim() : "",
+          item.preheat ? (item.preheat === "preheat" ? "förvärmning" : "dyrpris/sparläge") : "",
+          factors ? `styrbidrag (${factors})` : "",
+        ].filter(Boolean).join(" · ");
         const li = document.createElement("li");
-        li.textContent = `${item.label}: ${item.estimated_savings > 0 ? "+" : ""}${displayNumber(item.estimated_savings)} ${currency} uppskattad skillnad, ${displayNumber(item.estimated_kwh_change)} kWh skillnad efter minus före; ${item.observations} bekräftade ändringar. ${label}.`;
+        li.textContent = `${new Date(item.timestamp * 1000).toLocaleString("sv-SE")} · ${control} ${change}. Före: ${displayNumber(item.before.cost)} ${currency}, ${displayNumber(item.before.kwh)} kWh; efter: ${displayNumber(item.after.cost)} ${currency}, ${displayNumber(item.after.kwh)} kWh — ${displayNumber(Math.abs(item.estimated_savings))} ${currency} ${costDirection}, ${kwhDirection}.${context ? ` Vid beslutet: ${context}.` : ""}`;
         return li;
       });
     $("savings-actions").replaceChildren(...actionRows);
     if (data.action_error) $("savings-actions").textContent = data.action_error;
     else if (!actionRows.length) $("savings-actions").textContent = "Inga bekräftade kurv- eller termostatändringar med kompletta kostnadstimmar att jämföra i perioden.";
+    const settingsRows = (data.settings_changes || []).map((item) => {
+      const changes = Object.entries(item.changes || {})
+        .map(([key, change]) => `${fieldLabels[key] || key}: ${logValue(change.from)} → ${logValue(change.to)}`);
+      const li = document.createElement("li");
+      li.textContent = `${new Date(item.timestamp * 1000).toLocaleString("sv-SE")} · ${changes.join("; ") || item.message}`;
+      return li;
+    });
+    $("savings-settings").replaceChildren(...settingsRows);
+    if (data.settings_error) $("savings-settings").textContent = data.settings_error;
+    else if (!settingsRows.length) $("savings-settings").textContent = "Inga sparade inställningsändringar i perioden.";
     const runRows = (data.heater?.runs || []).map((run) => {
       const context = ["operation", "outdoor", "degree_minutes", "hot_water"].map((key) => {
         const point = run.context[key];
@@ -2895,9 +2925,65 @@ function communityText(community) {
   return `≈ ${n} ${n === 1 ? "installation" : "installationer"} senaste 14 dagarna`;
 }
 
+const GROUPED_VIEWS = new Set(["overview", "heat", "water", "energy", "system", "settings"]);
+
+function setPageLayout(mode, view = $("main").dataset.activeView) {
+  const main = $("main");
+  const selected = GROUPED_VIEWS.has(view) ? view : "overview";
+  main.dataset.layout = mode;
+  main.dataset.activeView = selected;
+  $("group-nav").hidden = mode !== "grouped";
+  $("classic-nav").hidden = mode !== "classic";
+  document.querySelectorAll(".group-tab").forEach((button) => {
+    button.setAttribute("aria-pressed", String(mode === "grouped" && button.dataset.viewTarget === selected));
+  });
+  try {
+    localStorage.setItem("nibe-comfort-layout-mode", mode);
+    localStorage.setItem("nibe-comfort-layout-view", selected);
+  } catch { /* storage blocked */ }
+  window.requestAnimationFrame(() => {
+    for (const chart of main.querySelectorAll(".chart")) {
+      if (chart.getClientRects().length && chart.querySelector("svg")) chartRedraws.get(chart)?.();
+    }
+  });
+}
+
+function initializePageLayout() {
+  if (pageLayoutInitialized) return;
+  pageLayoutInitialized = true;
+  let mode = "grouped", view = "overview";
+  try {
+    if (localStorage.getItem("nibe-comfort-layout-mode") === "classic") mode = "classic";
+    const savedView = localStorage.getItem("nibe-comfort-layout-view");
+    if (GROUPED_VIEWS.has(savedView)) view = savedView;
+  } catch { /* storage blocked */ }
+  setPageLayout(mode, view);
+  document.querySelectorAll(".group-tab").forEach((button) => {
+    button.addEventListener("click", () => setPageLayout("grouped", button.dataset.viewTarget));
+  });
+  $("classic-view-toggle").addEventListener("click", () => setPageLayout("classic"));
+  $("group-view-toggle").addEventListener("click", () => setPageLayout("grouped"));
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest?.('a[href^="#"]');
+    if (!link) return;
+    const target = document.getElementById(decodeURIComponent(link.hash.slice(1)));
+    if (!target) return;
+    const viewOwner = target.closest("[data-view]");
+    if ($("main").dataset.layout === "grouped" && viewOwner) {
+      setPageLayout("grouped", viewOwner.dataset.view);
+    }
+    for (let parent = target; parent; parent = parent.parentElement) {
+      if (parent.tagName === "DETAILS") parent.open = true;
+    }
+  });
+}
+
 async function init() {
+  initializePageLayout();
   makeAdvanced();
   $("adjust-offset-limits").onclick = () => {
+    const view = $("offset-limits").closest("[data-view]")?.dataset.view;
+    if ($("main").dataset.layout === "grouped" && view) setPageLayout("grouped", view);
     $("settings-panel").open = true;
     const id = lastStatus?.control_limit?.direction === "lower" ? "min_offset" : "max_offset";
     $(id).focus({ preventScroll: true });
@@ -2951,10 +3037,6 @@ async function init() {
   });
   $("settings").addEventListener("input", updateSaveState);
   $("settings").addEventListener("change", updateSaveState);
-  document.querySelectorAll(".page-nav a").forEach((link) => link.addEventListener("click", () => {
-    const target = document.querySelector(link.getAttribute("href"));
-    if (target?.tagName === "DETAILS") target.open = true;
-  }));
   document.addEventListener("toggle", (event) => {
     if (event.target.tagName !== "DETAILS" || !event.target.open) return;
     window.requestAnimationFrame(() => {

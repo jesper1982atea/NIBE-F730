@@ -318,7 +318,7 @@ class ApiTests(unittest.TestCase):
             {"id": 2, "timestamp": START + 3700, "kind": "write_observed", "message": "Återläst",
              "details": {"entity_id": "number.offset", "request_id": 1}},
             {"id": 3, "timestamp": START + 3800, "kind": "settings_saved", "message": "Inställningar sparade.",
-             "details": {}},
+             "details": {"changes": {"preheat_enabled": {"from": False, "to": True}}}},
         ])
         with patch("insights.time.time", return_value=END + 60):
             status, data = self.request("/api/energy")
@@ -348,7 +348,11 @@ class ApiTests(unittest.TestCase):
             "totals": {}, "runtime_seconds": 600, "runs": [{"start": START, "end": START + 600}],
             "price_error": None,
         }
-        self.controller.events.history = Mock(return_value=[])
+        self.controller.events.history = Mock(return_value=[
+            {"id": 4, "timestamp": START + 3800, "kind": "settings_saved",
+             "message": "Inställningar sparade.",
+             "details": {"changes": {"preheat_enabled": {"from": False, "to": True}}}},
+        ])
         with patch.object(Insights, "energy", return_value=energy) as energy_report, \
                 patch.object(Insights, "auxiliary", return_value=heater) as heater_report:
             status, data = self.request("/api/savings?days=30")
@@ -356,6 +360,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(data["energy"]["daily"], energy["daily"])
         self.assertEqual(data["heater"]["run_count"], 1)
         self.assertEqual(data["heater"]["runs"][0]["start"], START)
+        self.assertEqual(data["settings_changes"][0]["changes"]["preheat_enabled"],
+                         {"from": False, "to": True})
         energy_report.assert_called_once_with(self.controller.settings(), 30)
         heater_report.assert_called_once_with(self.controller.settings(), 30)
         self.ha.set_offset.assert_not_called()
