@@ -76,8 +76,10 @@ class HeaterReportTests(unittest.TestCase):
         self.assertFalse(any(r["start_observed"] or r["end_observed"] for r in data["runs"]))
         self.assertFalse(any(r["continues"] for r in data["runs"]))
         rows = heater_rows((3, 3))
-        rows[-1]["last_updated"] = row(POWER, 3, START + 901)["last_updated"]
-        self.assertEqual(report(rows)["runtime_seconds"], 0)
+        rows[-1]["last_updated"] = row(POWER, 3, START + 1200)["last_updated"]
+        self.assertEqual(report(rows)["runtime_seconds"], 1200, "myUplink reports only changes; a steady value holds")
+        rows[-1]["last_updated"] = row(POWER, 3, START + 7201)["last_updated"]
+        self.assertEqual(report(rows)["runtime_seconds"], 0, "but not for more than two hours without a report")
 
     def test_steady_zero_is_off_for_the_whole_period(self):
         # Issue #37: myUplink only reports on change, so a heater that stays off has a single row.

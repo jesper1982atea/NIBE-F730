@@ -332,8 +332,10 @@ def usage_intervals(meter, start, end, power=False, hold_zero=False):
             delta = previous * ((right - left) / 3600)
         elif current is not None and previous is not None:
             delta = current - previous
+        # The auxiliary heater (hold_zero) is reported by myUplink only when it changes, like the
+        # estimate built from it, so a steady non-zero value holds as long as a counter reading.
         if delta is None or not math.isfinite(delta) or delta < 0 or right - left > (
-                MAX_POWER_GAP_SECONDS if power else MAX_GAP_SECONDS):
+                MAX_POWER_GAP_SECONDS if power and not hold_zero else MAX_GAP_SECONDS):
             skipped += 1
             continue
         intervals.append((max(start, left), min(end, right), delta / (right - left)))

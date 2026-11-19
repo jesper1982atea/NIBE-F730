@@ -2355,9 +2355,9 @@ function runContext(run, keys) {
 
 function runPeriod(run, periodStart) {
   const notes = [];
-  if (!run.start_observed) notes.push(run.start <= periodStart ? "började före perioden" : "exakt start okänd, myUplink var otillgängligt");
+  if (!run.start_observed) notes.push(run.start <= periodStart ? "började före perioden" : "exakt start okänd, lucka i myUplink-datan");
   if (run.continues) notes.push("fortsatte efter periodens slut");
-  else if (!run.end_observed) notes.push("exakt stopp okänt, myUplink var otillgängligt");
+  else if (!run.end_observed) notes.push("exakt stopp okänt, lucka i myUplink-datan");
   return `${periodText(run.start, run.end)}${notes.length ? ` (${notes.join("; ")})` : ""}`;
 }
 
