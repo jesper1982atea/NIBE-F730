@@ -420,6 +420,7 @@ main[data-layout=grouped][data-active-view=settings]>[data-view]:not([data-view=
 .home-room-card .home-room-unit{color:#b8c9c1}
 .home-room-card .home-room-difference,.home-room-card .home-room-thermostat-label{color:#c8d8d1}
 .home-room-card .home-room-card-footer small{color:#b8c9c1}
+.room-area-group{display:flex;flex-direction:column}.room-area-group .home-room-grid{flex:1;grid-auto-rows:1fr}.home-room-card,:root[data-theme=dark] .home-room-card{height:100%;display:flex;flex-direction:column}
 /* Navigation tabs: only the chosen one is highlighted. */
 .page-nav .group-tab,:root[data-theme=dark] .page-nav .group-tab{background:transparent;color:var(--muted);box-shadow:none;border:0}
 .page-nav .group-tab:hover,.page-nav .group-tab[aria-pressed=true],:root[data-theme=dark] .page-nav .group-tab:hover,:root[data-theme=dark] .page-nav .group-tab[aria-pressed=true]{background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)}
