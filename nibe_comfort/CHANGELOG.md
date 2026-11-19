@@ -1,5 +1,17 @@
 # Ändringslogg
 
+## Ej släppt
+
+- Rumskorten i Hemma just nu får tillbaka sin diskreta glasstil i mörkt tema
+  (de blev helgröna av knappstilen) och småtexten går att läsa igen.
+- Navigeringen markerar bara den valda fliken.
+- Ljust tema: stora värden i översiktens rutor och förklaringen under
+  rumsgrafen syns igen.
+- Rumsnamn utan upprepat "Temperatur", en decimal och ingen tom
+  "Enhet"-rad för vanliga temperaturgivare.
+- Antal installationer (unika senaste 14 dagarna) visas som en liten etikett
+  högst upp, inte bara i sidfoten.
+
 ## 0.2.56
 
 - Gör rumskorten tydligare med separat rumstemperatur, avvikelse och

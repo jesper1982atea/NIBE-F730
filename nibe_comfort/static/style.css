@@ -412,5 +412,22 @@ main[data-layout=grouped][data-active-view=system]>[data-view]:not([data-view=sy
 main[data-layout=grouped][data-active-view=settings]>[data-view]:not([data-view=settings]){display:none}
 @media(max-width:600px){.page-nav .view-mode-toggle{margin-left:0}}
 
+/* Room cards are buttons: keep them as quiet glass tiles instead of the green action-button style. */
+.home-room-card,:root[data-theme=dark] .home-room-card{background:rgba(255,255,255,.07);color:#fff;border:1px solid rgba(255,255,255,.16);border-radius:14px;box-shadow:none;padding:14px;font-weight:400}
+.home-room-card:hover,:root[data-theme=dark] .home-room-card:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.4);filter:none}
+.home-room-card.selected,:root[data-theme=dark] .home-room-card.selected{border-color:#a9d8bd;box-shadow:inset 0 0 0 1px #a9d8bd;background:rgba(67,145,106,.16)}
+.home-room-card.too-warm,:root[data-theme=dark] .home-room-card.too-warm{border-color:rgba(227,169,71,.65)}
+.home-room-card .home-room-unit{color:#b8c9c1}
+.home-room-card .home-room-difference,.home-room-card .home-room-thermostat-label{color:#c8d8d1}
+.home-room-card .home-room-card-footer small{color:#b8c9c1}
+/* Navigation tabs: only the chosen one is highlighted. */
+.page-nav .group-tab,:root[data-theme=dark] .page-nav .group-tab{background:transparent;color:var(--muted);box-shadow:none;border:0}
+.page-nav .group-tab:hover,.page-nav .group-tab[aria-pressed=true],:root[data-theme=dark] .page-nav .group-tab:hover,:root[data-theme=dark] .page-nav .group-tab[aria-pressed=true]{background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green)}
+/* Light page, light tiles: the big values must not stay white. */
+.dashboard-context .now-tile strong,.dashboard-context .now-tile .offset-now b{color:var(--ink)}
+.dashboard-context .now-tile .offset-now{border-top-color:var(--line)}
+/* Dark hero in the light theme: use the bright series colours so the legend can be read. */
+.hero .home-temperature-panel .series-0{stroke:#4cc08f;color:#4cc08f}.hero .home-temperature-panel .series-1{stroke:#f0a35c;color:#f0a35c}.hero .home-temperature-panel .series-2{stroke:#7ea2ef;color:#7ea2ef}
+.community-badge{color:var(--muted);font-weight:600;cursor:help}
 .when-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.when-picker select{width:100%}
 .hero .now-tile a{color:#cfe8dc;font-size:13px;text-decoration:underline;text-decoration-color:rgba(207,232,220,.5);text-underline-offset:3px}.hero .now-tile a:hover{color:#fff}

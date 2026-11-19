@@ -727,6 +727,12 @@ function filterRoomPicker() {
   $("remove-room-sensors").hidden = sensors.length === 0;
 }
 
+// "Givare kök Temperatur" -> "Givare kök": the trailing measurement word repeats what the card shows.
+function roomLabel(name) {
+  const short = String(name || "").replace(/\s+(temperatur|temperature|temp)$/i, "").trim();
+  return short || String(name || "");
+}
+
 function roomTrend(room) {
   if (room.error) return room.error;
   const line = historyData?.series.find((line) => line.entity_id === room.entity_id);
@@ -770,7 +776,8 @@ function renderRoomImpact() {
       const header = document.createElement("span");
       header.className = "home-room-card-header";
       const title = document.createElement("strong");
-      title.textContent = room.name;
+      title.textContent = roomLabel(room.name);
+      title.title = room.name;
       header.append(title);
       if (tooWarm) {
         const warning = document.createElement("span");
@@ -782,7 +789,7 @@ function renderRoomImpact() {
       reading.className = "home-room-reading";
       const value = document.createElement("span");
       value.className = "home-room-temperature";
-      value.textContent = displayNumber(room.temperature);
+      value.textContent = oneDecimal(room.temperature);
       const unit = document.createElement("span");
       unit.className = "home-room-unit";
       unit.textContent = "°C";
@@ -791,7 +798,7 @@ function renderRoomImpact() {
       difference.className = "home-room-difference";
       const diff = room.temperature == null || !settings ? null : room.temperature - settings.target_temperature;
       difference.textContent = diff == null ? room.error || "Mätvärde saknas"
-        : Math.abs(diff) < 0.1 ? "Vid ditt mål" : `${displayNumber(Math.abs(diff))}° ${diff > 0 ? "över" : "under"} ditt mål`;
+        : Math.abs(diff) < 0.1 ? "Vid ditt mål" : `${oneDecimal(Math.abs(diff))}° ${diff > 0 ? "över" : "under"} ditt mål`;
       reading.append(value, difference);
       const thermostat = document.createElement("span");
       thermostat.className = "home-room-thermostat";
@@ -813,7 +820,8 @@ function renderRoomImpact() {
       note.textContent = [tags.join(" · "), control?.error || control?.message || "", control?.warning || ""].filter(Boolean).join(" · ");
       footer.append(trend);
       if (note.textContent) footer.append(note);
-      card.append(header, reading, thermostat, footer);
+      // A plain temperature sensor has no setpoint: skip the row instead of saying "Enhet: Temperaturgivare".
+      card.append(header, reading, ...(room.setpoint != null || room.thermostat_error ? [thermostat] : []), footer);
       cards.append(card);
     }
     group.append(heading, cards);
@@ -840,14 +848,14 @@ function renderHomeHistory() {
     homeRoomSelection = settings?.priority_sensors?.find((id) => lines.some((line) => line.entity_id === id))
       || lines[0]?.entity_id || "";
   }
-  select.replaceChildren(...lines.map((line) => new Option(line.name, line.entity_id)));
+  select.replaceChildren(...lines.map((line) => new Option(roomLabel(line.name), line.entity_id)));
   select.value = homeRoomSelection;
   select.disabled = lines.length === 0;
   const selected = lines.find((line) => line.entity_id === homeRoomSelection);
   const indoorSeries = selected ? [
-    { name: `${selected.name} · uppmätt`, points: selected.points, until: historyData.end, color: 0 },
+    { name: `${roomLabel(selected.name)} · uppmätt`, points: selected.points, until: historyData.end, color: 0 },
     ...(selected.kind === "climate" ? [{
-      name: `${selected.name} · termostatinställning`, points: selected.setpoints || [], until: historyData.end, color: 0, dashed: true,
+      name: `${roomLabel(selected.name)} · termostatinställning`, points: selected.setpoints || [], until: historyData.end, color: 0, dashed: true,
     }] : []),
   ] : [];
   drawChart($("home-room-chart"), indoorSeries, {
@@ -860,7 +868,7 @@ function renderHomeHistory() {
   });
   legend($("home-room-legend"), indoorSeries);
   $("home-room-history-status").textContent = selected
-    ? `${selected.name} · uppmätt temperatur senaste 24 timmarna${selected.kind === "climate" ? " · börvärde visas med streckad linje" : ""}`
+    ? `${roomLabel(selected.name)} · uppmätt temperatur senaste 24 timmarna${selected.kind === "climate" ? " · börvärde visas med streckad linje" : ""}`
     : "Välj en temperaturgivare i inställningarna för att visa rumshistorik.";
 
   const now = summaryPlan?.now || historyData?.end || Date.now() / 1000;
@@ -3032,11 +3040,20 @@ async function showVersion() {
   } catch {
     $("version").textContent = "";
   }
+  let community = null;
   try {
-    const text = communityText((await api("community")).community);
-    $("community").textContent = text ? ` · ${text}` : "";
+    community = (await api("community")).community;
   } catch {
-    $("community").textContent = "";
+    community = null;
+  }
+  const text = communityText(community);
+  $("community").textContent = text ? ` · ${text}` : "";
+  const badge = $("community-badge");
+  badge.hidden = !community;
+  if (community) {
+    const n = community.installations;
+    badge.textContent = `≈ ${n.toLocaleString("sv-SE")} ${n === 1 ? "installation" : "installationer"}`;
+    badge.title = `Unika installationer senaste 14 dagarna enligt GitHubs statistik över kloner av repot${community.updated ? ` (uppdaterad ${community.updated})` : ""}. Ungefärligt; inget skickas från din installation.`;
   }
 }
 

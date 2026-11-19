@@ -21,7 +21,7 @@ from community import Community
 
 LOG = logging.getLogger("nibe_comfort")
 STATIC = Path(__file__).parent / "static"
-COMMUNITY = Community("https://raw.githubusercontent.com/jesper1982atea/NIBE-F730/stats/anvandare.json")
+COMMUNITY = Community(os.environ.get("NIBE_COMMUNITY_URL") or "https://raw.githubusercontent.com/jesper1982atea/NIBE-F730/stats/anvandare.json")
 LOOP_RETRIES = 3
 LOOP_RETRY_SECONDS = 300
 
