@@ -718,7 +718,7 @@ async function refreshFireplaceSavings() {
       const when = Object.assign(document.createElement("strong"), {
         textContent: `${new Date(row.start * 1000).toLocaleString("sv-SE", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · ${displayNumber(Math.round(row.fire_hours * 10) / 10)} h`,
       });
-      const text = row.saved_kwh == null ? "pumpens el saknas för den tiden"
+      const text = row.saved_kwh == null ? "underlag saknas för den tiden (pumpens el eller utetemperatur)"
         : `${row.saved_kwh >= 0 ? "sparade" : "använde"} cirka ${displayNumber(Math.round(Math.abs(row.saved_kwh) * 10) / 10)} kWh${row.saved_kwh < 0 ? " mer" : ""}${row.saved_cost == null ? "" : ` (${displayNumber(Math.round(Math.abs(row.saved_cost)))} ${currency})`}`
           + ` · ${row.clear ? "tydlig skillnad" : "inom osäkerheten"} (±${displayNumber(Math.round(row.margin_kwh))} kWh)`
           + `${row.complete ? "" : ` · el för ${row.covered_hours} av ${row.window_hours} timmar`}`
