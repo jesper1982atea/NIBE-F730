@@ -693,6 +693,54 @@ function renderFireplace() {
   }) : [Object.assign(document.createElement("li"), { className: "empty", textContent: "Inga misstänkta perioder ännu." })]));
 }
 
+let fireplaceSavingsBusy = false;
+
+async function refreshFireplaceSavings() {
+  if (fireplaceSavingsBusy) return;
+  fireplaceSavingsBusy = true;
+  try {
+    const data = await api("fireplace-savings?days=30", { timeoutMs: 60000 });
+    const currency = data.currency || "kr";
+    const model = data.model;
+    const rows = data.episodes || [];
+    const t = data.totals || {};
+    $("fireplace-savings-metrics").replaceChildren(...(t.fires ? [
+      metric({ label: `Sparad el · ${t.fires} ${t.fires === 1 ? "brasa" : "brasor"}`, value: displayNumber(Math.round(t.saved_kwh)),
+        unit: "kWh", detail: `ungefär ±${displayNumber(Math.round(t.margin_kwh))} kWh` }),
+      metric({ label: t.cost_complete ? "Sparat i pengar" : "Sparat i pengar · timmar med pris", value: t.saved_cost == null ? null : displayNumber(Math.round(t.saved_cost)),
+        unit: currency, detail: "pumpens el, inte veden" }),
+      metric({ label: "Per eldad timme", value: t.fire_hours ? displayNumber(Math.round(t.saved_kwh / t.fire_hours * 10) / 10) : null,
+        unit: "kWh", detail: `${displayNumber(Math.round(t.fire_hours))} timmar eldning` }),
+    ] : []));
+    $("fireplace-savings-list").replaceChildren(...rows.slice().reverse().map((row) => {
+      const item = document.createElement("li");
+      item.className = row.clear ? "complete" : "uncertain";
+      const when = Object.assign(document.createElement("strong"), {
+        textContent: `${new Date(row.start * 1000).toLocaleString("sv-SE", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · ${displayNumber(Math.round(row.fire_hours * 10) / 10)} h`,
+      });
+      const text = row.saved_kwh == null ? "pumpens el saknas för den tiden"
+        : `${row.saved_kwh >= 0 ? "sparade" : "använde"} cirka ${displayNumber(Math.round(Math.abs(row.saved_kwh) * 10) / 10)} kWh${row.saved_kwh < 0 ? " mer" : ""}${row.saved_cost == null ? "" : ` (${displayNumber(Math.round(Math.abs(row.saved_cost)))} ${currency})`}`
+          + ` · ${row.clear ? "tydlig skillnad" : "inom osäkerheten"} (±${displayNumber(Math.round(row.margin_kwh))} kWh)`
+          + `${row.complete ? "" : ` · el för ${row.covered_hours} av ${row.window_hours} timmar`}`
+          + `${row.mean_outdoor == null ? "" : ` · ute ${oneDecimal(row.mean_outdoor)} °C`}`;
+      item.append(when, Object.assign(document.createElement("span"), { textContent: text }));
+      return item;
+    }));
+    $("fireplace-savings-status").textContent = !model
+      ? (data.has_outdoor ? "För få timmar utan brasa med pumpens el och utetemperatur för att räkna ännu (minst 72 behövs)."
+        : "Utetemperaturens historik saknas än. Den samlas av husets inlärning; titta igen om några timmar.")
+      : `Jämfört med ${displayNumber(model.hours)} timmar utan brasa (ute ${oneDecimal(model.outdoor_min)} till ${oneDecimal(model.outdoor_max)} °C), där pumpen använde i snitt ${oneDecimal(model.intercept + model.slope * ((model.outdoor_min + model.outdoor_max) / 2))} kWh i timmen.`
+        + `${rows.length ? "" : " Inga avslutade brasor i perioden."}${data.ongoing ? " En pågående brasa räknas när den och de sex timmarna efter är slut." : ""}`
+        + `${data.method === "estimate" ? " Pumpens el är uppskattad, eftersom pumpen saknar elmätare." : ""}`;
+  } catch (error) {
+    $("fireplace-savings-metrics").replaceChildren();
+    $("fireplace-savings-list").replaceChildren();
+    $("fireplace-savings-status").textContent = error.message;
+  } finally {
+    fireplaceSavingsBusy = false;
+  }
+}
+
 function limitPriorityPicker() {
   const inputs = [...$("priority_sensors").querySelectorAll("input")];
   const full = inputs.filter((input) => input.checked).length >= 2;
@@ -3343,6 +3391,8 @@ async function init() {
   void refreshEnergy();
   void refreshSavings();
   void refreshAuxiliary(); void refreshSources();
+  void refreshFireplaceSavings();
+  window.setInterval(refreshFireplaceSavings, 3600000);
   window.setInterval(refreshStatus, 15000);
   window.setInterval(refreshLearning, 900000);
   window.setInterval(refreshHotWater, 120000);

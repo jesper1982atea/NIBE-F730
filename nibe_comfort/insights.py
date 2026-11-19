@@ -18,6 +18,7 @@ from energy import CALIBRATION_DAYS, ENERGY_UNITS, ESTIMATE_BASE_KW, ESTIMATE_CO
 from auxiliary import heater_entities, heater_report
 from alarm_codes import alarm_info, alarm_label
 from savings import PERIOD_DAYS, action_periods, energy_periods, period_bounds
+from fireplace_savings import fireplace_savings
 
 
 def discover_tibber(states, registry):
@@ -1600,6 +1601,20 @@ class Insights:
         result["notes"].extend(plan["notes"])
         if (status.get("fireplace") or {}).get("active_since") is not None:
             result["notes"].append("Misstänkt extravärme: planen antar nuvarande rumstemperatur och fortsatt kaminläge. Varaktigheten är okänd; planen räknas om vid nästa avläsning.")
+        return result
+
+    def fireplace_savings(self, config, days=30):
+        """Estimated pump electricity saved by each finished fire in the period."""
+        if type(days) is not int or days not in PERIOD_DAYS:
+            raise ControlError("Välj en period på 7, 30 eller 90 dagar.")
+        if not config["fireplace_enabled"]:
+            raise ControlError("Kaminobservationen är av. Slå på den för att se vad brasorna sparar.")
+        report = self.energy(config, days)
+        outdoor_id = config["outdoor_entity"]
+        outdoor = self.store.load([outdoor_id]).get(outdoor_id, {}) if outdoor_id else {}
+        result = fireplace_savings(report["hours"], outdoor, self.fireplace_intervals(), time.time())
+        result.update(days=days, start=report["start"], end=report["end"], currency=report["currency"],
+                      method=report["method"], has_outdoor=bool(outdoor))
         return result
 
     def house_model(self, config):

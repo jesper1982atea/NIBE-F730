@@ -255,6 +255,15 @@
         </div>
         <p id="fireplace-age-help" class="hint">Standard 15 minuter. Gäller alla valda rum i kaminanalysen, även jämförelserummen. Givare som bara rapporterar ändringar kan vara tysta länge, men tystnad kan också bero på batteri-, radio- eller integrationsfel. En högre gräns kan ge osäkrare kaminbedömning och extra värmesänkning. Höj bara efter att du kontrollerat givarens rapportering. Gränsen blir aldrig längre än Högsta ålder på mätvärden och ändrar inte den vanliga rumsregeln.</p>
       </div>
+      <h3>Vad sparade brasorna? · senaste 30 dagarna</h3>
+      <p id="fireplace-savings-status" class="hint" role="status">Hämtar…</p>
+      <div id="fireplace-savings-metrics" class="live-grid"></div>
+      <ul id="fireplace-savings-list" class="feature-timeline"></ul>
+      <details class="disclosure">
+        <summary>Så räknas besparingen</summary>
+        <p>Timmar utan brasa visar hur mycket el pumpen brukar använda vid olika utetemperatur. Under en brasa och sex timmar efteråt jämförs det med vad pumpen faktiskt använde. Skillnaden är besparingen. Den inkluderar att automatiken sänker kurvan medan kaminen värmer.</p>
+        <p class="hint">Det är en uppskattning, inte en mätning. Varmvatten och avfrostning gör enskilda timmar ojämna, så varje brasa visas med en ungefärlig osäkerhet. Korta brasor syns ofta inte säkert. Kostnaden räknas med elpriset de timmarna, och den el kaminen själv inte använder ingår förstås inte: veden har också ett pris.</p>
+      </details>
       <h3>Senaste misstänkta perioder</h3>
       <ul id="fireplace-history" class="feature-timeline"></ul>
       <details class="disclosure">

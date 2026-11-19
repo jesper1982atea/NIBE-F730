@@ -321,6 +321,12 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                     self.respond(200, insights.forecast(controller.settings()["forecast_entity"]))
                 elif path == "/api/plan":
                     self.respond(200, insights.plan(controller.settings(), controller.snapshot(), controller.events.recent()))
+                elif path == "/api/fireplace-savings":
+                    values = parse_qs(urlsplit(self.path).query, keep_blank_values=True).get("days", ["30"])
+                    if len(values) != 1 or not values[0].isascii() or not values[0].isdigit() or int(values[0]) not in (7, 30, 90):
+                        self.respond(400, {"error": "Välj en period på 7, 30 eller 90 dagar."})
+                        return
+                    self.respond(200, insights.fireplace_savings(controller.settings(), int(values[0])))
                 elif path == "/api/learning":
                     self.respond(200, insights.learning(controller.settings(), controller.snapshot(), controller.events.recent()))
                 elif path == "/api/events":
