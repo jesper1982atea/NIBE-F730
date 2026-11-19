@@ -167,7 +167,8 @@ class HeaterReportTests(unittest.TestCase):
         self.assertIsNone(context_at(points, START + 900 + 601), "A longer outage is unknown")
         self.assertEqual(context_at(points[:1], START + 901)["value"], "Heating",
                          "myUplink reports only changes, so an unchanged value is still current")
-        self.assertIsNone(context_at(points[:1], START + 3 * 3600 + 1), "Older than three hours is not shown")
+        self.assertEqual(context_at(points[:1], START + 6 * 3600)["value"], "Heating", "A steady value holds for hours")
+        self.assertIsNone(context_at(points[:1], START + 24 * 3600 + 1), "Older than a day is not shown")
         data = report(contexts={"operation": [row(MODE, "Hot water", START + 299)]})
         self.assertEqual(data["runs"][0]["context"]["operation"]["value"], "Hot water")
         self.assertEqual(data["runs"][1]["context"]["operation"]["value"], "Hot water")

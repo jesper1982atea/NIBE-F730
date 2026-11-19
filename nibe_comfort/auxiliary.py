@@ -16,7 +16,7 @@ CONTEXT = {
 # myUplink writes a row only when a value changes (and again when the integration comes back
 # after an outage), so a value without newer rows is still the current one. Older than this
 # and it is no longer shown as what happened at the start of a run.
-CONTEXT_MAX_AGE_SECONDS = 3 * 3600
+CONTEXT_MAX_AGE_SECONDS = 24 * 3600
 
 
 def heater_entities(states, pump_ids):
