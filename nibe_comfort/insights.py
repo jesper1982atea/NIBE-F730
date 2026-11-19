@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
-from controller import SOURCE_ENTITIES, ControlError, alarm_code, atomic_json, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status
+from controller import SOURCE_ENTITIES, ControlError, alarm_code, atomic_json, alarm_sources, changed_at, control_rooms, current_readings, device_peers, entity_base, fresh_entity, next_step, number, price_contribution, pump_alarm, series_rank, short_date, temperature, text_status, clean_state, decimal, operation_sensors
 from learning import LearningStore, hourly_means, learn, lead_hours, predict, preheat_windows, shift_at
 from energy import CALIBRATION_DAYS, ENERGY_UNITS, ESTIMATE_BASE_KW, ESTIMATE_COMPRESSOR_KW, ESTIMATE_ID, POWER_UNITS, calibrate_compressor, consumption_report, discover_estimate, discover_meter, estimated_power_rows, hourly_energy, meter_error, price_intervals, produced_energy, pump_sources, split_sources
 from auxiliary import heater_entities, heater_report
@@ -76,8 +76,14 @@ LABELS = {
 TRANSLATIONS = {
     "Operating": "I drift", "Stopped": "Stoppad", "Off": "Av",
     "Heating": "Värme", "Hot water": "Varmvatten", "Blocked": "Blockerad",
-    "Idle": "Vilar", "Standby": "Viloläge",
+    "Idle": "Vilar", "Standby": "Viloläge", "Transfer": "Överföring", "Cooling": "Kyla",
 }
+
+
+def sv_number(value, sign=False):
+    """A number as Swedish text: decimal comma and a real minus sign (−2,3, +1,4)."""
+    text = f"{round(value, 2):+g}" if sign else f"{round(value, 2):g}"
+    return text.replace(".", ",").replace("-", "−")
 
 
 def reading(entity, label, max_age, now, peers=()):
@@ -146,18 +152,21 @@ def overview(states, registry, config, now):
         if key == "alarm":
             pump.append(alarm_reading([by_id[e] for e in pump_ids if e in by_id], label, config["max_age_minutes"], now, pump_states))
             continue
-        matches = [by_id[e] for e in pump_ids if e in by_id and entity_base(e).endswith(suffix)
-                   and e.startswith(("sensor.", "binary_sensor."))
-                   and (key != "operation" or text_status(by_id[e]))]
+        matches = operation_sensors(pump_states) if key == "operation" else [
+            by_id[e] for e in pump_ids if e in by_id and entity_base(e).endswith(suffix)
+            and e.startswith(("sensor.", "binary_sensor."))]
+        if not matches:
+            continue  # The pump does not report this value at all (e.g. no frequency on a fixed-speed compressor).
         if len(matches) != 1:
-            pump.append({"key": key, "label": label, "value": None, "error": "Ingen entydig givare hittades."})
+            pump.append({"key": key, "label": label, "value": None, "error": "Flera möjliga givare hittades."})
             continue
         # myUplink only reports changed values; other values from the same pump prove it is still online.
         item = reading(matches[0], label, config["max_age_minutes"], now, pump_states)
         item["key"] = key
         item["active"] = None
         if item["value"] is not None:
-            item["value"] = TRANSLATIONS.get(item["value"], item["value"])
+            value = clean_state(item["value"])
+            item["value"] = TRANSLATIONS.get(value, value)
         pump.append(item)
     pump_electricity = []
     for eid in sorted(pump_ids):
@@ -653,11 +662,11 @@ def planned_offsets(config, status, forecast, prices, now, end, use_prices, wind
         elif window:
             reasons.append(f"dyrt elpris, får bli {-window['shift']:g}° svalare")
         if price_adjustment > 0:
-            reasons.append(f"billigt elpris ({price:g})")
+            reasons.append(f"billigt elpris ({decimal(price)} per kWh)")
         elif price_adjustment < 0:
-            reasons.append(f"dyrt elpris ({price:g})")
+            reasons.append(f"dyrt elpris ({decimal(price)} per kWh)")
         if weather:
-            reasons.append(f"utetemperatur {outdoor:.1f} °C")
+            reasons.append(f"utetemperatur {sv_number(round(outdoor, 1))} °C")
         if room:
             reasons.append("rumstemperatur " + ("under" if room > 0 else "över") + " målet")
         if fireplace:
@@ -739,7 +748,7 @@ def actual_changes(history, events, start):
                     "source": "automatik" if match else "manuell eller annan automation", "reasons": []}
             if match:
                 c = match["details"].get("contributions", {})
-                item["reasons"] = [f"{label} {c[key]:+g}" for key, label in (
+                item["reasons"] = [f"{label} {sv_number(c[key], sign=True)}" for key, label in (
                     ("room", "rum"), ("weather", "väder"), ("price", "elpris"), ("fireplace", "kamin"))
                                    if c.get(key)]
                 kind = match["details"].get("preheat")
@@ -991,12 +1000,16 @@ class Insights:
                 ("_status", "Driftläge"), ("_status_compressor", "Kompressor"), ("_current_compressor_frequency", "Kompressorfrekvens"),
                 ("_degree_minutes", "Gradminuter"), ("_supply_line_bt2", "Framledning"),
                 ("_return_line_bt3", "Returledning"), ("_heating_medium_pump_speed_gp1", "Värmebärarpump GP1")):
-            matches = [s for s in pump_states if s["entity_id"].startswith("sensor.") and entity_base(s["entity_id"]).endswith(suffix)
-                       and (suffix != "_status" or text_status(s))]
+            matches = operation_sensors(pump_states) if suffix == "_status" else [
+                s for s in pump_states if s["entity_id"].startswith("sensor.") and entity_base(s["entity_id"]).endswith(suffix)]
             if len(matches) == 1:
-                observations.append(reading(matches[0], label, config["max_age_minutes"], now, pump_states))
-            else:
-                observations.append({"label": label, "value": None, "error": "Ingen entydig givare hittades."})
+                item = reading(matches[0], label, config["max_age_minutes"], now, pump_states)
+                if item["value"] is not None:
+                    value = clean_state(item["value"])
+                    item["value"] = TRANSLATIONS.get(value, value)
+                observations.append(item)
+            elif matches:
+                observations.append({"label": label, "value": None, "error": "Flera möjliga givare hittades."})
         rooms = [{"entity_id": r["entity_id"], "name": r["name"], "temperature": r["temperature"],
                   "setpoint": r["setpoint"], "error": r["error"] or r["thermostat_error"]}
                  for r in readings["rooms"]]

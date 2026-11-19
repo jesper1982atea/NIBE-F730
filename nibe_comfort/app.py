@@ -275,6 +275,7 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                             "totals": heater["totals"], "runtime_seconds": heater["runtime_seconds"],
                             "run_count": len(heater["runs"]), "runs": list(reversed(heater["runs"][-50:])),
                             "runs_truncated": len(heater["runs"]) > 50, "price_error": heater["price_error"],
+                            "context_sources": heater.get("context_sources", {}), "start": heater.get("start"),
                         } if heater else None),
                         "heater_error": heater_error, "actions": actions, "action_error": action_error,
                         "settings_changes": settings_changes, "settings_error": settings_error,

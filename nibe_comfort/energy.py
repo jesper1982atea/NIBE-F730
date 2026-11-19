@@ -12,6 +12,10 @@ ENERGY_UNITS = {"Wh": 0.001, "kWh": 1, "MWh": 1000}
 POWER_UNITS = {"W": 0.001, "kW": 1}
 MAX_GAP_SECONDS = 7200
 MAX_POWER_GAP_SECONDS = 900
+# myUplink drops out for a few minutes every half hour or so and Home Assistant then records
+# "unavailable" for every pump sensor. A power reading that is valid on both sides of such a
+# short outage keeps its last known value through it instead of splitting the history.
+BRIDGE_GAP_SECONDS = 600
 # House flow counters often step 0.1 kWh at a time and can stand still for hours, so an
 # increase is spread evenly over the time since the previous step, up to a day.
 MAX_SOURCE_GAP_SECONDS = 86400
@@ -281,12 +285,37 @@ def price_intervals(price_rows, price_id, end, price_max_age):
     return price_segments, currency, price_error
 
 
+def bridge_gaps(meter, max_gap=BRIDGE_GAP_SECONDS):
+    """Fill short unknown stretches in power readings with the last known value.
+
+    Only stretches that start right after a valid reading and end with a valid reading
+    within ``max_gap`` seconds are filled. Returns the readings and the filled seconds.
+    """
+    result, bridged, index = [], 0.0, 0
+    while index < len(meter):
+        stamp, value = meter[index]
+        if value is None and result and result[-1][1] is not None:
+            following = index
+            while following < len(meter) and meter[following][1] is None:
+                following += 1
+            if following < len(meter) and meter[following][0] - stamp <= max_gap:
+                held = result[-1][1]
+                result.extend((meter[i][0], held) for i in range(index, following))
+                bridged += meter[following][0] - stamp
+                index = following
+                continue
+        result.append((stamp, value))
+        index += 1
+    return result, bridged
+
+
 def usage_intervals(meter, start, end, power=False, hold_zero=False):
     """Intervals with a known rate, and how many were skipped.
 
     Auxiliary power can retain a recorded zero until its next state change or
-    ``end``. Unknown/unavailable rows break that hold. Non-zero power keeps the
-    normal gap limit and is never extrapolated after its last report.
+    ``end``. Unknown/unavailable rows break that hold. Power holds its last value
+    until the next row, also when that row is unknown (the value was current until
+    then), within the normal gap limit, and is never extrapolated after its last report.
     """
     if power and hold_zero and meter and meter[-1][0] < end and meter[-1][1] == 0:
         meter = [*meter, (end, None)]
@@ -299,8 +328,10 @@ def usage_intervals(meter, start, end, power=False, hold_zero=False):
             intervals.append((max(start, left), min(end, right), 0.0))
             continue
         delta = None
-        if current is not None and previous is not None:
-            delta = previous * ((right - left) / 3600) if power else current - previous
+        if power and previous is not None:
+            delta = previous * ((right - left) / 3600)
+        elif current is not None and previous is not None:
+            delta = current - previous
         if delta is None or not math.isfinite(delta) or delta < 0 or right - left > (
                 MAX_POWER_GAP_SECONDS if power else MAX_GAP_SECONDS):
             skipped += 1
@@ -311,6 +342,9 @@ def usage_intervals(meter, start, end, power=False, hold_zero=False):
 
 def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, price_max_age, power=False, hold_zero=False):
     meter, _ = samples(meter_rows, meter_id, power=power)
+    bridged = 0.0
+    if power:
+        meter, bridged = bridge_gaps(meter)
     price_segments, currency, price_error = price_intervals(price_rows, price_id, end, price_max_age)
     hours = [{
         "start": stamp, "end": min(end, stamp + 3600), "measured_kwh": 0.0,
@@ -356,6 +390,7 @@ def consumption_report(meter_rows, price_rows, meter_id, price_id, start, end, p
     return {
         "start": start, "end": end, "hours": hours, "totals": totals, "currency": currency,
         "price_error": price_error, "skipped_intervals": skipped, "price_shift": shift,
+        "bridged_seconds": bridged,
         "method": "power" if power else "counter",
     }
 

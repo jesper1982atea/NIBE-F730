@@ -64,13 +64,17 @@ class HeaterReportTests(unittest.TestCase):
         self.assertEqual(data["runs"][0]["kwh"], 0.25)
         self.assertEqual(data["runs"][0]["cost"], -0.5)
 
-    def test_gaps_do_not_invent_stops_starts_or_join_runs(self):
-        rows = heater_rows((3, 3, "unavailable", 3, 3))
+    def test_short_outages_join_runs_but_longer_gaps_do_not_invent_stops_or_starts(self):
+        data = report(heater_rows((3, 3, "unavailable", 3, 3)))
+        self.assertEqual(len(data["runs"]), 1, "A 5-minute myUplink outage does not split the run")
+        self.assertEqual(data["runtime_seconds"], 1200)
+        rows = heater_rows((3, 3, "unavailable", "unavailable", "unavailable", 3, 3))
         data = report(rows)
         self.assertEqual(len(data["runs"]), 2)
         self.assertEqual(data["observed_starts"], 0)
-        self.assertEqual(data["runtime_seconds"], 600)
+        self.assertEqual(data["runtime_seconds"], 900)
         self.assertFalse(any(r["start_observed"] or r["end_observed"] for r in data["runs"]))
+        self.assertFalse(any(r["continues"] for r in data["runs"]))
         rows = heater_rows((3, 3))
         rows[-1]["last_updated"] = row(POWER, 3, START + 901)["last_updated"]
         self.assertEqual(report(rows)["runtime_seconds"], 0)
@@ -102,7 +106,10 @@ class HeaterReportTests(unittest.TestCase):
                 self.assertIsNone(data["totals"]["kwh"])
                 self.assertIsNone(data["totals"]["cost"])
                 recovered = report(heater_rows((0, invalid, 0)))
-                self.assertEqual(recovered["totals"]["coverage_seconds"], 86400 - 300)
+                self.assertEqual(recovered["totals"]["coverage_seconds"], 86400, "Short outage bridged")
+                self.assertEqual(recovered["runs"], [])
+                recovered = report(heater_rows((0, invalid, invalid, invalid, 0)))
+                self.assertEqual(recovered["totals"]["coverage_seconds"], 86400 - 900)
                 self.assertEqual(recovered["runs"], [])
 
     def test_zero_history_before_window_holds_but_missing_prefix_stays_unknown(self):
@@ -149,23 +156,33 @@ class HeaterReportTests(unittest.TestCase):
         self.assertIsNone(missing["cost"])
         self.assertEqual(missing["priced_seconds"], 0)
 
-    def test_context_is_observation_at_start_without_future_or_stale_inference(self):
+    def test_context_is_last_report_at_start_without_future_or_stale_inference(self):
         points = context_history([row(MODE, "Heating", START), row(MODE, "Hot water", START + 300),
                                   row(MODE, "unavailable", START + 900)])
         self.assertIsNone(context_at(points, START - 1))
         self.assertEqual(context_at(points, START + 300)["value"], "Hot water")
         self.assertEqual(context_at(points, START + 120)["value"], "Heating")
-        self.assertIsNone(context_at(points, START + 1000))
-        self.assertIsNone(context_at(points[:1], START + 901))
+        self.assertEqual(context_at(points, START + 1000)["value"], "Hot water",
+                         "During a short myUplink outage the last report still holds")
+        self.assertIsNone(context_at(points, START + 900 + 601), "A longer outage is unknown")
+        self.assertEqual(context_at(points[:1], START + 901)["value"], "Heating",
+                         "myUplink reports only changes, so an unchanged value is still current")
+        self.assertIsNone(context_at(points[:1], START + 3 * 3600 + 1), "Older than three hours is not shown")
         data = report(contexts={"operation": [row(MODE, "Hot water", START + 299)]})
         self.assertEqual(data["runs"][0]["context"]["operation"]["value"], "Hot water")
-        self.assertIsNone(data["runs"][1]["context"]["operation"], "Too old to explain a later run")
+        self.assertEqual(data["runs"][1]["context"]["operation"]["value"], "Hot water")
+        transfer = context_history([row(MODE, "Trans\u00adfer", START)])
+        self.assertEqual(context_at(transfer, START)["value"], "Transfer")
 
     def test_numeric_status_counter_is_not_operation_context(self):
         states = heater_rows()[:1] + [row(MODE, "15001.0", START, unit_of_measurement="min", device_class="duration")]
         power, contexts = discover(states)
         self.assertEqual(power["entity_id"], POWER)
         self.assertNotIn("operation", contexts)
+        priority = "sensor.pump_priority_49994"
+        states.append(row(priority, "Hot water", START))
+        power, contexts = discover(states, registry() + [{"entity_id": priority, "platform": "myuplink", "device_id": "pump"}])
+        self.assertEqual(contexts["operation"]["entity_id"], priority, "F370: priority tells the operating mode")
 
     def test_discovery_only_uses_same_pump_power_not_total_or_energy(self):
         states = heater_rows()[:1] + [row(MODE, "Heating", START)]

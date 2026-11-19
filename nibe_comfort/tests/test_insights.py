@@ -70,8 +70,17 @@ class OverviewTests(unittest.TestCase):
         self.states.append(entity("sensor.pump_status", "15001.0", unit_of_measurement="min", device_class="duration"))
         self.registry.append({"entity_id": "sensor.pump_status", "device_id": "pump", "platform": "myuplink"})
         data = overview(self.states, self.registry, self.config, self.now)
+        self.assertFalse([item for item in data["pump"] if item["key"] == "operation"],
+                         "A value the pump does not report is left out, not shown as missing")
+        self.states.append(entity("sensor.pump_priority_49994", "Hot water"))
+        self.registry.append({"entity_id": "sensor.pump_priority_49994", "device_id": "pump", "platform": "myuplink"})
+        data = overview(self.states, self.registry, self.config, self.now)
         operation = next(item for item in data["pump"] if item["key"] == "operation")
-        self.assertIsNone(operation["value"])
+        self.assertEqual(operation["value"], "Varmvatten", "F370: the priority sensor tells the operating mode")
+        self.states[-1] = entity("sensor.pump_priority_49994", "Trans\u00adfer")
+        data = overview(self.states, self.registry, self.config, self.now)
+        operation = next(item for item in data["pump"] if item["key"] == "operation")
+        self.assertEqual(operation["value"], "Överföring", "Soft hyphens from myUplink are removed")
         self.states[-1] = entity("sensor.pump_status", "Heating")
         data = overview(self.states, self.registry, self.config, self.now)
         operation = next(item for item in data["pump"] if item["key"] == "operation")
@@ -381,7 +390,7 @@ class PlanTests(unittest.TestCase):
         changes = actual_changes(history, events, self.now - 86400)
         self.assertEqual([(c["previous"], c["offset"], c["source"]) for c in changes],
                          [(3, 2, "automatik"), (2, 1, "manuell eller annan automation")])
-        self.assertEqual(changes[0]["reasons"], ["rum -1.5"])
+        self.assertEqual(changes[0]["reasons"], ["rum −1,5"], "Swedish decimal comma and minus sign")
 
     def test_plan_endpoint_reads_history_prices_and_never_writes(self):
         cfg = config(offset_entity=self.offset, outdoor_entity=self.outdoor, price_entity="sensor.electricity_price_hem")

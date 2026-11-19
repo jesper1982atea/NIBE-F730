@@ -73,8 +73,17 @@ class EnergyTests(unittest.TestCase):
             rows = power_rows()[:4]
             rows[1]["state"] = state
             data = consumption_report(rows, price_rows(), POWER, PRICE, START, END, 7200, power=True)
-            self.assertEqual(data["totals"]["coverage_seconds"], 300)
-            self.assertEqual(data["skipped_intervals"], 2)
+            self.assertEqual(data["totals"]["coverage_seconds"], 900, "A short myUplink outage keeps the last value")
+            self.assertEqual(data["bridged_seconds"], 300)
+            self.assertEqual(data["skipped_intervals"], 0)
+            rows = power_rows()[:6]
+            for index in (1, 2, 3):
+                rows[index]["state"] = state
+            data = consumption_report(rows, price_rows(), POWER, PRICE, START, END, 7200, power=True)
+            self.assertEqual(data["totals"]["coverage_seconds"], 600,
+                             "A longer outage is not filled; the value before it counts up to the outage")
+            self.assertEqual(data["bridged_seconds"], 0)
+            self.assertEqual(data["skipped_intervals"], 3)
         rows = power_rows()
         data = consumption_report([rows[0], rows[3]], price_rows(), POWER, PRICE, START, END, 7200, power=True)
         self.assertEqual(data["totals"]["coverage_seconds"], 900)

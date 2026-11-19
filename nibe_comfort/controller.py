@@ -592,6 +592,21 @@ def text_status(entity):
     return False
 
 
+def clean_state(value):
+    """State text without the soft hyphens myUplink puts in some words ("Trans\\u00adfer")."""
+    return value.replace("\u00ad", "") if isinstance(value, str) else value
+
+
+def operation_sensors(states):
+    """Sensors that tell what the pump is doing right now (Heating, Hot water, ...).
+
+    A textual ``_status`` sensor is preferred. Pumps whose ``_status`` is a counter (F370)
+    report the same thing as ``_priority`` (Heating / Hot water / Transfer)."""
+    sensors = [s for s in states if s["entity_id"].startswith("sensor.")]
+    status = [s for s in sensors if entity_base(s["entity_id"]).endswith("_status") and text_status(s)]
+    return status or [s for s in sensors if entity_base(s["entity_id"]).endswith("_priority")]
+
+
 def fresh_entity(states, entity_id, max_age, now, peers=()):
     """Return a valid, recently reported entity.
 

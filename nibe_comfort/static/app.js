@@ -422,7 +422,9 @@ function renderSettings(formSettings = settings, preserveView = false) {
     title.textContent = entity.name;
     const measured = document.createElement("span");
     measured.className = "room-choice-temperature";
-    measured.textContent = climate ? `${displayNumber(entity.current_temperature)} °C` : `${entity.state} ${entity.unit}`;
+    const raw = Number(entity.state);
+    measured.textContent = climate ? `${oneDecimal(entity.current_temperature)} °C`
+      : `${entity.state !== "" && Number.isFinite(raw) ? oneDecimal(raw) : entity.state} ${entity.unit}`;
     const detail = document.createElement("small");
     const mode = { heat: "värme", auto: "automatik", off: "avstängd", cool: "kyla", heat_cool: "värme/kyla" }[entity.state] || entity.state;
     detail.textContent = climate
@@ -1011,6 +1013,12 @@ function niceStep(span, count) {
 }
 
 const dayAndTime = (time) => new Date(time * 1000).toLocaleString("sv-SE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+// "18 nov. 20:00 – 19 nov. 20:00", or "19 nov. 19:32–20:07" within one day.
+const periodText = (start, end) => new Date(start * 1000).toDateString() === new Date(end * 1000).toDateString()
+  ? `${dayAndTime(start)}–${clock(end)}` : `${dayAndTime(start)} – ${dayAndTime(end)}`;
+// Short myUplink outages are filled with the last known value; say so instead of hiding it.
+const bridgedText = (seconds) => seconds >= 60
+  ? ` ${displayNumber(Math.round(seconds / 60))} min med korta avbrott i myUplink har fyllts med senast kända värde.` : "";
 
 function duration(seconds) {
   const minutes = Math.round(seconds / 60);
@@ -1408,7 +1416,7 @@ function renderSummary(data) {
   if (coming.length) {
     const coldest = coming.reduce((a, b) => (b[1] < a[1] ? b : a));
     const warmest = coming.reduce((a, b) => (b[1] > a[1] ? b : a));
-    $("outdoor-forecast").textContent = `Närmaste dygnet ${displayNumber(Math.round(coldest[1]))} till ${displayNumber(Math.round(warmest[1]))} °C · kallast ${timeLabel(coldest[0], 86400 * 2)}`;
+    $("outdoor-forecast").textContent = `Närmaste dygnet ${displayNumber(Math.round(coldest[1]) || 0)} till ${displayNumber(Math.round(warmest[1]) || 0)} °C · kallast ${timeLabel(coldest[0], 86400 * 2)}`;
   } else {
     $("outdoor-forecast").textContent = data.outdoor.error ? "Prognos saknas" : "Ingen prognos vald";
   }
@@ -1878,7 +1886,7 @@ async function refreshOverview() {
     $("electricity-metrics").replaceChildren(...data.pump_electricity.map(metric), ...data.house.map(metric));
     if (data.price) $("electricity-metrics").append(metric(data.price));
     if (!data.pump_electricity.length) $("electricity-metrics").prepend(metric({
-      label: "Pumpens elförbrukning", value: null, error: "Ingen separat förbrukningsmätare hittades.",
+      label: "Pumpens elförbrukning", value: "Ingen egen mätare", detail: "Uppskattningen finns under Energi.",
     }));
     $("electricity-note").textContent = data.electricity_note;
     $("overview-status").textContent = `Senast hämtat ${new Date(data.checked_at * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.`;
@@ -1968,7 +1976,8 @@ async function refreshEnergy() {
     $("energy-data").hidden = false;
     const covered = totals.coverage_seconds / 3600;
     const priced = totals.priced_seconds / 3600;
-    $("energy-status").textContent = `${data.meter.automatic ? "Automatiskt från myUplink" : "Manuellt vald elmätare"}: ${data.meter.name}. ${dayAndTime(data.start)} – ${clock(data.end)}. Datatäckning ${displayNumber(covered)} av 24 timmar.${data.skipped_intervals ? ` ${data.skipped_intervals} intervall med lucka eller återställning utelämnade.` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
+    $("energy-status").textContent = `${periodText(data.start, data.end)}. ${data.method === "estimate" ? estimateText(data.meter)
+      : `${data.meter.automatic ? "Elmätare från myUplink" : "Vald elmätare"}: ${data.meter.name}. `}Data finns för ${displayNumber(covered)} av 24 timmar.${bridgedText(data.bridged_seconds)}${data.skipped_intervals ? ` Längre avbrott räknas inte med (${data.skipped_intervals} st).` : ""}${data.changes_error ? ` ${data.changes_error}` : ""}`;
     $("energy-metrics").replaceChildren(
       metric({ label: `${data.method === "power" || data.method === "estimate" ? "Uppskattad el" : "Använd el"} ·${totals.kwh === null ? "endast täckt del" : "hela perioden"}`,
         value: covered > 0 ? displayNumber(totals.measured_kwh) : null, unit: "kWh" }),
@@ -1976,7 +1985,7 @@ async function refreshEnergy() {
         value: priced > 0 ? displayNumber(totals.partial_cost) : null, unit: data.currency || "" }),
       priceShiftMetric(data.price_shift, data.currency || ""),
     );
-    $("energy-price-status").textContent = `${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"} · ${data.price_entity || "Ingen sparad prisgivare"}. Prissatt datatäckning ${displayNumber(priced)} av 24 timmar. ${data.method === "estimate" ? estimateText(data.meter) : data.method === "power" ? "El och kostnad uppskattas från eleffekt: senaste värdet gäller till nästa rapport, högst 15 minuter mellan rapporter. Ingen extrapolering efter sista rapporten. " : ""}${data.price_error || "Kostnaden är uppskattad utifrån mätarintervall och historiska priser."}`;
+    $("energy-price-status").textContent = `${data.price_entity ? `Elpris från ${data.price_provider === "nordpool" ? "Nord Pool" : "Tibber"}` : "Ingen sparad prisgivare"}, finns för ${displayNumber(priced)} av 24 timmar. ${data.method === "power" ? "El och kostnad uppskattas från eleffekt: senaste värdet gäller till nästa rapport, högst 15 minuter mellan rapporter. Ingen extrapolering efter sista rapporten. " : ""}${data.price_error || "Kostnaden är uppskattad utifrån mätarintervall och historiska priser."}`;
     const markers = [...historyMarkers(data.changes), ...data.settings_changes.map((change) => ({
       time: change.timestamp, label: "Inställningar sparade", short: "I", className: "done-other", title: change.label,
     }))];
@@ -2005,14 +2014,16 @@ async function refreshEnergy() {
       ]) row.insertCell().textContent = value;
     }
     $("energy-table").append(table);
-    const hourText = (hour) => !hour ? "timme utanför perioden" :
-      `${clock(hour.start)}: ${displayNumber(hour.kwh)} kWh, ${displayNumber(hour.cost)} ${data.currency || ""}`;
+    const hourText = (hour) => !hour ? "timmen är inte klar än" : hour.kwh == null ? `${clock(hour.start)}: data saknas`
+      : `${clock(hour.start)}: ${displayNumber(hour.kwh)} kWh, ${displayNumber(hour.cost)} ${data.currency || ""}`;
     const difference = (value) => `${value > 0 ? "+" : ""}${displayNumber(value)}`;
+    const differenceText = (change) => change.difference_kwh == null ? "Skillnaden kan inte räknas ut."
+      : `Skillnad (efter minus före): ${difference(change.difference_kwh)} kWh${change.difference_cost == null ? "" : `, ${difference(change.difference_cost)} ${data.currency || ""}`}.`;
     $("energy-comparisons").replaceChildren(...data.comparisons.map((change) => {
       const item = document.createElement("li");
-      const label = change.kind === "settings" ? change.label
+      const label = change.kind === "settings" ? String(change.label || "").replace(/[.\s]+$/, "")
         : `${change.kind === "offset" ? "Kurvförskjutning" : change.entity_id} → ${displayNumber(change.value)} återläst`;
-      item.textContent = `${clock(change.timestamp)} · ${label}. Före ${hourText(change.before)}. Efter ${hourText(change.after)}. Observerad skillnad (efter minus före): ${difference(change.difference_kwh)} kWh, ${difference(change.difference_cost)} ${data.currency || ""}.`;
+      item.textContent = `${clock(change.timestamp)} · ${label}. Före ${hourText(change.before)}. Efter ${hourText(change.after)}. ${differenceText(change)}`;
       return item;
     }));
     if (!data.comparisons.length) $("energy-comparisons").textContent = "Inga återlästa ändringar eller sparade inställningar under perioden.";
@@ -2037,11 +2048,11 @@ function estimateText(meter) {
   const e = meter?.estimate;
   if (!e) return "";
   const c = e.calibration;
-  const source = c?.kw ? `kalibrerat mot ${c.name || c.entity_id}: median av ${c.samples} kompressorstarter de senaste ${c.days} dagarna`
-    : c?.error ? `standardvärde, kalibreringen misslyckades: ${c.error.replace(/[.!?]+\s*$/, "")}`
-      : c ? `standardvärde, för få användbara kompressorstarter för kalibrering (${c.samples ?? 0} av ${c.starts ?? 0})`
+  const source = c?.kw ? `kalibrerat mot husets elförbrukning vid ${c.samples} kompressorstarter de senaste ${c.days} dagarna`
+    : c?.error ? `standardvärde – kalibreringen misslyckades: ${c.error.replace(/[.!?]+\s*$/, "")}`
+      : c ? `standardvärde – för få kompressorstarter för att kalibrera (${c.samples ?? 0} av ${c.starts ?? 0})`
         : "standardvärde";
-  return `Pumpen saknar elmätare, så elen uppskattas: kompressorn ${displayNumber(e.compressor_kw)} kW när den går (${source}), elpatronens rapporterade effekt och ${displayNumber(e.base_kw * 1000)} W för fläkt och cirkulationspump. Inte uppmätt. `;
+  return `Pumpen har ingen elmätare, så elen är uppskattad, inte uppmätt: kompressorn räknas som ${displayNumber(e.compressor_kw)} kW när den går (${source}), plus elpatronens egen effekt och ${displayNumber(e.base_kw * 1000)} W för fläkt och cirkulationspump. `;
 }
 
 function savingsDate(period, monthly = false) {
@@ -2102,7 +2113,7 @@ async function refreshSavings() {
         unit: "tillfällen", detail: "Se kostnad och kWh före/efter för varje tillfälle nedan. Det är observationer, inte en summerad eller bevisad besparing." }),
       metric({ label: "Elpatronens kostnad · ingår i pumpens kostnad", value: heaterCost === null ? null : displayNumber(heaterCost), unit: currency }),
     );
-    $("savings-status").textContent = `Senaste ${days} hela kalenderdagarna · ${data.energy.meter.name}. ${data.energy.method === "estimate" ? estimateText(data.energy.meter) : data.energy.method === "power" ? "Pumpens kWh uppskattas från effekthistorik. " : ""}${data.energy.price_error || "Kostnad räknad från vald prisgivare."}${data.heater_error ? ` Elpatron: ${data.heater_error}` : data.heater?.price_error ? ` Elpatron: ${data.heater.price_error}` : ""}`;
+    $("savings-status").textContent = `Senaste ${days} hela kalenderdagarna. ${data.energy.method === "estimate" ? estimateText(data.energy.meter) : `${data.energy.meter.name}. ${data.energy.method === "power" ? "Pumpens kWh uppskattas från effekthistorik. " : ""}`}${data.energy.price_error || "Kostnad räknad från vald prisgivare."}${data.heater_error ? ` Elpatron: ${data.heater_error}` : data.heater?.price_error ? ` Elpatron: ${data.heater.price_error}` : ""}`;
     $("savings-coverage").textContent = `Pumpens datatäckning: ${totalCoverage} av ${totalHours} timmar med fullständig elmätning, varav ${totalPriceCoverage} timmar även har fullständigt elpris. Dagar med luckor visar bara kompletta timmar, inte noll. Historiken beror på hur länge Home Assistant sparar Recorder-data. I tabellen betyder + lägre kostnad och − högre jämfört med respektive kolumns jämförelse.`;
     const heaterCostAt = (item) => item?.cost ?? null;
     const dateStamp = (period) => new Date(`${period}T12:00:00`).getTime() / 1000;
@@ -2111,7 +2122,9 @@ async function refreshSavings() {
       { name: "Elpatron (ingår i pumpen)", points: data.energy.daily.map((item) => [dateStamp(item.period), heaterCostAt(dailyHeater.get(item.period))]), until: data.end },
     ], { start: data.start, end: data.end, unit: ` ${currency}`, integer: false, left: 96, pad: 0.1,
       empty: "Inga hela dagar med komplett elmätning och pris.", label: "Pumpens och elpatronens kostnad dag för dag" });
-    const dailyRows = data.energy.daily.map((item) => {
+    const hasData = (item, heaterMap) => item.kwh != null || item.priced_complete_hours > 0 || heaterMap.get(item.period)?.kwh != null;
+    const firstDay = data.energy.daily.findIndex((item) => hasData(item, dailyHeater));
+    const dailyRows = (firstDay < 0 ? [] : data.energy.daily.slice(firstDay)).map((item) => {
       const heater = dailyHeater.get(item.period);
       const action = dailyActions.get(item.period);
       return [
@@ -2121,7 +2134,7 @@ async function refreshSavings() {
       ];
     });
     savingsTable($("savings-daily"), ["Dag", "Pump · kWh", `Pump · ${currency}`, `Prisets tidpunkt · ${currency}`, `Före/efter · skillnad · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], dailyRows);
-    const monthlyRows = data.energy.monthly.map((item) => {
+    const monthlyRows = data.energy.monthly.filter((item) => hasData(item, monthlyHeater)).map((item) => {
       const heater = monthlyHeater.get(item.period);
       const action = monthlyActions.get(item.period);
       return [
@@ -2168,20 +2181,17 @@ async function refreshSavings() {
     $("savings-settings").replaceChildren(...settingsRows);
     if (data.settings_error) $("savings-settings").textContent = data.settings_error;
     else if (!settingsRows.length) $("savings-settings").textContent = "Inga sparade inställningsändringar i perioden.";
+    const runKeys = data.heater ? contextKeys(data.heater) : [];
     const runRows = (data.heater?.runs || []).map((run) => {
-      const context = ["operation", "outdoor", "degree_minutes", "hot_water"].map((key) => {
-        const point = run.context[key];
-        const label = { operation: "Drift", outdoor: "Ute", degree_minutes: "Gradminuter", hot_water: "Varmvatten" }[key];
-        return `${label}: ${point ? `${operationText(point.value)} ${point.unit}`.trim() : "okänt"}`;
-      }).join(" · ");
+      const context = runContext(run, runKeys);
       return [
-        `${new Date(run.start * 1000).toLocaleString("sv-SE")}–${new Date(run.end * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}`,
+        runPeriod(run, data.heater.start ?? data.start),
         duration(run.seconds), `${displayNumber(run.max_kw)} kW`, `${displayNumber(run.kwh)} kWh`,
         `${displayNumber(run.cost)} ${currency}${run.cost === null ? " (saknar fullständigt pris)" : ""}`, context,
       ];
     });
     $("savings-heater-status").textContent = data.heater_error || (data.heater
-      ? `${data.heater.run_count} observerade perioder totalt. ${data.heater.runs_truncated ? "Visar de 50 senaste. " : ""}Uppskattad elpatronkostnad ingår redan i pumpens kostnad. Början/slut kan vara okända vid dataluckor.`
+      ? `${data.heater.run_count} observerade perioder totalt. ${data.heater.runs_truncated ? "Visar de 50 senaste. " : ""}Uppskattad elpatronkostnad ingår redan i pumpens kostnad. Korta avbrott i myUplink delar inte upp en körning.`
       : "Elpatronhistorik saknas.");
     savingsTable($("savings-heater-runs"), ["Körperiod", "Drifttid", "Högsta effekt", "El", "Kostnad", "Samtidiga värden · inte säker orsak"], runRows);
     $("savings-data").hidden = false;
@@ -2262,7 +2272,7 @@ async function refreshAuxiliary() {
     if (signature() !== requested) { pendingRefreshes.add("auxiliary"); return; }
     const totals = data.totals;
     const covered = totals.coverage_seconds / 3600;
-    $("auxiliary-status").textContent = `${data.meter.name} · ${dayAndTime(data.start)} – ${clock(data.end)}.`;
+    $("auxiliary-status").textContent = `${periodText(data.start, data.end)}. Elpatronens effekt enligt pumpen.${bridgedText(data.bridged_seconds)}`;
     $("auxiliary-status").title = data.meter.entity_id;
     $("auxiliary-current").textContent = data.current.error
       ? `Just nu: okänt. ${data.current.error}`
@@ -2288,15 +2298,12 @@ async function refreshAuxiliary() {
       head.append(th);
     }
     const body = table.createTBody();
+    const keys = contextKeys(data);
     for (const run of [...data.runs].reverse()) {
-      const context = ["operation", "outdoor", "degree_minutes", "hot_water"].map((key) => {
-        const point = run.context[key];
-        const label = { operation: "Driftläge", outdoor: "Ute", degree_minutes: "Gradminuter", hot_water: "Varmvatten" }[key];
-        return `${label}: ${point ? `${operationText(point.value)} ${point.unit}`.trim() : "okänt"}`;
-      }).join(" · ");
+      const context = runContext(run, keys);
       const row = body.insertRow();
       for (const value of [
-        `${new Date(run.start * 1000).toLocaleString("sv-SE")}–${clock(run.end)}. ${run.start_observed ? "Start observerad" : "Början okänd"}. ${run.end_observed ? "Stopp observerat" : "Slut okänt"}.`,
+        runPeriod(run, data.start),
         duration(run.seconds), `${displayNumber(run.max_kw)} kW`, `${displayNumber(run.kwh)} kWh`,
         `${displayNumber(run.cost)} ${data.currency || ""}${run.cost === null ? ` (prissatt del ${run.priced_seconds > 0 ? displayNumber(run.partial_cost) : "—"})` : ""}`,
         context,
@@ -2324,7 +2331,34 @@ async function refreshAuxiliary() {
 }
 
 function operationText(value) {
-  return ({ Heating: "Värme", "Hot water": "Varmvatten", Idle: "Vilar", Off: "Av", Operating: "I drift", Blocked: "Blockerad" })[value] || value;
+  const text = typeof value === "string" ? value.replace(/\u00ad/g, "") : value;
+  return ({ Heating: "Värme", "Hot water": "Varmvatten", Idle: "Vilar", Off: "Av", Operating: "I drift", Blocked: "Blockerad",
+    Transfer: "Överföring", Cooling: "Kyla" })[text] || text;
+}
+
+const RUN_CONTEXT = { operation: "Driftläge", outdoor: "Ute", degree_minutes: "Gradminuter", hot_water: "Varmvatten" };
+
+function contextValue(point) {
+  const number = Number(point.value);
+  return point.value !== "" && Number.isFinite(number) ? `${oneDecimal(number)} ${point.unit || ""}`.trim() : operationText(point.value);
+}
+
+// Only values this pump reports: one missing at a single start is "okänt", one the pump never reports is left out.
+function contextKeys(data) {
+  return Object.keys(RUN_CONTEXT).filter((key) => (data.context_sources && Object.keys(data.context_sources).length)
+    ? key in data.context_sources : (data.runs || []).some((run) => run.context?.[key]));
+}
+
+function runContext(run, keys) {
+  return keys.map((key) => `${RUN_CONTEXT[key]}: ${run.context?.[key] ? contextValue(run.context[key]) : "okänt"}`).join(" · ") || "—";
+}
+
+function runPeriod(run, periodStart) {
+  const notes = [];
+  if (!run.start_observed) notes.push(run.start <= periodStart ? "började före perioden" : "exakt start okänd, myUplink var otillgängligt");
+  if (run.continues) notes.push("fortsatte efter periodens slut");
+  else if (!run.end_observed) notes.push("exakt stopp okänt, myUplink var otillgängligt");
+  return `${periodText(run.start, run.end)}${notes.length ? ` (${notes.join("; ")})` : ""}`;
 }
 
 function renderHistory() {
