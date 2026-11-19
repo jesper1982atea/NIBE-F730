@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 0.2.55
+
+- Hemma just nu visar klickbara rumskort med aktuell temperatur,
+  avvikelse från målet och termostatens börvärde.
+- Visa temperaturhistorik för ett valt rum och en separat utetemperaturgraf.
+  Uppmätta värden och väderprognos skiljs åt visuellt.
+
 ## 0.2.54
 
 - Måltemperatur, innetemperatur, uteväder och nästa värmejustering visas
