@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 0.2.56
+
+- Gör rumskorten tydligare med separat rumstemperatur, avvikelse och
+  termostatbörvärde.
+- Tar bort den stora orange varmrumsrutan och visar i stället en diskret
+  markering på berörda rumskort.
+
 ## 0.2.55
 
 - Hemma just nu visar klickbara rumskort med aktuell temperatur,

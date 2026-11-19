@@ -293,7 +293,7 @@ async function homeOverviewChecks() {
   assert.equal(await page.locator("#home-history-entity").inputValue(), thermostat, "The prioritized thermostat is selected first");
   assert.equal(await page.locator(`#room-impact-list button[aria-pressed="true"]`).count(), 1);
   assert.match(await page.locator("#home-room-legend").textContent(), /uppmätt.*termostatinställning/);
-  assert.match(await page.locator("#room-impact-list").textContent(), /Termostat inställd på 26 °C/);
+  assert.match(await page.locator("#room-impact-list").textContent(), /Termostatens börvärde26 °C/);
   assert.match(await page.locator("#home-weather-legend").textContent(), /Uppmätt ute.*Prognos ute/);
   assert.match(await page.locator("#home-weather-status").textContent(), /streckad linje = prognos/);
   await page.locator("#room-impact-list button").filter({ hasText: "Vardagsrum" }).click();
@@ -786,7 +786,7 @@ async function dashboardChecks() {
     assert.equal(await priorityPage.locator("#settings-save-status").textContent(), "Inga osparade ändringar.", order.join());
   }
   assert.equal(await priorityPage.locator("#house-indoor").textContent(), "23");
-  assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), false);
+  assert.equal(await priorityPage.locator("#warm-room-warning").count(), 0, "The large orange explainer is removed");
   await priorityPage.locator("#settings-panel > summary").click();
   await priorityPage.locator('#priority_sensors input[value="sensor.living"]').check();
   priorityPage.once("dialog", (dialog) => dialog.accept());
@@ -799,13 +799,13 @@ async function dashboardChecks() {
   await priorityPage.waitForFunction(() => !document.getElementById("history-status").textContent.startsWith("Hämtar"));
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /\+1 °C senaste timmen/, await priorityPage.locator("#history-status").textContent());
   const livingCard = priorityPage.locator("#room-impact-list .home-room-card").filter({ hasText: "Vardagsrum" });
-  assert.match(await livingCard.textContent(), /21 °C.*1° under ditt mål.*Prioriterat rum · Termostat inställd på 20 °C/);
+  assert.match(await livingCard.textContent(), /21°C.*1° under ditt mål.*Termostatens börvärde20 °C.*Prioriterat/);
   assert.equal(await priorityPage.locator("#room-impact-list .room-area-group").count(), 3);
   assert.match(await priorityPage.locator("#history-area-status").textContent(), /rumstilldelningen i Home Assistant/);
   const allrumCard = priorityPage.locator(".thermostat-history").filter({ hasText: "Allrum" });
   assert.match(await allrumCard.textContent(), /LK Allrum.*Övertemperaturbegränsning/);
   assert.match(await allrumCard.locator(".room-history-changes").textContent(), /Övertemperaturbegränsning/);
-  assert.match(await priorityPage.locator("#room-impact-list").textContent(), /25 °C3° över ditt mål/);
+  assert.match(await priorityPage.locator("#room-impact-list").textContent(), /25°C3° över ditt mål/);
   assert.match(await priorityPage.locator("#comfort-advice").textContent(), /Vardagsrum.*inställd på 20 °C.*begränsa värmen/);
   assert.match(await priorityPage.locator("#comfort-advice").textContent(), /Andra rum är redan minst 2 °C/);
   assert.match(await priorityPage.locator("#comfort-change").textContent(), /3 → 4.*Jämför uppmätta/);
@@ -846,9 +846,11 @@ async function dashboardChecks() {
   await priorityPage.locator("#refresh-events").click();
   await priorityPage.waitForFunction(() => document.getElementById("comfort-change").textContent.includes("Loggen kan inte nås"));
   assert.equal(await priorityPage.locator("#comfort-response li").count(), 0);
-  assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), true);
-  assert.match(await priorityPage.locator("#warm-room-summary").textContent(), /24 °C.*planerar ändå att höja/);
-  assert.match(await priorityPage.locator("#warm-room-list").textContent(), /LK Badrum.*25 °C.*3° över målet.*\+1 °C senaste timmen/);
+  assert.equal(await priorityPage.locator("#warm-room-warning").count(), 0);
+  const warmCard = priorityPage.locator("#room-impact-list .home-room-card.too-warm").filter({ hasText: "LK Badrum" });
+  assert.equal(await warmCard.locator(".home-room-warning").textContent(), "Över gränsen");
+  assert.match(await warmCard.getAttribute("aria-label"), /över varmgränsen/);
+  assert.match(await warmCard.textContent(), /25°C.*3° över ditt mål.*\+1 °C senaste timmen/);
   assert.equal(await priorityPage.locator("#room-impact-list .too-warm").count(), 1);
   await priorityPage.locator(`#priority_sensors input[value="${thermostat}"]`).check();
   assert.equal(await priorityPage.locator(`#priority_sensors input[value="${thirdRoom}"]`).isDisabled(), true);
@@ -869,7 +871,7 @@ async function dashboardChecks() {
   await priorityPage.locator("#save").click();
   await priorityPage.waitForFunction(() => document.getElementById("indoor-label").textContent === "Inne nu");
   assert.deepEqual(priorityConfig.priority_sensors, []);
-  assert.equal(await priorityPage.locator("#warm-room-warning").isVisible(), false);
+  assert.equal(await priorityPage.locator("#warm-room-warning").count(), 0);
   await priorityPage.close();
   const thermostatPage = await testPage({ viewport: { width: 1280, height: 1000 } });
   thermostatPage.on("pageerror", (error) => errors.push(error.message));
@@ -1211,7 +1213,7 @@ async function fireplaceChecks() {
   assert.match(await firePage.locator("#fireplace-effects").textContent(), /Vardagsrum.*0,4 °C.*45 min.*Inte säkert/);
   assert.match(await firePage.locator("#fireplace-history").textContent(), /avbruten\/osäker/);
   assert.match(await firePage.locator("#fireplace-control").textContent(), /kaminbidrag −1.*Övervakning/);
-  assert.match(await firePage.locator("#room-impact-list").textContent(), /Prioriterat rum.*Kaminrum/);
+  assert.match(await firePage.locator("#room-impact-list").textContent(), /Prioriterat · Kaminrum/);
   assert.equal(fireWrites, 1, "Rendering suspected extra heat must not save or send new commands");
   assert.equal(await firePage.locator("#fireplace_max_age_minutes").inputValue(), "15");
   assert.match(await firePage.locator("#fireplace-age-help").textContent(), /tystnad.*fel.*osäkrare/);
