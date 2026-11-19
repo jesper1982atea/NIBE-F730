@@ -1,5 +1,28 @@
 # Ändringslogg
 
+## Ej släppt
+
+- Korta avbrott i myUplink (högst 10 minuter) fylls med senast kända värde
+  i stället för att ge luckor. Timvärden, elpatronens körningar och
+  besparingsdagarna får därför data för nästan alla timmar.
+- Elpatronens körningar: ett stadigt värde gäller till nästa rapport (högst
+  2 timmar), körningar delas inte upp av avbrott, och "pågick vid periodens
+  slut" eller "exakt stopp okänt" visas i klartext. Elpatronens kWh stämmer
+  nu med pumpens totala uppskattning.
+- Värden vid elpatronstart: driftläge från prioritetsgivaren när
+  statusgivaren är en räknare (F370), senast rapporterat värde (högst ett
+  dygn), och värden pumpen saknar (som gradminuter) visas inte.
+- Pumpkortet och larmkortet visar inte värden som pumpen inte har.
+- Energi: perioden med båda datumen, uppskattningen förklaras en gång,
+  "data saknas" i stället för streck, "ingen ändring" i besparingstabellen,
+  tom före/efter-kolumn döljs och tomma dagar före historiken visas inte.
+- Inlärning: med gott om data men inget rimligt samband förklarar texten
+  varför, i stället för att be om fler kurvändringar.
+- Pauser loggas med orsak. Sol och batteri säger hur många timmar som inte
+  kunde fördelas och varför.
+- Svensk talformatering i värmeplanens skäl, rumslistan och
+  kurvförskjutningens givare; inget "−0".
+
 ## 0.2.57
 
 - Rumskorten i Hemma just nu får tillbaka sin diskreta glasstil i mörkt tema
