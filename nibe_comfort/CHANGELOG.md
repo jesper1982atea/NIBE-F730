@@ -11,6 +11,7 @@
   "Enhet"-rad för vanliga temperaturgivare.
 - Antal installationer (unika senaste 14 dagarna) visas som en liten etikett
   högst upp, inte bara i sidfoten.
+- Rumskorten i samma rad blir lika höga även när ett rum har en rad mindre text.
 
 ## 0.2.56
 
