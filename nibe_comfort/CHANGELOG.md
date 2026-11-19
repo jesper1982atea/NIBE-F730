@@ -1,6 +1,6 @@
 # Ändringslogg
 
-## Ej släppt
+## 0.2.57
 
 - Rumskorten i Hemma just nu får tillbaka sin diskreta glasstil i mörkt tema
   (de blev helgröna av knappstilen) och småtexten går att läsa igen.
