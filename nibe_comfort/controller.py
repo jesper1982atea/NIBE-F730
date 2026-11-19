@@ -2719,7 +2719,7 @@ class Controller:
                 self.status = result
             except ControlError as exc:
                 if self.last_error != str(exc):
-                    self.events.add("paused", "Styrningen pausad på grund av fel.", error=str(exc))
+                    self.events.add("paused", f"Styrningen pausad: {str(exc).rstrip('.')}.", error=str(exc))
                     self.last_error = str(exc)
                 self.status = {
                     **result, **readings,

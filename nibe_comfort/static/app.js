@@ -291,7 +291,7 @@ function entityHints() {
     ? `Utegivare: ${outdoor.name} · ${outdoor.state} ${outdoor.unit}`
     : "Ingen utegivare vald.";
   $("offset-details").textContent = offset
-    ? `Rapporterat värde: ${offset.state}. Intervall: ${offset.min} till ${offset.max}. Steglängd: ${offset.step}. Enhet: ${offset.unit || "saknas"}.`
+    ? `Rapporterat värde: ${displayNumber(Number(offset.state))}. Intervall: ${displayNumber(Number(offset.min))} till ${displayNumber(Number(offset.max))}. Steglängd: ${displayNumber(Number(offset.step))}.${offset.unit ? ` Enhet: ${offset.unit}.` : ""}`
     : "Utan vald entitet kan du se temperaturförslag, men inte styra pumpen.";
   const price = entities.find((entity) => entity.entity_id === $("price_entity").value);
   $("price-unit").textContent = price
@@ -2070,6 +2070,16 @@ function withoutEmptyActions(headers, rows) {
   return [drop(headers), rows.map(drop)];
 }
 
+// Why some pump hours have no source split: no pump estimate, no house data, or the pump estimate exceeded the house.
+function unallocatedText(data) {
+  const house = new Map((data.house || []).map((hour) => [hour.start, hour.house_kwh]));
+  const missing = (data.pump || []).filter((hour) => hour.grid_kwh == null);
+  const over = missing.filter((hour) => hour.kwh != null && house.get(hour.start) != null && hour.kwh > house.get(hour.start));
+  const count = missing.length === 1 ? "1 timme" : `${missing.length} timmar`;
+  return ` ${count} av ${(data.pump || []).length} kunde inte fördelas${over.length === missing.length
+    ? " eftersom pumpens uppskattade el var större än hela husets förbrukning den timmen" : over.length ? ", bland annat för att pumpens uppskattning var större än husets förbrukning" : " eftersom underlag saknades"}. Källor och kostnad gäller bara övriga timmar.`;
+}
+
 function savingsTable(container, headers, rows) {
   const table = document.createElement("table");
   const head = table.createTHead().insertRow();
@@ -2248,7 +2258,7 @@ async function refreshSources() {
     legend($("sources-legend"), [{ name: "Elnät" }, { name: "Sol" }, { name: "Batteri" }]);
     const p = data.pump_totals;
     $("sources-pump").textContent = p
-      ? `Pumpen · uppskattat: ${displayNumber(p.kwh)} kWh, varav ${displayNumber(p.solar_kwh)} från sol, ${displayNumber(p.battery_kwh)} från batteri och ${displayNumber(p.grid_kwh)} från elnätet.${p.grid_cost != null ? ` Uppskattat elpris för nätandel ${displayNumber(p.grid_cost)} ${data.currency || ""}; teoretiskt värde för lokal andel ${displayNumber(p.avoided_cost)} ${data.currency || ""}, före exempelvis ersättning för såld el.` : ""}${p.complete ? "" : " Alla timmar kunde inte fördelas; siffrorna för källor och kostnad gäller bara timmar med underlag."}`
+      ? `Pumpen · uppskattat: ${displayNumber(p.kwh)} kWh, varav ${displayNumber(p.solar_kwh)} från sol, ${displayNumber(p.battery_kwh)} från batteri och ${displayNumber(p.grid_kwh)} från elnätet.${p.grid_cost != null ? ` Uppskattat elpris för nätandel ${displayNumber(p.grid_cost)} ${data.currency || ""}; teoretiskt värde för lokal andel ${displayNumber(p.avoided_cost)} ${data.currency || ""}, före exempelvis ersättning för såld el.` : ""}${p.complete ? "" : unallocatedText(data)}`
       : "Pumpens andel visas när en elmätare för pumpen är vald under Inställningar → Din värmepump.";
     $("sources-pump").title = p ? "" : data.pump_error || "";
     $("sources-data").hidden = false;

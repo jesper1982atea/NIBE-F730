@@ -228,8 +228,16 @@ def learn(indoor, outdoor, offset, now):
     model = fit(indoor, outdoor, offset)
     facts = describe(model["beta"], model["lag"]) if model else None
     if not facts:
-        result["message"] = ("Lär sig: mätvärdena räcker inte än för att se hur huset svarar på värmekurvan. "
-                             "Det blir bättre när kurvan har ändrats några gånger.")
+        if hours >= GOOD_HOURS and changes >= GOOD_CHANGES:
+            # Plenty of data, but no physically sensible answer: usually short back-and-forth changes that a slow
+            # house never shows, or other heat (fireplace, sun) that moves the rooms more than the curve does.
+            result["message"] = (f"Har {shown} dygn och {changes} kurvändringar, men ser ännu inget tydligt samband "
+                                 "mellan kurvan och rumstemperaturen. Det händer när kurvan ändras fram och tillbaka "
+                                 "snabbare än huset hinner reagera, eller när kamin och sol påverkar rummen mer. "
+                                 f"Förvärmningen använder standardvärdet {DEFAULT_LEAD} timmar innan.")
+        else:
+            result["message"] = ("Lär sig: mätvärdena räcker inte än för att se hur huset svarar på värmekurvan. "
+                                 "Det blir bättre när kurvan har ändrats några gånger.")
         return result
     result.update(beta=model["beta"], lag=model["lag"], skill=model["skill"], r2=round(model["r2"], 3), facts=facts)
     good = hours >= GOOD_HOURS and changes >= GOOD_CHANGES and model["skill"] is not None and model["skill"] >= GOOD_SKILL

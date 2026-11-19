@@ -73,6 +73,22 @@ class ModelTests(unittest.TestCase):
         flat = {h: 21.0 for h in indoor}
         self.assertEqual(learn(flat, outdoor, {h: 0 for h in indoor}, 0)["status"], "learning")
 
+    def test_plenty_of_data_without_a_sensible_answer_says_so(self):
+        # Offset flips every hour while the rooms follow something else (fireplace, sun): no curve effect to see.
+        rng = random.Random(7)
+        start = 1_700_000_000 - 1_700_000_000 % 3600
+        hours = [start + i * 3600 for i in range(10 * 24)]
+        offset = {h: (i % 2) * 2 - 1 for i, h in enumerate(hours)}
+        indoor, value = {}, 21.0
+        for h in hours:
+            value += rng.uniform(-0.3, 0.3) - 0.05 * (value - 21.0)
+            indoor[h] = value
+        outdoor = {h: 0.0 for h in hours}
+        model = learn(indoor, outdoor, offset, hours[-1])
+        self.assertEqual(model["status"], "learning")
+        self.assertIn("inget tydligt samband", model["message"])
+        self.assertNotIn("räcker inte än", model["message"])
+
     def test_prediction_moves_towards_new_equilibrium(self):
         start, indoor, outdoor, offset = synthetic_house()
         model = learn(indoor, outdoor, offset, 0)
