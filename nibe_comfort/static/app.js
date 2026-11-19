@@ -2062,6 +2062,14 @@ function savingsDate(period, monthly = false) {
     : new Date(year, month - 1, day, 12).toLocaleDateString("sv-SE", { weekday: "short", day: "numeric", month: "short" });
 }
 
+// The before/after column (index 4) only means something when the change log has comparisons in the period;
+// a new installation or one in monitoring mode has none, so the column is left out instead of a row of dashes.
+function withoutEmptyActions(headers, rows) {
+  if (rows.some((row) => row[4] !== "ingen ändring")) return [headers, rows];
+  const drop = (values) => values.filter((_, index) => index !== 4);
+  return [drop(headers), rows.map(drop)];
+}
+
 function savingsTable(container, headers, rows) {
   const table = document.createElement("table");
   const head = table.createTHead().insertRow();
@@ -2129,21 +2137,21 @@ async function refreshSavings() {
       const action = dailyActions.get(item.period);
       return [
         savingsDate(item.period), displayNumber(item.kwh), displayNumber(item.cost), displayNumber(item.price_shift?.difference),
-        action ? `${action.estimated_savings > 0 ? "+" : ""}${displayNumber(action.estimated_savings)}` : "—",
+        action ? `${action.estimated_savings > 0 ? "+" : ""}${displayNumber(action.estimated_savings)}` : "ingen ändring",
         displayNumber(heater?.kwh), displayNumber(heater?.cost), `${item.priced_complete_hours}/${item.total_hours} h`,
       ];
     });
-    savingsTable($("savings-daily"), ["Dag", "Pump · kWh", `Pump · ${currency}`, `Prisets tidpunkt · ${currency}`, `Före/efter · skillnad · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], dailyRows);
+    savingsTable($("savings-daily"), ...withoutEmptyActions(["Dag", "Pump · kWh", `Pump · ${currency}`, `Prisets tidpunkt · ${currency}`, `Före/efter · skillnad · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], dailyRows));
     const monthlyRows = data.energy.monthly.filter((item) => hasData(item, monthlyHeater)).map((item) => {
       const heater = monthlyHeater.get(item.period);
       const action = monthlyActions.get(item.period);
       return [
         savingsDate(item.period, true), displayNumber(item.kwh), displayNumber(item.cost), displayNumber(item.price_shift?.difference),
-        action ? `${action.estimated_savings > 0 ? "+" : ""}${displayNumber(action.estimated_savings)}` : "—",
+        action ? `${action.estimated_savings > 0 ? "+" : ""}${displayNumber(action.estimated_savings)}` : "ingen ändring",
         displayNumber(heater?.kwh), displayNumber(heater?.cost), `${item.priced_complete_hours}/${item.total_hours} h`,
       ];
     });
-    savingsTable($("savings-monthly"), ["Månad", "Pump · kWh", `Pump · ${currency}`, `Prisets tidpunkt · ${currency}`, `Före/efter · skillnad · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], monthlyRows);
+    savingsTable($("savings-monthly"), ...withoutEmptyActions(["Månad", "Pump · kWh", `Pump · ${currency}`, `Prisets tidpunkt · ${currency}`, `Före/efter · skillnad · ${currency}`, "Elpatron · kWh", `Elpatron · ${currency}`, "Prisdata"], monthlyRows));
     const actionRows = [...(data.actions.items || [])].reverse()
       .map((item) => {
         const costDirection = item.estimated_savings > 0 ? "lägre kostnad efteråt"
