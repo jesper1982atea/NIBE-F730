@@ -758,51 +758,66 @@ function renderRoomImpact() {
       card.type = "button";
       card.className = "home-room-card";
       card.classList.toggle("selected", room.entity_id === homeRoomSelection);
+      const tooWarm = lastStatus.warm_rooms?.includes(room.entity_id) || false;
+      card.classList.toggle("too-warm", tooWarm);
       card.setAttribute("aria-pressed", String(room.entity_id === homeRoomSelection));
+      card.setAttribute("aria-label", `${room.name}, ${displayNumber(room.temperature)} °C${room.setpoint != null ? `, termostat ${displayNumber(room.setpoint)} °C` : ""}${tooWarm ? ", över varmgränsen" : ""}. Visa historik för rummet.`);
       card.addEventListener("click", () => {
         homeRoomSelection = room.entity_id;
         renderHomeHistory();
         renderRoomImpact();
       });
+      const header = document.createElement("span");
+      header.className = "home-room-card-header";
       const title = document.createElement("strong");
       title.textContent = room.name;
+      header.append(title);
+      if (tooWarm) {
+        const warning = document.createElement("span");
+        warning.className = "home-room-warning";
+        warning.textContent = "Över gränsen";
+        header.append(warning);
+      }
+      const reading = document.createElement("span");
+      reading.className = "home-room-reading";
       const value = document.createElement("span");
       value.className = "home-room-temperature";
-      value.textContent = `${displayNumber(room.temperature)} °C`;
+      value.textContent = displayNumber(room.temperature);
+      const unit = document.createElement("span");
+      unit.className = "home-room-unit";
+      unit.textContent = "°C";
+      value.append(unit);
       const difference = document.createElement("span");
       difference.className = "home-room-difference";
       const diff = room.temperature == null || !settings ? null : room.temperature - settings.target_temperature;
       difference.textContent = diff == null ? room.error || "Mätvärde saknas"
         : Math.abs(diff) < 0.1 ? "Vid ditt mål" : `${displayNumber(Math.abs(diff))}° ${diff > 0 ? "över" : "under"} ditt mål`;
+      reading.append(value, difference);
+      const thermostat = document.createElement("span");
+      thermostat.className = "home-room-thermostat";
+      const thermostatLabel = document.createElement("span");
+      thermostatLabel.className = "home-room-thermostat-label";
+      thermostatLabel.textContent = room.setpoint != null ? "Termostatens börvärde" : "Enhet";
+      const setpoint = document.createElement("strong");
+      setpoint.textContent = room.setpoint != null ? `${displayNumber(room.setpoint)} °C` : "Temperaturgivare";
+      thermostat.append(thermostatLabel, setpoint);
+      const control = lastStatus?.thermostat_control?.rooms.find((entry) => entry.entity_id === room.entity_id);
+      if (room.setpoint == null && room.thermostat_error) setpoint.textContent = room.thermostat_error;
+      const footer = document.createElement("span");
+      footer.className = "home-room-card-footer";
       const trend = document.createElement("small");
       trend.textContent = roomTrend(room);
-      const metadata = document.createElement("small");
-      const control = lastStatus?.thermostat_control?.rooms.find((entry) => entry.entity_id === room.entity_id);
-      const details = [
-        room.priority ? "Prioriterat rum" : "",
-        room.nearest ? "Närmast pumpen" : "",
-        settings?.fireplace_rooms.includes(room.entity_id) ? "Kaminrum" : "",
-        room.setpoint != null ? `Termostat inställd på ${displayNumber(room.setpoint)} °C` : room.thermostat_error || "",
-        [control?.error || control?.message || "", control?.warning || ""].filter(Boolean).join(" "),
-      ].filter(Boolean);
-      metadata.textContent = details.join(" · ") || "Temperaturgivare";
-      card.classList.toggle("too-warm", lastStatus.warm_rooms?.includes(room.entity_id) || false);
-      card.append(title, value, difference, trend, metadata);
+      const tags = [room.priority ? "Prioriterat" : "", room.nearest ? "Närmast pumpen" : "",
+        settings?.fireplace_rooms.includes(room.entity_id) ? "Kaminrum" : ""].filter(Boolean);
+      const note = document.createElement("small");
+      note.textContent = [tags.join(" · "), control?.error || control?.message || "", control?.warning || ""].filter(Boolean).join(" · ");
+      footer.append(trend);
+      if (note.textContent) footer.append(note);
+      card.append(header, reading, thermostat, footer);
       cards.append(card);
     }
     group.append(heading, cards);
     return group;
-  }));
-  renderHomeHistory();
-  const warm = (lastStatus?.rooms || []).filter((room) => lastStatus.warm_rooms?.includes(room.entity_id));
-  $("warm-room-warning").hidden = !warm.length;
-  $("warm-room-summary").textContent = warm.length
-    ? `Varningsgräns ${displayNumber(lastStatus.warm_room_limit)} °C (2° över ditt mål). ${lastStatus.enabled && lastStatus.next_offset > lastStatus.current_offset ? "Automatiken planerar ändå att höja förskjutningen för de prioriterade rummen." : "Följ dessa rum när du värmer de prioriterade rummen."}`
-    : "";
-  $("warm-room-list").replaceChildren(...warm.map((room) => {
-    const item = document.createElement("li");
-    item.textContent = `${room.name}: ${oneDecimal(room.temperature)} °C · ${oneDecimal(room.temperature - settings.target_temperature)}° över målet · ${roomTrend(room)}`;
-    return item;
   }));
   renderComfort();
   const control = lastStatus?.thermostat_control;
