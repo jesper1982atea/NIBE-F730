@@ -1,7 +1,11 @@
 # Ändringslogg
 
-## Ej släppt
+## 0.2.58
 
+- Kaminkortet visar vad brasorna sparade på pumpens el de senaste 30
+  dagarna: per brasa och totalt, i kWh och kronor, med en ungefärlig
+  osäkerhet. Jämförelsen görs mot timmar utan brasa vid samma
+  utetemperatur, under brasan och sex timmar efter.
 - Korta avbrott i myUplink (högst 10 minuter) fylls med senast kända värde
   i stället för att ge luckor. Timvärden, elpatronens körningar och
   besparingsdagarna får därför data för nästan alla timmar.
