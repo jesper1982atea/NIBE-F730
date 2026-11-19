@@ -263,6 +263,50 @@ async function groupedNavigationChecks() {
   await page.close();
 }
 
+async function homeOverviewChecks() {
+  const page = await testPage({ viewport: { width: 1280, height: 900 } });
+  page.on("pageerror", (error) => errors.push(error.message));
+  const homeSettings = { ...defaults, room_sensors: ["sensor.living", thermostat], priority_sensors: [thermostat] };
+  let homeWrites = 0;
+  page.on("request", (request) => { if (!["GET", "HEAD"].includes(request.method())) homeWrites++; });
+  await page.route("**/api/settings", (route) => route.fulfill({ json: homeSettings }));
+  await page.route("**/api/status", (route) => route.fulfill({ json: {
+    checked_at: now, enabled: false, indoor: 22, house_indoor: 22, outdoor: 5,
+    current_offset: 2, next_offset: 2, desired_offset: 2, warm_rooms: [], message: "Övervakning",
+    rooms: [
+      { entity_id: "sensor.living", name: "Vardagsrum", temperature: 22, priority: false },
+      { entity_id: thermostat, name: "Allrum", temperature: 22.2, setpoint: 26, priority: true },
+    ],
+  } }));
+  await page.route("**/api/history", (route) => route.fulfill({ json: {
+    start: now - 86400, end: now, target: 21,
+    series: [
+      { entity_id: "sensor.living", name: "Vardagsrum", outdoor: false, kind: "sensor",
+        points: [[now - 86400, 21.5], [now - 3600, 22]] },
+      { entity_id: thermostat, name: "Allrum", outdoor: false, kind: "climate",
+        points: [[now - 86400, 21.6], [now - 3600, 22.2]], setpoints: [[now - 86400, 22], [now - 3600, 26]] },
+    ],
+  } }));
+  await page.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
+  await page.waitForFunction(() => document.querySelectorAll("#home-weather-chart svg path.chart-line").length === 2);
+  assert.equal(await page.locator("#room-impact").getAttribute("open"), "");
+  assert.equal(await page.locator("#home-history-entity").inputValue(), thermostat, "The prioritized thermostat is selected first");
+  assert.equal(await page.locator(`#room-impact-list button[aria-pressed="true"]`).count(), 1);
+  assert.match(await page.locator("#home-room-legend").textContent(), /uppmätt.*termostatinställning/);
+  assert.match(await page.locator("#room-impact-list").textContent(), /Termostat inställd på 26 °C/);
+  assert.match(await page.locator("#home-weather-legend").textContent(), /Uppmätt ute.*Prognos ute/);
+  assert.match(await page.locator("#home-weather-status").textContent(), /streckad linje = prognos/);
+  await page.locator("#room-impact-list button").filter({ hasText: "Vardagsrum" }).click();
+  assert.equal(await page.locator("#home-history-entity").inputValue(), "sensor.living");
+  assert.equal(await page.locator("#home-room-chart").getAttribute("aria-label"), "Vardagsrum: temperatur senaste dygnet");
+  await page.selectOption("#home-history-entity", thermostat);
+  assert.equal(await page.locator("#room-impact-list button[aria-pressed=\"true\"]").textContent().then((text) => text.includes("Allrum")), true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, "Home and thermostat cards fit on mobile");
+  assert.equal(homeWrites, 0, "Room selection does not write settings");
+  await page.close();
+}
+
 async function dashboardChecks() {
   const page = await testPage({ viewport: { width: 1440, height: 1100 } });
   page.on("pageerror", (error) => errors.push(error.message));
@@ -731,13 +775,13 @@ async function dashboardChecks() {
     priorityConfig.room_sensors.map((id) => [id, areaMap[id] || { area_id: null, area_name: null }]),
   ) }));
   await priorityPage.goto(`http://127.0.0.1:${server.address().port}${prefix}/`);
-  await priorityPage.locator("#room-impact-list .room-impact-row").first().waitFor({ state: "attached" });
+  await priorityPage.locator("#room-impact-list .home-room-card").first().waitFor({ state: "attached" });
   assert.equal(await priorityPage.locator("#indoor").textContent(), "23");
   // The room picker is sorted for display; a saved selection in another order is not an unsaved change.
   for (const order of [[thirdRoom, thermostat, "sensor.living"], ["sensor.living", thermostat, thirdRoom]]) {
     priorityConfig = { ...priorityConfig, room_sensors: order };
     await priorityPage.reload();
-    await priorityPage.locator("#room-impact-list .room-impact-row").first().waitFor({ state: "attached" });
+    await priorityPage.locator("#room-impact-list .home-room-card").first().waitFor({ state: "attached" });
     await priorityPage.waitForFunction(() => document.getElementById("settings-save-status").textContent !== "");
     assert.equal(await priorityPage.locator("#settings-save-status").textContent(), "Inga osparade ändringar.", order.join());
   }
@@ -754,13 +798,14 @@ async function dashboardChecks() {
   assert.equal(await priorityPage.locator("#room-impact").getAttribute("open"), "");
   await priorityPage.waitForFunction(() => !document.getElementById("history-status").textContent.startsWith("Hämtar"));
   assert.match(await priorityPage.locator("#room-impact-list").textContent(), /\+1 °C senaste timmen/, await priorityPage.locator("#history-status").textContent());
-  assert.match(await priorityPage.locator("#room-impact-list").textContent(), /Vardagsrum · prioriterat.*21 °C · 1° under målet/);
+  const livingCard = priorityPage.locator("#room-impact-list .home-room-card").filter({ hasText: "Vardagsrum" });
+  assert.match(await livingCard.textContent(), /21 °C.*1° under ditt mål.*Prioriterat rum · Termostat inställd på 20 °C/);
   assert.equal(await priorityPage.locator("#room-impact-list .room-area-group").count(), 3);
   assert.match(await priorityPage.locator("#history-area-status").textContent(), /rumstilldelningen i Home Assistant/);
   const allrumCard = priorityPage.locator(".thermostat-history").filter({ hasText: "Allrum" });
   assert.match(await allrumCard.textContent(), /LK Allrum.*Övertemperaturbegränsning/);
   assert.match(await allrumCard.locator(".room-history-changes").textContent(), /Övertemperaturbegränsning/);
-  assert.match(await priorityPage.locator("#room-impact-list").textContent(), /25 °C · 3° över målet/);
+  assert.match(await priorityPage.locator("#room-impact-list").textContent(), /25 °C3° över ditt mål/);
   assert.match(await priorityPage.locator("#comfort-advice").textContent(), /Vardagsrum.*inställd på 20 °C.*begränsa värmen/);
   assert.match(await priorityPage.locator("#comfort-advice").textContent(), /Andra rum är redan minst 2 °C/);
   assert.match(await priorityPage.locator("#comfort-change").textContent(), /3 → 4.*Jämför uppmätta/);
@@ -940,7 +985,7 @@ async function dashboardChecks() {
   assert.equal(thermostatSettings.thermostat_control_enabled, true);
   assert.equal(thermostatSettings.target_temperature, settings.target_temperature);
   assert.match(await thermostatPage.locator("#settings-save-status").textContent(), /sparade/);
-  await thermostatPage.waitForFunction(() => document.getElementById("room-impact-list").textContent.includes("närmast pumpen"));
+  await thermostatPage.waitForFunction(() => /närmast pumpen/i.test(document.getElementById("room-impact-list").textContent));
   assert.match(await thermostatPage.locator("#thermostat-control-status").textContent(), /Termostatbegränsning på/);
   await thermostatPage.locator("#room_sensors").screenshot({ path: `${artifacts}/thermostat-picker.png` });
   await thermostatPage.emulateMedia({ colorScheme: "dark" });
@@ -1166,7 +1211,7 @@ async function fireplaceChecks() {
   assert.match(await firePage.locator("#fireplace-effects").textContent(), /Vardagsrum.*0,4 °C.*45 min.*Inte säkert/);
   assert.match(await firePage.locator("#fireplace-history").textContent(), /avbruten\/osäker/);
   assert.match(await firePage.locator("#fireplace-control").textContent(), /kaminbidrag −1.*Övervakning/);
-  assert.match(await firePage.locator("#room-impact-list").textContent(), /prioriterat.*kaminrum/);
+  assert.match(await firePage.locator("#room-impact-list").textContent(), /Prioriterat rum.*Kaminrum/);
   assert.equal(fireWrites, 1, "Rendering suspected extra heat must not save or send new commands");
   assert.equal(await firePage.locator("#fireplace_max_age_minutes").inputValue(), "15");
   assert.match(await firePage.locator("#fireplace-age-help").textContent(), /tystnad.*fel.*osäkrare/);
@@ -1488,6 +1533,7 @@ async function modeDiscoveryChecks() {
 
 try {
   await groupedNavigationChecks();
+  await homeOverviewChecks();
   if (!process.env.ENERGY_ONLY) await dashboardChecks();
   await savingsChecks();
   await modeDiscoveryChecks();

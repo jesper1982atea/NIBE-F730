@@ -88,9 +88,28 @@
           <div><strong>3. Du ser vad som händer</strong><p>Nästa justering är en plan, inte en garanti. En skickad begäran bekräftas först när Home Assistant läser tillbaka värdet. Övervakningsläge skickar inga nya automatiska ändringar.</p></div>
         </div>
       </details>
-      <details id="room-impact">
-        <summary>Temperatur i alla valda rum</summary>
-        <p>Förskjutningen påverkar hela huset, inte bara prioriterade rum. Här ser du uppmätta värden och förändring senaste timmen, inte en prognos eller bevis på vad som orsakat förändringen.</p>
+      <details id="room-impact" open>
+        <summary>Rumstemperaturer och termostater</summary>
+        <p>Välj ett rum för att följa temperaturen senaste dygnet. Uppmätta värden och väderprognos visas separat; temperaturförändringar är inte bevis på vad som orsakat dem.</p>
+        <div class="home-temperature-grid">
+          <section class="home-temperature-panel">
+            <div class="home-temperature-heading">
+              <h3>Temperatur i valt rum</h3>
+              <label for="home-history-entity">Följ rum
+                <select id="home-history-entity" class="compact-select"><option value="">Hämtar rum…</option></select>
+              </label>
+            </div>
+            <div id="home-room-chart" class="chart" role="img" aria-label="Uppmätt rumstemperatur senaste dygnet"></div>
+            <div id="home-room-legend" class="chart-legend"></div>
+            <p id="home-room-history-status" class="hint" role="status">Hämtar temperaturhistorik…</p>
+          </section>
+          <section class="home-temperature-panel">
+            <h3>Ute och väderprognos</h3>
+            <div id="home-weather-chart" class="chart" role="img" aria-label="Uppmätt utetemperatur och väderprognos"></div>
+            <div id="home-weather-legend" class="chart-legend"></div>
+            <p id="home-weather-status" class="hint" role="status">Hämtar utetemperatur och prognos…</p>
+          </section>
+        </div>
         <p id="room-area-status" class="hint" role="status"></p>
         <div id="room-impact-list"></div>
       </details>
