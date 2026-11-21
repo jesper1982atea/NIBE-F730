@@ -1,6 +1,30 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+
+// The page refreshes itself every 15 s. Rebuilding a <select> closes it while open (Safari, HA app), and swapping
+// a button between mousedown and mouseup loses the click. These helpers only touch the DOM when something changed.
+function fillSelect(select, options, value) {
+  const wanted = options.map((option) => [option.value, option.text]);
+  const current = [...select.options].map((option) => [option.value, option.text]);
+  if (document.activeElement !== select && JSON.stringify(wanted) !== JSON.stringify(current)) select.replaceChildren(...options);
+  if (document.activeElement !== select && select.value !== value) select.value = value;
+}
+
+// True while a settings field has focus: rebuilding the form then closes an open list or swallows a click.
+function editingSettings() {
+  const active = document.activeElement;
+  return Boolean(active && active !== document.body && active.closest("#settings, #settings-panel")
+    && /^(SELECT|INPUT|TEXTAREA)$/.test(active.tagName));
+}
+
+function replaceIfChanged(container, children) {
+  const scratch = document.createElement(container.tagName);
+  scratch.append(...children);
+  if (scratch.innerHTML === container.innerHTML) return false;
+  container.replaceChildren(...scratch.childNodes);
+  return true;
+}
 const advanced = [
   ["base_offset", "Basförskjutning · steg", -10, 10, 0.1, "Utgångsläget som all kompensation läggs till på."],
   ["room_gain", "Rumspåverkan · steg/°C", 0, 5, 0.1, "Hur mycket en grads avvikelse påverkar förskjutningen."],
@@ -91,7 +115,7 @@ async function api(path, options = {}) {
 }
 
 async function refreshEntities() {
-  if (entitiesBusy || Date.now() - entitiesReadAt < 60000) return;
+  if (entitiesBusy || Date.now() - entitiesReadAt < 60000 || editingSettings()) return;
   entitiesBusy = true;
   try {
     const latest = await api("entities");
@@ -802,7 +826,7 @@ function renderRoomImpact() {
   $("room-area-status").textContent = areaError
     ? `Home Assistant-rummens namn kunde inte läsas: ${areaError}. Visar givarna utan rumsgruppering.`
     : "Rumsnamnen hämtas från områdena i Home Assistant.";
-  $("room-impact-list").replaceChildren(...[...groups.values()].map(({ name, rooms: members }) => {
+  replaceIfChanged($("room-impact-list"), [...groups.values()].map(({ name, rooms: members }) => {
     const group = document.createElement("section");
     group.className = "room-area-group";
     const heading = document.createElement("h3");
@@ -898,8 +922,7 @@ function renderHomeHistory() {
     homeRoomSelection = settings?.priority_sensors?.find((id) => lines.some((line) => line.entity_id === id))
       || lines[0]?.entity_id || "";
   }
-  select.replaceChildren(...lines.map((line) => new Option(roomLabel(line.name), line.entity_id)));
-  select.value = homeRoomSelection;
+  fillSelect(select, lines.map((line) => new Option(roomLabel(line.name), line.entity_id)), homeRoomSelection);
   select.disabled = lines.length === 0;
   const selected = lines.find((line) => line.entity_id === homeRoomSelection);
   const indoorSeries = selected ? [
@@ -1342,7 +1365,7 @@ async function refreshStatus() {
 }
 
 async function refreshSavedSettings() {
-  if (busy || settingsBusy) return;
+  if (busy || settingsBusy || editingSettings()) return;
   settingsBusy = true;
   const revision = settingsRevision;
   try {
@@ -2432,8 +2455,8 @@ function renderHistory() {
   const lines = data.series.filter((line) => !line.outdoor);
   const select = $("history-entity");
   const chosen = select.value;
-  select.replaceChildren(new Option("Alla rum", ""), ...lines.map((line) => new Option(line.name, line.entity_id)));
-  select.value = lines.some((line) => line.entity_id === chosen) ? chosen : "";
+  fillSelect(select, [new Option("Alla rum", ""), ...lines.map((line) => new Option(line.name, line.entity_id))],
+    lines.some((line) => line.entity_id === chosen) ? chosen : "");
   const single = lines.find((line) => line.entity_id === select.value);
   let series, guides = [{ value: data.target, label: `ditt mål ${displayNumber(data.target)}°` }];
   if (single) {
@@ -2990,9 +3013,11 @@ function logValue(value) {
 }
 
 function renderEvents() {
-  $("events-list").replaceChildren(...eventRows.map((event) => {
+  const openIds = new Set([...$("events-list").querySelectorAll(".event details[open]")].map((details) => details.closest(".event").dataset.eventId));
+  replaceIfChanged($("events-list"), eventRows.map((event) => {
     const entry = document.createElement("article");
     entry.className = "event";
+    entry.dataset.eventId = String(event.id);
     const heading = document.createElement("strong");
     heading.textContent = event.message;
     const stamp = document.createElement("small");
@@ -3021,6 +3046,7 @@ function renderEvents() {
     const pre = document.createElement("pre");
     pre.textContent = JSON.stringify(data, null, 2);
     details.append(summary, pre);
+    details.open = openIds.has(String(event.id));
     entry.append(details);
     return entry;
   }));
