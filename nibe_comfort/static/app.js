@@ -2991,7 +2991,7 @@ const fieldLabels = {
   expensive_reduction: "Sänkning vid högt pris", deadband: "Toleransband",
   skip_silent_rooms: "Styr vidare vid tyst givare", price_mode: "Prisnivå", price_low_percent: "Billigt (andel av dygnet)",
   price_high_percent: "Dyrt (andel av dygnet)", auto_base_enabled: "Automatisk baskorrigering",
-  auto_base_limit: "Gräns för baskorrigering", publish_sensors: "Sensorer i Home Assistant",
+  auto_base_limit: "Gräns för baskorrigering", publish_sensors: "Sensorer i Home Assistant", share_usage: "Anonym användningsstatistik",
   pause_notify_minutes: "Meddela vid paus efter", notify_service: "Notify-tjänst",
   hot_water_price_enabled: "Varmvatten på billig el", hot_water_mode_entity: "Varmvattenläge",
   hot_water_cheap_option: "Läge vid billig el", hot_water_normal_option: "Vanligt varmvattenläge",
@@ -3182,15 +3182,15 @@ async function showVersion() {
   if (community) {
     const n = community.installations;
     badge.textContent = `≈ ${n.toLocaleString("sv-SE")} ${n === 1 ? "installation" : "installationer"}`;
-    badge.title = `Unika installationer senaste 14 dagarna enligt GitHubs statistik över kloner av repot${community.updated ? ` (uppdaterad ${community.updated})` : ""}. Ungefärligt; inget skickas från din installation.`;
+    badge.title = `Aktiva installationer senaste 7 dagarna (${community.total.toLocaleString("sv-SE")} sedan start), räknade från den anonyma användningsstatistiken. Installationer som stängt av den räknas inte. Stängs av under Inställningar → Home Assistant.`;
   }
 }
 
-// Installations according to the maintainer's published GitHub clone statistics; nothing is sent from here.
+// Installations active in the last 7 days, counted from the anonymous pings (see community.py).
 function communityText(community) {
   if (!community) return "";
   const n = community.installations;
-  return `≈ ${n} ${n === 1 ? "installation" : "installationer"} senaste 14 dagarna`;
+  return `≈ ${n} ${n === 1 ? "aktiv installation" : "aktiva installationer"} senaste veckan`;
 }
 
 const GROUPED_VIEWS = new Set(["overview", "heat", "water", "energy", "system", "settings"]);

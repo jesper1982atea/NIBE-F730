@@ -61,6 +61,8 @@ DEFAULTS = {
     "auto_base_enabled": False,
     "auto_base_limit": 2.0,
     "publish_sensors": False,
+    # Anonymous ping {app, random id, version} every 6 h for the installation count; see community.py.
+    "share_usage": True,
     "pause_notify_minutes": 60.0,
     "hot_water_price_enabled": False,
     "hot_water_mode_entity": "",
@@ -230,7 +232,7 @@ def validate(config):
             raise ControlError(f"{key} måste vara av, skugga eller på.")
     for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled",
                 "auto_base_enabled", "publish_sensors", "skip_silent_rooms", "hot_water_price_enabled",
-                "aux_limit_enabled", "aux_hot_water_guard"):
+                "aux_limit_enabled", "aux_hot_water_guard", "share_usage"):
         if type(result[key]) is not bool:
             raise ControlError(f"{key} måste vara boolesk.")
     for key, (low, high) in LIMITS.items():
@@ -1445,7 +1447,7 @@ class Controller:
                 saved.setdefault("energy_entity", "")
                 saved.setdefault("house_power_entity", "")
                 for key in ("skip_silent_rooms", "price_mode", "price_low_percent", "price_high_percent", "auto_base_enabled",
-                            "auto_base_limit", "publish_sensors", "pause_notify_minutes", "notify_service",
+                            "auto_base_limit", "publish_sensors", "share_usage", "pause_notify_minutes", "notify_service",
                             "hot_water_price_enabled", "hot_water_mode_entity", "hot_water_cheap_option",
                             "hot_water_normal_option", *SOURCE_ENTITIES, *AUX_LIMIT_KEYS, *NEW_RULE_KEYS):
                     saved.setdefault(key, DEFAULTS[key])

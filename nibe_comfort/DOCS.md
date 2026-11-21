@@ -1271,6 +1271,12 @@ pumpmodeller. Kontrollera funktionen och pumpens inställningar innan
 du förlitar dig på den under en resa. Semesterläge är av tills du själv
 sparar en period.
 
+## Anonym användningsstatistik
+
+För att se hur många som använder tillägget skickar det var 6:e timme `{"app", "id", "version"}` till en liten räknare (en Cloudflare Worker, källkoden finns i [golvvarme-comfort/stats-worker](https://github.com/peterwreiber/golvvarme-comfort/tree/main/stats-worker)). `id` är ett slumpat värde som skapas vid första start och sparas i `/data/usage.json`. Inget om ditt hem, din värmepump, dina temperaturer, priser eller din plats skickas, och räknaren sparar ingen IP-adress. Antalet aktiva installationer senaste veckan visas i sidhuvudet.
+
+Det är påslaget från början. Stäng av det under **Inställningar → Home Assistant → Skicka anonym användningsstatistik**, så tas id:t bort ur räkningen.
+
 ## Begränsningar
 
 Första versionen stöder ett klimatsystem och ett gemensamt rumsmål.

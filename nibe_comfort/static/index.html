@@ -725,6 +725,8 @@
       <section class="card">
         <h2>Home Assistant</h2>
         <label class="toggle"><input type="checkbox" id="publish_sensors"> Visa status som sensorer i Home Assistant</label>
+        <label class="toggle"><input type="checkbox" id="share_usage"> Skicka anonym användningsstatistik</label>
+        <p class="hint">Var 6:e timme skickas bara ett slumpat id och versionsnumret, så att antalet installationer kan räknas. Inget om ditt hem, din värmepump, dina temperaturer eller priser skickas, och ingen IP-adress sparas. Stänger du av det tas id:t bort ur räkningen.</p>
         <p class="hint">Skapar <code>sensor.nibe_comfort_status</code>, <code>_innetemp</code>, <code>_mal</code>, <code>_onskad_forskjutning</code>, <code>_nasta_forskjutning</code>, <code>_kamin</code>, <code>_elprisniva</code> och vid automatisk baskorrigering <code>_baskorrigering</code>, för kort och automationer. De uppdateras varje minut och kommer tillbaka inom en minut efter en omstart av Home Assistant.</p>
         <div class="field-pair">
           <div><label for="pause_notify_minutes">Meddela när styrningen pausat längre än · minuter</label><input id="pause_notify_minutes" name="pause_notify_minutes" type="number" min="0" max="1440" step="1" required></div>
@@ -782,7 +784,7 @@
       <p class="hint">Loggen sparas lokalt och överlever omstart. Händelser före denna uppdatering kan inte återskapas. Manuella ändringar på pumpen kan upptäckas vid nästa avläsning men deras upphov kan inte fastställas.</p>
     </section>
     </details>
-    <footer>Via Home Assistant · Avläsning varje minut · Pumpens egna skydd och reglering är alltid kvar.<span id="version"></span><span id="community" title="Från GitHubs statistik över unika kloner av repot. Ungefärligt; inget skickas från din installation."></span></footer>
+    <footer>Via Home Assistant · Avläsning varje minut · Pumpens egna skydd och reglering är alltid kvar.<span id="version"></span><span id="community"></span></footer>
   </main>
 </body>
 </html>

@@ -1,5 +1,16 @@
 # Ändringslogg
 
+## 0.2.60
+
+- Antalet installationer räknas nu riktigt. Tillägget skickar var 6:e
+  timme bara ett slumpat id och versionsnumret till en liten räknare, och
+  sidhuvudet visar hur många installationer som varit aktiva senaste
+  veckan. Inget om hemmet, pumpen, temperaturer eller priser skickas och
+  ingen IP-adress sparas. Påslaget från början; stäng av under
+  Inställningar → Home Assistant, så tas id:t bort ur räkningen. Den
+  gamla siffran byggde på GitHubs klonstatistik och räknade mest
+  testkörningar och botar.
+
 ## 0.2.59
 
 - Varmvattenvakt för elpatronbegränsningen (på från början): när

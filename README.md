@@ -113,6 +113,12 @@ oförändrade.
 
 Se [användarguiden](nibe_comfort/DOCS.md) för reglering, säkerhet och lokalt API.
 
+## Anonym användningsstatistik
+
+För att se hur många som använder tillägget skickar det var 6:e timme `{"app", "id", "version"}` till en liten räknare (en Cloudflare Worker, källkoden finns i [golvvarme-comfort/stats-worker](https://github.com/peterwreiber/golvvarme-comfort/tree/main/stats-worker)). `id` är ett slumpat värde som skapas vid första start och sparas i `/data/usage.json`. Inget om ditt hem, din värmepump, dina temperaturer, priser eller din plats skickas, och räknaren sparar ingen IP-adress. Antalet aktiva installationer senaste veckan visas i sidhuvudet.
+
+Det är påslaget från början. Stäng av det under **Inställningar → Home Assistant → Skicka anonym användningsstatistik**, så tas id:t bort ur räkningen.
+
 ## Utveckling
 
 Python 3.12 eller senare, inga externa Pythonpaket:

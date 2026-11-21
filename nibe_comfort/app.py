@@ -17,11 +17,13 @@ from insights import Insights, control_history
 from energy import change_comparisons, meter_error
 from savings import action_periods
 from myuplink import MyUplink
-from community import Community
+from community import DEFAULT_URL as COMMUNITY_URL, Community, Reporter
 
 LOG = logging.getLogger("nibe_comfort")
 STATIC = Path(__file__).parent / "static"
-COMMUNITY = Community(os.environ.get("NIBE_COMMUNITY_URL") or "https://raw.githubusercontent.com/jesper1982atea/NIBE-F730/stats/anvandare.json")
+# NIBE_COMMUNITY_URL="" turns the count and the anonymous ping off (development and test copies).
+COMMUNITY_BASE = os.environ.get("NIBE_COMMUNITY_URL", COMMUNITY_URL)
+COMMUNITY = Community(COMMUNITY_BASE)
 LOOP_RETRIES = 3
 LOOP_RETRY_SECONDS = 300
 
@@ -539,6 +541,16 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
     return Handler
 
 
+def usage_loop(controller, reporter, stop, interval=60):
+    stop.wait(120)  # let the add-on settle first
+    while not stop.is_set():
+        try:
+            reporter.tick(controller.config["share_usage"])
+        except Exception:
+            LOG.exception("Oväntat fel i användningsstatistiken")
+        stop.wait(interval)
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     token = os.environ.get("SUPERVISOR_TOKEN")
@@ -560,6 +572,8 @@ def main():
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=run_control_loop, args=(controller, stop), daemon=True).start()
+    reporter = Reporter(COMMUNITY_BASE, os.environ.get("NIBE_COMFORT_VERSION", "dev"), controller.data_dir)
+    threading.Thread(target=usage_loop, args=(controller, reporter, stop), daemon=True).start()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
     LOG.info("NIBE Comfort startad; lokalt API %s", "aktiverat" if local_token else "avstängt")
