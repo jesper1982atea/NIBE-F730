@@ -691,6 +691,9 @@
           <div><label for="hot_water_cheap_option">Läge vid billig el</label><select id="hot_water_cheap_option"></select></div>
           <div><label for="hot_water_normal_option">Vanligt läge</label><select id="hot_water_normal_option"></select></div>
         </div>
+        <label for="hot_water_precharge_minutes">Ladda före dyra timmar · minuter</label>
+        <input id="hot_water_precharge_minutes" type="number" min="0" max="360" step="15" required>
+        <p class="hint">Så här lång tid innan en dyr period börjar väljs läget vid billig el, så att tanken är full när elen blir dyr. 0 stänger av. Högst en ändring i timmen gäller fortfarande, så 120 minuter ger marginal.</p>
         <p id="hot-water-settings-status" class="hint" role="status"></p>
         <label for="hot_water_habit_mode">Varmvatten efter vanor</label>
         <select id="hot_water_habit_mode" name="hot_water_habit_mode"><option value="off">Av</option><option value="shadow">Skugga · visa bara vad den hade gjort</option><option value="on">På</option></select>
@@ -710,6 +713,12 @@
           <div><label for="aux_normal_option">Vanlig max eltillsats</label><select id="aux_normal_option"></select></div>
           <div><label for="aux_limit_max_drop">Släpp begränsningen när det är kallare än målet minus · °C</label><input id="aux_limit_max_drop" type="number" min="0.1" max="2" step="0.1" required></div>
           <div><label for="aux_limit_min_outdoor">Begränsa aldrig när det är kallare ute än · °C</label><input id="aux_limit_min_outdoor" type="number" min="-30" max="15" step="1" required></div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="aux_hot_water_guard"> Varmvattenvakt: full effekt när varmvattnet börjar ta slut</label>
+        <p class="hint">På från början. Läser pumpens varmvattengivare: laddgivaren (BT6) längre ned i tanken och toppen (BT7). Går någon under gränsen släpps begränsningen direkt, och en ny begränsning kräver 2 °C marginal över gränsen. Toppen ensam räcker inte: den kan visa 43 °C fast tanken nästan är tom. Kan givarna inte läsas begränsas elpatronen inte. Med vakten på kan du välja 0 kW vid dyr el.</p>
+        <div class="field-pair">
+          <div><label for="aux_hot_water_min_charge">Släpp när laddgivaren BT6 är under · °C</label><input id="aux_hot_water_min_charge" type="number" min="20" max="55" step="0.5" required></div>
+          <div><label for="aux_hot_water_min_top">Släpp när toppen BT7 är under · °C</label><input id="aux_hot_water_min_top" type="number" min="30" max="65" step="0.5" required></div>
         </div>
         <p id="aux-limit-settings-status" class="hint" role="status"></p>
       </section>

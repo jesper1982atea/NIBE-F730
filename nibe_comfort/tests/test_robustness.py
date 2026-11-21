@@ -405,6 +405,8 @@ class NotifyServiceTests(unittest.TestCase):
 class AuxLimitTests(unittest.TestCase):
     ADD = "select.pump_max_electrical_add"
     OPTIONS = ("0.0 kW", "2.0 kW", "4.60 kW", "7.1 kW")
+    CHARGE = "sensor.pump_hot_water_charging_bt6"
+    TOP = "sensor.pump_hot_water_top_bt7"
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -413,6 +415,8 @@ class AuxLimitTests(unittest.TestCase):
         self.ha.integration_registry.return_value = [
             {"entity_id": "number.offset", "device_id": "pump", "platform": "myuplink", "config_entry_id": "entry"},
             {"entity_id": self.ADD, "device_id": "pump", "platform": "myuplink", "config_entry_id": "entry"},
+            {"entity_id": self.CHARGE, "device_id": "pump", "platform": "myuplink", "config_entry_id": "entry"},
+            {"entity_id": self.TOP, "device_id": "pump", "platform": "myuplink", "config_entry_id": "entry"},
         ]
         self.ha.states.side_effect = lambda: fixtures()
         self.controller = Controller(self.ha, self.temp.name)
@@ -422,9 +426,11 @@ class AuxLimitTests(unittest.TestCase):
         self.controller.save(self.cfg)
 
     def step(self, current, level=None, kind=None, indoor=21.0, outdoor=0.0, hold=False, now=10_000.0, options=OPTIONS,
-             price=1, rank=None):
+             price=1, rank=None, charge=48.0, top=52.0):
         add = entity(self.ADD, current, now, options=list(options))
-        return self.controller.aux_limit_step([add], now, {"price_level": level, "price": price, "price_rank": rank,
+        water = [entity(key, value, now, unit_of_measurement="°C")
+                 for key, value in ((self.CHARGE, charge), (self.TOP, top)) if value is not None]
+        return self.controller.aux_limit_step([add, *water], now, {"price_level": level, "price": price, "price_rank": rank,
                                                            "indoor": indoor, "outdoor": outdoor},
                                               {"kind": kind}, hold)
 
@@ -461,6 +467,56 @@ class AuxLimitTests(unittest.TestCase):
         self.assertEqual(report["next_change_at"], 10_000.0 + 3600)
         # Preheating wants heat even in an expensive hour.
         self.assertEqual(self.step("7.1 kW", level="expensive", kind="preheat", now=20_000.0)["desired"], "7.1 kW")
+
+    def test_little_hot_water_lifts_and_blocks_the_limit(self):
+        # Too little hot water never starts a limit, with a margin above the guard limits.
+        for kwargs, text in (({"charge": 39.0}, "BT6 39.0"), ({"top": 46.0}, "BT7 46.0"),
+                             ({"charge": None}, "BT6"), ({"top": None}, "BT7")):
+            with self.subTest(**kwargs):
+                report = self.step("7.1 kW", level="expensive", **kwargs)
+                self.assertEqual(report["desired"], "7.1 kW")
+                self.assertIn(text, report["reason"])
+                self.ha.set_select.assert_not_called()
+        # Enough hot water: the limit is set; tank values are reported.
+        report = self.step("7.1 kW", level="expensive", charge=41.0, top=48.0)
+        self.ha.set_select.assert_called_once_with(self.ADD, "2.0 kW")
+        self.assertEqual(report["hot_water"], {"charge": 41.0, "top": 48.0, "error": None})
+        self.ha.set_select.reset_mock()
+        # Inside the margin an active limit stays; below the guard limit it is lifted at once.
+        self.step("2.0 kW", level="expensive", charge=38.5, now=10_060.0)
+        self.ha.set_select.assert_not_called()
+        report = self.step("2.0 kW", level="expensive", charge=37.5, now=10_120.0)
+        self.ha.set_select.assert_called_once_with(self.ADD, "7.1 kW", timeout=60)
+        self.assertIn("Lite varmvatten kvar", report["reason"])
+
+    def test_hot_water_guard_can_be_turned_off_and_allows_zero_kw(self):
+        self.controller.save({**self.cfg, "aux_limit_option": "0.0 kW"})
+        self.step("7.1 kW", level="expensive")
+        self.ha.set_select.assert_called_once_with(self.ADD, "0.0 kW")
+        with self.assertRaises(ControlError) as caught:
+            self.controller.save({**self.cfg, "aux_limit_option": "0.0 kW", "aux_hot_water_guard": False})
+        self.assertIn("varmvattenvakten", str(caught.exception))
+        for bad in ({"aux_hot_water_min_charge": 10}, {"aux_hot_water_min_top": 80}, {"hot_water_precharge_minutes": -1},
+                    {"aux_hot_water_guard": "ja"}):
+            with self.assertRaises(ControlError):
+                self.controller.save({**self.cfg, **bad})
+
+    def test_without_guard_the_tank_is_not_read(self):
+        self.controller.save({**self.cfg, "aux_hot_water_guard": False})
+        report = self.step("7.1 kW", level="expensive", charge=None, top=None)
+        self.ha.set_select.assert_called_once_with(self.ADD, "2.0 kW")
+        self.assertIsNone(report["hot_water"])
+
+    def test_old_settings_get_the_guard_on(self):
+        path = Path(self.temp.name) / "settings.json"
+        saved = json.loads(path.read_text())
+        for key in ("aux_hot_water_guard", "aux_hot_water_min_charge", "aux_hot_water_min_top", "hot_water_precharge_minutes"):
+            saved.pop(key)
+        path.write_text(json.dumps(saved))
+        loaded = Controller(self.ha, self.temp.name).settings()
+        self.assertTrue(loaded["aux_hot_water_guard"])
+        self.assertEqual((loaded["aux_hot_water_min_charge"], loaded["aux_hot_water_min_top"],
+                          loaded["hot_water_precharge_minutes"]), (38.0, 45.0, 120.0))
 
     def limit(self):
         self.step("7.1 kW", level="expensive")

@@ -72,6 +72,12 @@ DEFAULTS = {
     "aux_normal_option": "",
     "aux_limit_max_drop": 0.5,
     "aux_limit_min_outdoor": -10.0,
+    # The heater limit is lifted while little hot water is left (lower tank BT6 or top BT7 too cold).
+    "aux_hot_water_guard": True,
+    "aux_hot_water_min_charge": 38.0,
+    "aux_hot_water_min_top": 45.0,
+    # Hot water mode switches to the cheap-price mode this long before an expensive period (0 = off).
+    "hot_water_precharge_minutes": 120.0,
     "notify_service": "",
     "grid_import_entity": "",
     "grid_export_entity": "",
@@ -91,7 +97,8 @@ NEW_RULE_KEYS = ("adaptive_reduction_mode", "auto_base_memory_days", "solar_mode
                  "solar_power_threshold", "hot_water_habit_mode")
 SOURCE_ENTITIES = ("grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity")
 AUX_LIMIT_KEYS = ("aux_limit_enabled", "aux_limit_entity", "aux_limit_option", "aux_normal_option",
-                  "aux_limit_max_drop", "aux_limit_min_outdoor")
+                  "aux_limit_max_drop", "aux_limit_min_outdoor", "aux_hot_water_guard", "aux_hot_water_min_charge",
+                  "aux_hot_water_min_top", "hot_water_precharge_minutes")
 LIMITS = {
     "target_temperature": (10, 30),
     "base_offset": (-10, 10),
@@ -116,6 +123,9 @@ LIMITS = {
     "pause_notify_minutes": (0, 1440),
     "aux_limit_max_drop": (0.1, 2),
     "aux_limit_min_outdoor": (-30, 15),
+    "aux_hot_water_min_charge": (20, 55),
+    "aux_hot_water_min_top": (30, 65),
+    "hot_water_precharge_minutes": (0, 360),
     "auto_base_memory_days": (0, 30),
     "solar_power_threshold": (50, 20000),
 }
@@ -158,6 +168,10 @@ AUX_OUTAGE_GRACE_SECONDS = 600
 # single step and each flip is a cloud write. A limit in force is lifted for a cold house only
 # once the mean is this much below the limit; a new limit still needs the mean at the limit.
 AUX_INDOOR_HYSTERESIS = 0.2
+# A new limit needs this much margin above the hot water guard limits; an active one is lifted at the limit itself.
+AUX_HOT_WATER_HYSTERESIS = 2.0
+HOT_WATER_SENSORS = {"charge": "_hot_water_charging_bt6", "top": "_hot_water_top_bt7"}
+HOT_WATER_LABELS = {"charge": "laddgivaren BT6", "top": "toppen BT7"}
 # Automatic base correction: one curve step per degree of lasting deviation and day. Small
 # deviations are ignored so sensor noise does not walk the correction.
 AUTO_BASE_RATE = 1 / 86400
@@ -216,7 +230,7 @@ def validate(config):
             raise ControlError(f"{key} måste vara av, skugga eller på.")
     for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled",
                 "auto_base_enabled", "publish_sensors", "skip_silent_rooms", "hot_water_price_enabled",
-                "aux_limit_enabled"):
+                "aux_limit_enabled", "aux_hot_water_guard"):
         if type(result[key]) is not bool:
             raise ControlError(f"{key} måste vara boolesk.")
     for key, (low, high) in LIMITS.items():
@@ -292,9 +306,14 @@ def validate(config):
             raise ControlError("Begränsad och vanlig max eltillsats måste vara olika.")
         values = [re.fullmatch(r"\s*(\d+(?:[.,]\d+)?)\s*(?:kW)?\s*", result[key], re.IGNORECASE)
                   for key in ("aux_limit_option", "aux_normal_option")]
-        if (not all(values) or not 0 < float(values[0].group(1).replace(",", "."))
-                < float(values[1].group(1).replace(",", "."))):
-            raise ControlError("Välj två numeriska kW-lägen där begränsningen är större än 0 och lägre än det vanliga läget.")
+        if not all(values):
+            raise ControlError("Välj två numeriska kW-lägen för max eltillsats.")
+        limited, normal = (float(match.group(1).replace(",", ".")) for match in values)
+        if not limited < normal:
+            raise ControlError("Begränsad max eltillsats måste vara lägre än det vanliga läget.")
+        if limited <= 0 and not result["aux_hot_water_guard"]:
+            raise ControlError("0 kW vid dyr el kräver varmvattenvakten, annars kan varmvattnet ta slut. "
+                               "Slå på varmvattenvakten eller välj en begränsning över 0 kW.")
     if not result["min_offset"] <= result["base_offset"] <= result["max_offset"]:
         raise ControlError("Basförskjutningen måste ligga inom säkerhetsgränserna.")
     if result["price_low"] >= result["price_high"]:
@@ -1146,6 +1165,26 @@ def expensive_until(config, prices, now):
     return end
 
 
+def next_expensive_start(config, prices, now, horizon):
+    """Start of the next expensive price slot within horizon seconds; None if now is already expensive or none is coming."""
+    points = sorted((float(t), float(p)) for t, p in prices or ())
+    if len(points) < 2 or horizon <= 0:
+        return None
+    slot = min(b[0] - a[0] for a, b in zip(points, points[1:]) if b[0] > a[0])
+    level = lambda t, p: price_level(config, p, series_rank(points, t, p) if config["price_mode"] == "relative" else None)
+    current = next(((t, p) for t, p in points if t <= now < t + slot), None)
+    if current is None or level(*current) == "expensive":
+        return None
+    for t, p in points:
+        if t <= now:
+            continue
+        if t - now > horizon:
+            break
+        if level(t, p) == "expensive":
+            return t
+    return None
+
+
 def evaluate(config, entities, now, peers=None, target_shift=0.0, fireplace_active=False, indoor_samples=(),
              base_correction=0.0, plan=None):
     """target_shift: temporary change of the wanted temperature (pre-heating), applied through the room rule.
@@ -1732,6 +1771,9 @@ class Controller:
         cheap, normal = config["hot_water_cheap_option"], config["hot_water_normal_option"]
         reason = ("förvärmer före dyr el" if preheat.get("kind") == "preheat"
                   else "billig el" if result.get("price_level") == "cheap" else None)
+        starts = result.get("expensive_starts_at")
+        if not reason and starts is not None and config["hot_water_precharge_minutes"] > 0:
+            reason = f"laddar inför dyr el kl {datetime.fromtimestamp(starts).strftime('%H:%M')}"
         habit = None
         if config["hot_water_habit_mode"] != "off":
             habit = {"mode": config["hot_water_habit_mode"], "due": None, "reason": None, "would": None,
@@ -1891,6 +1933,25 @@ class Controller:
                         entity_id=plan["entity_id"], value=plan["normal"])
         return "Återställning begärd; väntar på aktuell återläsning. Kontrollera pumpen om värdet inte ändras."
 
+    def hot_water_readings(self, entities, now, peers):
+        """Lower (BT6) and top (BT7) hot water temperatures from the same myUplink pump as the curve offset."""
+        pump = self.myuplink_peers.get(self.config["offset_entity"], ())
+        states = {e["entity_id"]: e for e in entities}
+        found = {"charge": None, "top": None, "error": None}
+        for key, suffix in HOT_WATER_SENSORS.items():
+            matches = sorted(e for e in pump if e.startswith("sensor.") and e.split(".", 1)[1].endswith(suffix))
+            if len(matches) != 1:
+                found["error"] = (f"pumpens varmvattengivare ({suffix.rsplit('_', 1)[1].upper()}) hittas inte"
+                                  if not matches else f"flera givare matchar {suffix}")
+                return found
+            try:
+                found[key] = temperature(fresh_entity(states, matches[0], self.config["max_age_minutes"], now,
+                                                      peers.get(matches[0], ())))
+            except ControlError as exc:
+                found["error"] = f"{HOT_WATER_LABELS[key]}: {str(exc).rstrip('.')}"
+                return found
+        return found
+
     def aux_limit_step(self, entities, now, result, preheat, hold):
         """Opt-in: lower the pump's electric heater limit in expensive hours, never while the house is cold."""
         config = self.config
@@ -1913,6 +1974,8 @@ class Controller:
                       price is not None and price >= config["price_high"] * 0.9):
                     reason = "dyr el (väntar på tydligt lägre pris)"
         guard = None
+        peers = self.peers()
+        hot_water = None
         indoor, outdoor = result.get("indoor"), result.get("outdoor")
         cold_limit = config["target_temperature"] - config["aux_limit_max_drop"]
         if self.aux_limited and self.aux_restore["phase"] in ("lowering", "limited"):
@@ -1925,10 +1988,20 @@ class Controller:
             guard = "Utetemperaturen saknas: elpatronen får full effekt."
         elif reason and outdoor < config["aux_limit_min_outdoor"]:
             guard = "För kallt ute: elpatronen får full effekt."
+        elif reason and config["aux_hot_water_guard"]:
+            hot_water = self.hot_water_readings(entities, now, peers)
+            active = self.aux_limited and self.aux_restore["phase"] in ("lowering", "limited")
+            margin = 0.0 if active else AUX_HOT_WATER_HYSTERESIS
+            if hot_water["error"]:
+                guard = f"Varmvattnet kan inte läsas ({hot_water['error']}): elpatronen får full effekt."
+            elif hot_water["charge"] < config["aux_hot_water_min_charge"] + margin:
+                guard = f"Lite varmvatten kvar (laddgivaren BT6 {hot_water['charge']:.1f} °C): elpatronen får full effekt."
+            elif hot_water["top"] < config["aux_hot_water_min_top"] + margin:
+                guard = f"Lite varmvatten kvar (toppen BT7 {hot_water['top']:.1f} °C): elpatronen får full effekt."
         desired = limited if reason and not guard else normal
         report = {"enabled": True, "entity_id": entity_id, "desired": desired, "limited": False,
-                  "reason": guard or reason or "inte dyr el", "current": None, "note": None, "error": None, "next_change_at": None}
-        peers = self.peers()
+                  "reason": guard or reason or "inte dyr el", "current": None, "note": None, "error": None, "next_change_at": None,
+                  "hot_water": hot_water}
         if not self.pump_select(entity_id):
             if self.aux_limited and self.aux_restore["phase"] != "restoring":
                 self.store_aux_limited({**self.aux_restore, "phase": "restoring"})
@@ -2203,7 +2276,8 @@ class Controller:
         """Fetch pre-heating windows outside the lock (may read history). Returns windows or an error text."""
         with self.lock:
             config = copy.deepcopy(self.config)
-        needed = config["preheat_enabled"] or config["adaptive_reduction_mode"] != "off" or config["solar_mode"] != "off"
+        needed = (config["preheat_enabled"] or config["adaptive_reduction_mode"] != "off" or config["solar_mode"] != "off"
+                  or (config["hot_water_price_enabled"] and config["hot_water_precharge_minutes"] > 0))
         if not needed or not self.preheat_provider:
             return None
         try:
@@ -2218,7 +2292,9 @@ class Controller:
         if not schedule or "error" in schedule:
             return {}
         return {"model": schedule.get("model"), "sunny_hours": schedule.get("sunny_hours"),
-                "expensive_until": expensive_until(self.config, schedule.get("prices"), now)}
+                "expensive_until": expensive_until(self.config, schedule.get("prices"), now),
+                "expensive_starts_at": next_expensive_start(self.config, schedule.get("prices"), now,
+                                                            self.config["hot_water_precharge_minutes"] * 60)}
 
     def habit_schedule(self):
         """Learned hot water habits, fetched outside the lock like the pre-heating schedule."""
@@ -2615,9 +2691,11 @@ class Controller:
                 if rooms != self.indoor_rooms:
                     self.indoor_rooms, self.indoor_samples = rooms, []
                 self.indoor_samples = [(t, v) for t, v in self.indoor_samples if now - SMOOTHING_SECONDS < t < now]
+                plan = self.control_plan(now, schedule)
                 result = evaluate(self.config, entities, now, peers, preheat["shift"],
                                   fireplace_active=fireplace["phase"] == "active", indoor_samples=self.indoor_samples,
-                                  base_correction=self.base_correction["value"], plan=self.control_plan(now, schedule))
+                                  base_correction=self.base_correction["value"], plan=plan)
+                result["expensive_starts_at"] = plan.get("expensive_starts_at")
                 self.indoor_samples.append((now, result.pop("indoor_now")))
                 result["preheat"] = preheat
                 result.update(readings)

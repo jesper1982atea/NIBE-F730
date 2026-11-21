@@ -643,7 +643,8 @@ function renderAuxLimitControl() {
   const state = lastStatus?.aux_limit;
   const pending = lastStatus?.aux_recovery;
   const text = !state?.enabled ? (pending ? `Återställningen av elpatronens max eltillsats har inte kunnat bekräftas. Kontrollera ${pending.entity_id} på pumpen.` : "") : state.error ? state.error
-    : `Max eltillsats ${state.current ?? "okänd"} · önskad ${state.desired} (${state.reason}).${state.note ? ` ${state.note}` : ""}${state.next_change_at
+    : `Max eltillsats ${state.current ?? "okänd"} · önskad ${state.desired} (${state.reason}).${state.hot_water && !state.hot_water.error
+      ? ` Varmvatten: laddgivare ${displayNumber(state.hot_water.charge)} °C, topp ${displayNumber(state.hot_water.top)} °C.` : ""}${state.note ? ` ${state.note}` : ""}${state.next_change_at
       ? ` Nästa sänkning tidigast ${new Date(state.next_change_at * 1000).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}.` : ""}`;
   $("aux-limit-control").textContent = text;
   $("aux-limit-control").hidden = !text;
@@ -2997,6 +2998,8 @@ const fieldLabels = {
   aux_limit_enabled: "Begränsa elpatronen vid dyr el", aux_limit_entity: "Max eltillsats-inställning",
   aux_limit_option: "Max eltillsats vid dyr el", aux_normal_option: "Vanlig max eltillsats",
   aux_limit_max_drop: "Släpp begränsning under målet", aux_limit_min_outdoor: "Ingen begränsning under utetemp",
+  aux_hot_water_guard: "Varmvattenvakt", aux_hot_water_min_charge: "Varmvattenvakt · BT6-gräns", aux_hot_water_min_top: "Varmvattenvakt · BT7-gräns",
+  hot_water_precharge_minutes: "Ladda före dyra timmar",
   grid_import_entity: "Köpt el", grid_export_entity: "Såld el", solar_entity: "Solproduktion",
   battery_discharge_entity: "Batteri ur", battery_charge_entity: "Batteri in",
   min_interval_minutes: "Minsta ändringsintervall", max_step: "Största steg", max_age_minutes: "Högsta mätvärdesålder",

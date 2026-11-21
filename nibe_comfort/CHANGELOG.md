@@ -1,5 +1,23 @@
 # Ändringslogg
 
+## 0.2.59
+
+- Varmvattenvakt för elpatronbegränsningen (på från början): när
+  laddgivaren BT6 är under 38 °C eller toppen BT7 under 45 °C släpps
+  begränsningen direkt, och en ny begränsning kräver 2 °C marginal. Toppen
+  ensam räcker inte: den kan visa 43 °C fast tanken nästan är tom. Kan
+  givarna inte läsas begränsas elpatronen inte. Gränserna går att ändra.
+- Med varmvattenvakten på går det att välja 0 kW som max eltillsats vid
+  dyr el. Värmen i huset skyddas som förut av inne- och utegränserna.
+- Varmvatten på billig el laddar även före dyra timmar: läget vid billig
+  el väljs 120 minuter (inställbart, 0 = av) innan en dyr period börjar,
+  så att tanken är full när elpatronen begränsas.
+- Väljare, rumskort och ändringsloggen byggs inte längre om var 15:e
+  sekund. "Följ rum" gick inte att öppna genom att klicka på själva
+  väljaren (listan stängdes direkt), ett klick på ett rumskort kunde
+  försvinna och öppnade "Tekniska detaljer" fälldes ihop. Inställningarna
+  byggs inte om medan ett fält har fokus.
+
 ## 0.2.58
 
 - Kaminkortet visar vad brasorna sparade på pumpens el de senaste 30
