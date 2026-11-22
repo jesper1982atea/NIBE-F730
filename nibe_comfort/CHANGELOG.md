@@ -1,3 +1,9 @@
+
+## [0.2.62] - 2026-11-22
+
+### Changed
+- Updated UI color for manually changed settings in curve offset chart (orange to light-orange)
+
 # Ändringslogg
 
 ## 0.2.60
