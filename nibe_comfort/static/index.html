@@ -534,6 +534,22 @@
           </details>
           <p id="thermostat-control-status" role="status"></p>
           <ul id="thermostat-control-rooms"></ul>
+          <h3>Radiatortermostater styrda av rumsgivare</h3>
+          <label for="radiator_mode">Radiatortermostater</label>
+          <select id="radiator_mode" name="radiator_mode"><option value="off">Av</option><option value="shadow">Skugga · visa bara vad den hade gjort</option><option value="on">På</option></select>
+          <p class="hint">För smarta radiatortermostater (t.ex. Matter/Zigbee) som mäter fel eftersom de sitter vid elementet. En separat rumsgivare i samma rum bestämmer: är rummet minst <em>stryp-gränsen</em> över ditt rumsmål i den valda tiden (t.ex. när kaminen brinner) sänks termostatens börvärde så att ventilen stryper. När rummet svalnat skrivs det tidigare börvärdet tillbaka. Kurvförskjutningen påverkas inte. Börvärdet återställs också om rumsgivaren tystnar, huvudautomatiken eller funktionen stängs av, pumpen larmar 229 eller tillägget stoppas. Ändrar du börvärdet själv under strypningen lämnas det orört. <em>Skugga</em> ändrar ingenting och skriver i händelseloggen vad den hade gjort.</p>
+          <div id="radiator_pairs" class="radiator-pairs" role="group" aria-label="Radiatortermostater och rumsgivare"></div>
+          <button id="add-radiator-pair" type="button" class="secondary">Lägg till radiatortermostat</button>
+          <div class="field-pair">
+            <div><label for="radiator_close_above">Stryp vid · °C över målet</label><input id="radiator_close_above" type="number" min="0.3" max="3" step="0.1" required></div>
+            <div><label for="radiator_open_above">Öppna igen vid · °C över målet</label><input id="radiator_open_above" type="number" min="-1" max="2" step="0.1" required></div>
+          </div>
+          <div class="field-pair">
+            <div><label for="radiator_closed_setpoint">Börvärde vid strypning · °C</label><input id="radiator_closed_setpoint" type="number" min="5" max="25" step="0.5" required></div>
+            <div><label for="radiator_close_minutes">Varmt minst · minuter</label><input id="radiator_close_minutes" type="number" min="0" max="120" step="5" required></div>
+          </div>
+          <p id="radiator-status" class="hint" role="status"></p>
+          <ul id="radiator-rows"></ul>
         </section>
 
         <section class="card">

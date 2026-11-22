@@ -18,6 +18,9 @@ from urllib.request import Request, urlopen
 from alarm_codes import alarm_info, alarm_label
 from fireplace import empty_state, intervals as fireplace_intervals, update as update_fireplace, validate_state as validate_fireplace_state
 from learning import predict as model_predict
+from radiators import (CONFIRM_SECONDS as RADIATOR_CONFIRM_SECONDS, MATCH as RADIATOR_MATCH,
+                       MIN_WRITE_SECONDS as RADIATOR_MIN_WRITE_SECONDS, RadiatorError, fmt as radiator_fmt,
+                       validate_pairs as validate_radiator_pairs, validate_state as validate_radiator_state)
 
 
 DEFAULTS = {
@@ -93,11 +96,20 @@ DEFAULTS = {
     "solar_power_entity": "",
     "solar_power_threshold": 500.0,
     "hot_water_habit_mode": "off",
+    # Radiator thermostats steered by a separate room sensor in the same room (see radiators.py).
+    "radiator_mode": "off",
+    "radiator_pairs": [],
+    "radiator_close_above": 0.8,
+    "radiator_open_above": 0.2,
+    "radiator_closed_setpoint": 16.0,
+    "radiator_close_minutes": 15.0,
 }
 RULE_MODES = ("off", "shadow", "on")
 NEW_RULE_KEYS = ("adaptive_reduction_mode", "auto_base_memory_days", "solar_mode", "solar_power_entity",
                  "solar_power_threshold", "hot_water_habit_mode")
 SOURCE_ENTITIES = ("grid_import_entity", "grid_export_entity", "solar_entity", "battery_discharge_entity", "battery_charge_entity")
+RADIATOR_KEYS = ("radiator_mode", "radiator_pairs", "radiator_close_above", "radiator_open_above",
+                 "radiator_closed_setpoint", "radiator_close_minutes")
 AUX_LIMIT_KEYS = ("aux_limit_enabled", "aux_limit_entity", "aux_limit_option", "aux_normal_option",
                   "aux_limit_max_drop", "aux_limit_min_outdoor", "aux_hot_water_guard", "aux_hot_water_min_charge",
                   "aux_hot_water_min_top", "hot_water_precharge_minutes")
@@ -130,6 +142,10 @@ LIMITS = {
     "hot_water_precharge_minutes": (0, 360),
     "auto_base_memory_days": (0, 30),
     "solar_power_threshold": (50, 20000),
+    "radiator_close_above": (0.3, 3),
+    "radiator_open_above": (-1, 2),
+    "radiator_closed_setpoint": (5, 25),
+    "radiator_close_minutes": (0, 120),
 }
 
 
@@ -227,7 +243,7 @@ def validate(config):
         raise ControlError("Välj Tibber eller Nord Pool som elpriskälla.")
     if result["price_mode"] not in ("absolute", "relative"):
         raise ControlError("Prisnivån måste följa fasta gränser eller dygnets egna priser.")
-    for key in ("adaptive_reduction_mode", "solar_mode", "hot_water_habit_mode"):
+    for key in ("adaptive_reduction_mode", "solar_mode", "hot_water_habit_mode", "radiator_mode"):
         if result[key] not in RULE_MODES:
             raise ControlError(f"{key} måste vara av, skugga eller på.")
     for key in ("enabled", "preheat_enabled", "thermostat_control_enabled", "fireplace_enabled",
@@ -260,6 +276,18 @@ def validate(config):
         raise ControlError("Välj minst en temperaturkälla i rummet med braskamin.")
     if result["fireplace_enabled"] and not set(rooms) - set(fireplace_rooms):
         raise ControlError("Välj även minst ett rum utan kamin för temperaturjämförelse.")
+    try:
+        result["radiator_pairs"] = validate_radiator_pairs(result["radiator_pairs"])
+    except RadiatorError as exc:
+        raise ControlError(str(exc)) from exc
+    if result["radiator_open_above"] >= result["radiator_close_above"]:
+        raise ControlError("Radiatortermostaterna måste öppna igen vid en lägre temperatur än de stryper vid.")
+    if result["radiator_mode"] != "off" and result["radiator_closed_setpoint"] >= result["target_temperature"]:
+        raise ControlError("Börvärdet när radiatorn stryps måste vara lägre än rumsmålet.")
+    if result["radiator_mode"] != "off" and not result["radiator_pairs"]:
+        raise ControlError("Välj minst en radiatortermostat med rumsgivare, eller stäng av funktionen.")
+    if result["thermostat_control_enabled"] and {p["thermostat"] for p in result["radiator_pairs"]} & set(rooms):
+        raise ControlError("En termostat kan inte både begränsas som rum och styras via rumsgivare. Välj en av funktionerna för den.")
     nearest = result["nearest_thermostat"]
     if not isinstance(nearest, str) or (nearest and (nearest not in rooms or not nearest.startswith("climate."))):
         raise ControlError("Termostaten närmast pumpen måste vara en av dina valda termostater.")
@@ -431,8 +459,8 @@ class HomeAssistant:
     def set_offset(self, entity_id, value):
         self.request("/services/number/set_value", {"entity_id": entity_id, "value": value}, timeout=SERVICE_TIMEOUT_SECONDS)
 
-    def set_thermostat(self, entity_id, value):
-        self.request("/services/climate/set_temperature", {"entity_id": entity_id, "temperature": value}, timeout=SERVICE_TIMEOUT_SECONDS)
+    def set_thermostat(self, entity_id, value, timeout=SERVICE_TIMEOUT_SECONDS):
+        self.request("/services/climate/set_temperature", {"entity_id": entity_id, "temperature": value}, timeout=timeout)
 
     def set_select(self, entity_id, option, timeout=SERVICE_TIMEOUT_SECONDS):
         self.request("/services/select/select_option", {"entity_id": entity_id, "option": option}, timeout=timeout)
@@ -1449,8 +1477,9 @@ class Controller:
                 for key in ("skip_silent_rooms", "price_mode", "price_low_percent", "price_high_percent", "auto_base_enabled",
                             "auto_base_limit", "publish_sensors", "share_usage", "pause_notify_minutes", "notify_service",
                             "hot_water_price_enabled", "hot_water_mode_entity", "hot_water_cheap_option",
-                            "hot_water_normal_option", *SOURCE_ENTITIES, *AUX_LIMIT_KEYS, *NEW_RULE_KEYS):
-                    saved.setdefault(key, DEFAULTS[key])
+                            "hot_water_normal_option", *SOURCE_ENTITIES, *AUX_LIMIT_KEYS, *NEW_RULE_KEYS,
+                            *RADIATOR_KEYS):
+                    saved.setdefault(key, copy.deepcopy(DEFAULTS[key]))
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
         self.pending = None
@@ -1502,6 +1531,15 @@ class Controller:
                     self.manual_fireplace = number(saved["requested"], "Eldning start")
             except (ValueError, TypeError, KeyError, AttributeError, ControlError):
                 LOG.warning("Sparad manuell eldning kunde inte läsas; ignoreras.")
+        self.radiator_path = Path(data_dir) / "radiator-state.json"
+        try:
+            self.radiators = validate_radiator_state(json.loads(self.radiator_path.read_text())) if self.radiator_path.exists() else {}
+        except (ValueError, RadiatorError):
+            LOG.warning("Sparat radiatortillstånd kunde inte läsas; börjar om (inga börvärden ändras).")
+            self.radiators = {}
+        self.radiator_status = None
+        self.tick_entities = None
+        self.tick_alarm_hold = False
         self.thermostat_path = Path(data_dir) / "thermostat-state.json"
         self.thermostats = json.loads(self.thermostat_path.read_text()) if self.thermostat_path.exists() else {}
         if not isinstance(self.thermostats, dict):
@@ -1593,6 +1631,7 @@ class Controller:
 
     def snapshot(self):
         return {**copy.deepcopy(self.status), "vacation": copy.deepcopy(self.vacation),
+                "radiators": copy.deepcopy(self.radiator_status),
                 "aux_recovery": copy.deepcopy(self.aux_restore)
                 if self.aux_restore and (self.aux_restore["phase"] == "restoring" or self.aux_restart_restore) else None}
 
@@ -1731,10 +1770,15 @@ class Controller:
         return notes
 
     def tick(self):
+        self.tick_entities, self.tick_alarm_hold = None, False
         try:
             self.control_tick()
         finally:
-            self.report(time.time())
+            # Runs even when the pump's values are missing: the room sensors decide on their own.
+            try:
+                self.radiator_tick()
+            finally:
+                self.report(time.time())
 
     def report(self, now):
         """Tell Home Assistant about long pauses and publish status sensors. Never affects control."""
@@ -2146,6 +2190,253 @@ class Controller:
             self.events.add("settings_saved", "Termostatbegränsning pausad vid larm 229. Befintliga börvärden och ventiler är oförändrade.",
                             changes={"thermostat_control_enabled": {"from": True, "to": False}})
             return copy.deepcopy(config)
+
+    # --- Radiator thermostats steered by a room sensor (radiators.py) -------------------------
+
+    def save_radiators(self):
+        atomic_json(self.radiator_path, self.radiators)
+
+    def radiator_tick(self, now=None):
+        """Best effort per round; a failure here never stops the pump control."""
+        with self.lock:
+            entities = self.tick_entities
+            if entities is None:
+                return
+            try:
+                self.radiator_status = self.radiator_step(entities, time.time() if now is None else now,
+                                                          self.tick_alarm_hold)
+            except Exception as exc:  # noqa: BLE001 - reported, the next round tries again
+                LOG.exception("Radiatorstyrningen misslyckades")
+                self.radiator_status = {"mode": self.config["radiator_mode"], "rows": [], "error": str(exc)}
+
+    def write_radiator(self, thermostat, value, kind, now, timeout=SERVICE_TIMEOUT_SECONDS, **details):
+        """Store the attempt first, then call Home Assistant. Returns an error text or None."""
+        state = self.radiators[thermostat]
+        message = ("Rummet är varmt: radiatortermostatens börvärde sänks så att ventilen stryper."
+                   if kind == "close" else "Radiatortermostatens tidigare börvärde återställs.")
+        request_id = self.events.add(f"radiator_{kind}", message, entity_id=thermostat, value=value, **details)
+        state.update(last_write=now, pending={"kind": kind, "value": value, "at": now, "request_id": request_id})
+        self.save_radiators()
+        try:
+            self.ha.set_thermostat(thermostat, value, timeout=timeout)
+        except ControlError as exc:
+            self.events.add("radiator_failed", "Ändringen av radiatortermostaten misslyckades; den kan ändå ha tagits emot.",
+                            entity_id=thermostat, request_id=request_id, error=str(exc))
+            return str(exc)
+        return None
+
+    def open_radiator(self, thermostat, now, reason, timeout=SERVICE_TIMEOUT_SECONDS, **details):
+        """Write the stored previous setpoint back. The record stays closed until the readback
+        confirms it, so a lost write is retried."""
+        state = self.radiators[thermostat]
+        return self.write_radiator(thermostat, state["restore"], "open", now, timeout=timeout, reason=reason, **details)
+
+    def radiator_step(self, entities, now, alarm_hold=False):
+        config = self.config
+        mode = config["radiator_mode"]
+        shadow = mode == "shadow"
+        states = {e["entity_id"]: e for e in entities}
+        pairs = {p["thermostat"]: p["sensor"] for p in config["radiator_pairs"]} if mode != "off" else {}
+        target = config["target_temperature"]
+        close_at = round(target + config["radiator_close_above"], 2)
+        open_at = round(target + config["radiator_open_above"], 2)
+        result = {"mode": mode, "rows": [], "close_at": close_at, "open_at": open_at}
+
+        def setpoint_of(entity_id):
+            entity = states.get(entity_id)
+            if not entity or entity.get("state") in ("unknown", "unavailable", None):
+                return None
+            value = entity.get("attributes", {}).get("temperature")
+            return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
+
+        def real_closed(state):
+            return state["phase"] == "closed" and not state.get("virtual")
+
+        # A real throttle no longer wanted (function off or in shadow, pair removed) gets its setpoint back.
+        for thermostat in list(self.radiators):
+            state = self.radiators[thermostat]
+            if thermostat in pairs and not (shadow and not state.get("virtual")) and not (not shadow and state.get("virtual")):
+                continue
+            if real_closed(state):
+                setpoint = setpoint_of(thermostat)
+                row = {"thermostat": thermostat, "sensor": pairs.get(thermostat), "phase": "closed", "room": None,
+                       "setpoint": setpoint, "message": "", "error": None, "shadow": False}
+                if setpoint is None:
+                    row["error"] = "Termostaten svarar inte; tidigare börvärde återställs när den svarar igen."
+                    result["rows"].append(row)
+                    continue
+                if state.get("pending") or abs(setpoint - state["closed_value"]) <= RADIATOR_MATCH:
+                    if state.get("pending", {}).get("kind") == "open" and now - state["pending"]["at"] < RADIATOR_CONFIRM_SECONDS:
+                        if abs(setpoint - state["restore"]) > RADIATOR_MATCH:
+                            row["message"] = "Återställning skickad; väntar på återläsning."
+                            result["rows"].append(row)
+                            continue
+                    elif abs(setpoint - state["restore"]) > RADIATOR_MATCH:
+                        error = self.open_radiator(thermostat, now, "funktionen avstängd, i skugga eller termostaten borttagen")
+                        row.update(error=error, message="Återställer tidigare börvärde.")
+                        result["rows"].append(row)
+                        continue
+                else:
+                    self.events.add("radiator_manual", "Börvärdet ändrades utanför tillägget; det lämnas orört.",
+                                    entity_id=thermostat, value=setpoint)
+            del self.radiators[thermostat]
+            self.save_radiators()
+
+        for thermostat, sensor in pairs.items():
+            if thermostat not in self.radiators:
+                self.radiators[thermostat] = {"phase": "open", "virtual": shadow}
+            state = self.radiators[thermostat]
+            if state.get("virtual") != shadow:
+                continue  # still restoring a real throttle after switching to shadow; reported above
+            row = {"thermostat": thermostat, "sensor": sensor, "room": None, "setpoint": setpoint_of(thermostat),
+                   "phase": state["phase"], "message": "", "error": None, "shadow": shadow}
+            result["rows"].append(row)
+            try:
+                room = temperature(fresh_entity(states, sensor, config["max_age_minutes"], now))
+                if not 5 <= room <= 40:
+                    raise ControlError(f"{sensor}: orimlig inomhustemperatur.")
+                row["room"] = round(room, 2)
+            except ControlError as exc:
+                room, row["error"] = None, str(exc)
+            entity = states.get(thermostat)
+            setpoint = row["setpoint"]
+            thermostat_error = None
+            if setpoint is None:
+                thermostat_error = f"{thermostat} saknas, är otillgänglig eller saknar börvärde."
+            elif entity["state"] != "heat":
+                thermostat_error = f"{thermostat}: termostaten är inte i värmeläge (heat); lämnas orörd."
+
+            pending = state.get("pending")
+            if pending:
+                if setpoint is not None and abs(setpoint - pending["value"]) <= RADIATOR_MATCH:
+                    self.events.add("radiator_observed", "Radiatortermostatens nya börvärde återläst.", entity_id=thermostat,
+                                    value=setpoint, request_id=pending["request_id"])
+                    state.pop("pending")
+                    if pending["kind"] == "open":
+                        self.radiators[thermostat] = state = {"phase": "open", "virtual": False, "last_write": state["last_write"]}
+                        row["phase"] = "open"
+                    self.save_radiators()
+                elif now - pending["at"] >= RADIATOR_CONFIRM_SECONDS:
+                    self.events.add("radiator_unconfirmed", "Radiatortermostatens ändring kunde inte bekräftas.",
+                                    entity_id=thermostat, value=pending["value"], observed=setpoint, request_id=pending["request_id"])
+                    state.pop("pending")
+                    if pending["kind"] == "close" and (setpoint is None or abs(setpoint - state["restore"]) <= RADIATOR_MATCH):
+                        # The close never arrived: nothing to restore.
+                        self.radiators[thermostat] = state = {"phase": "open", "virtual": False, "last_write": state["last_write"]}
+                        row["phase"] = "open"
+                    self.save_radiators()
+                else:
+                    row["message"] = "Ändring skickad; väntar på återläsning."
+                    continue
+
+            if real_closed(state) and setpoint is not None and abs(setpoint - state["closed_value"]) > RADIATOR_MATCH:
+                self.events.add("radiator_manual", "Börvärdet ändrades utanför tillägget under strypning; det lämnas orört.",
+                                entity_id=thermostat, value=setpoint, expected=state["closed_value"])
+                self.radiators[thermostat] = state = {"phase": "open", "virtual": False, "last_write": state.get("last_write")}
+                row["phase"] = "open"
+                self.save_radiators()
+
+            reason = ("pumpen rapporterar larm 229 (korta drifttider)" if alarm_hold
+                      else "huvudautomatiken är av" if not config["enabled"] and not shadow
+                      else "rumsgivaren saknar aktuellt värde" if room is None
+                      else f"rummet har svalnat till {radiator_fmt(room)} °C" if room <= open_at else None)
+            since_write = now - state["last_write"] if state.get("last_write") is not None else math.inf
+
+            if state["phase"] == "closed":
+                if not reason:
+                    row["message"] = (f"{'Skugga: hade strypt' if shadow else 'Stryper'}. Återställs till {radiator_fmt(state['restore'])} °C "
+                                      f"när rummet är högst {radiator_fmt(open_at)} °C.")
+                    continue
+                if shadow:
+                    self.events.add("radiator_shadow", f"Skugga: hade återställt börvärdet ({reason}).", entity_id=thermostat,
+                                    value=state["restore"], room=row["room"])
+                    self.radiators[thermostat] = {"phase": "open", "virtual": True}
+                    row.update(phase="open", message=f"Skugga: hade öppnat ({reason}).")
+                    self.save_radiators()
+                    continue
+                if setpoint is None:
+                    row["error"] = thermostat_error
+                    continue
+                # A cooled room waits for the write interval; the safety reasons open at once.
+                if reason.startswith("rummet") and since_write < RADIATOR_MIN_WRITE_SECONDS:
+                    row["message"] = f"Öppnar om {math.ceil((RADIATOR_MIN_WRITE_SECONDS - since_write) / 60)} min ({reason})."
+                    continue
+                error = self.open_radiator(thermostat, now, reason, room=row["room"])
+                row.update(error=error, message=f"Återställer börvärdet till {radiator_fmt(state['restore'])} °C ({reason}).")
+                continue
+
+            # Open.
+            if reason or room < close_at:
+                if state.get("warm_since") is not None:
+                    state.pop("warm_since")
+                    self.save_radiators()
+                row["message"] = (f"Väntar: {reason}." if reason and not reason.startswith("rummet")
+                                  else f"Öppen. Stryper vid minst {radiator_fmt(close_at)} °C i {config['radiator_close_minutes']:g} min.")
+                continue
+            if state.get("warm_since") is None:
+                state["warm_since"] = now
+                self.save_radiators()
+            warm = now - state["warm_since"]
+            if warm < config["radiator_close_minutes"] * 60:
+                row["message"] = (f"Rummet {radiator_fmt(room)} °C. Stryper om "
+                                  f"{math.ceil((config['radiator_close_minutes'] * 60 - warm) / 60)} min om det håller i sig.")
+                continue
+            if thermostat_error:
+                row["error"] = thermostat_error
+                continue
+            attrs = entity["attributes"]
+            closed = config["radiator_closed_setpoint"]
+            if attrs.get("temperature_unit") == "°F":
+                closed = closed * 9 / 5 + 32
+            try:
+                step = attrs.get("target_temp_step")
+                if step is not None:
+                    step = number(step, f"{thermostat} steglängd")
+                    if step > 0:
+                        closed = math.ceil(closed / step - 1e-9) * step
+                if attrs.get("min_temp") is not None:
+                    closed = max(closed, number(attrs["min_temp"], f"{thermostat} minimum"))
+                closed = round(closed, 2)
+            except ControlError as exc:
+                row["error"] = str(exc)
+                continue
+            if setpoint <= closed + RADIATOR_MATCH:
+                row["message"] = "Börvärdet är redan lågt; lämnas orört."
+                continue
+            if shadow:
+                self.events.add("radiator_shadow", "Skugga: hade sänkt radiatortermostatens börvärde.", entity_id=thermostat,
+                                value=closed, previous=setpoint, room=row["room"])
+                self.radiators[thermostat] = {"phase": "closed", "virtual": True, "restore": setpoint, "closed_value": closed}
+                row.update(phase="closed", message=f"Skugga: hade sänkt {radiator_fmt(setpoint)} → {radiator_fmt(closed)} °C "
+                                                   f"(rummet {radiator_fmt(room)} °C).")
+                self.save_radiators()
+                continue
+            if since_write < RADIATOR_MIN_WRITE_SECONDS:
+                row["message"] = f"Stryper om {math.ceil((RADIATOR_MIN_WRITE_SECONDS - since_write) / 60)} min (minsta intervall)."
+                continue
+            self.radiators[thermostat] = {"phase": "closed", "virtual": False, "restore": setpoint, "closed_value": closed,
+                                          "last_write": state.get("last_write")}
+            error = self.write_radiator(thermostat, closed, "close", now, previous=setpoint, room=row["room"],
+                                        target_temperature=target)
+            row.update(phase="closed", error=error,
+                       message=f"Sänker börvärdet {radiator_fmt(setpoint)} → {radiator_fmt(closed)} °C (rummet {radiator_fmt(room)} °C).")
+        return result
+
+    def restore_radiators(self, reason, timeout=5):
+        """Give every throttled thermostat its previous setpoint back, e.g. when the add-on stops."""
+        errors = []
+        if not self.lock.acquire(timeout=timeout):
+            return ["styrningen är upptagen; börvärdena återställs vid nästa start"]
+        try:
+            for thermostat, state in list(self.radiators.items()):
+                if state["phase"] != "closed" or state.get("virtual"):
+                    continue
+                error = self.open_radiator(thermostat, time.time(), reason, timeout=timeout)
+                if error:
+                    errors.append(f"{thermostat}: {error}")
+        finally:
+            self.lock.release()
+        return errors
 
     def thermostat_step(self, entities, now, peers, testing, alarm_hold=False):
         result = {"enabled": self.config["thermostat_control_enabled"], "rooms": []}
@@ -2646,6 +2937,7 @@ class Controller:
             fireplace = None
             try:
                 entities = self.ha.states()
+                self.tick_entities = entities
                 now = time.time()
                 offset = next((e for e in entities if e["entity_id"] == self.config["offset_entity"]), None)
                 unavailable = offset is not None and offset["state"] == "unavailable"
@@ -2656,6 +2948,7 @@ class Controller:
                 readings = current_readings(self.config, entities, now, peers)
                 alarm = pump_alarm(entities, self.config, peers, now)
                 alarm_hold = alarm["active"] is True and alarm["code"] == 229 and not alarm["error"]
+                self.tick_alarm_hold = alarm_hold
                 fireplace = self.fireplace_step(entities, now, peers)
                 if unavailable:
                     # Do not silently drop a missing controlling room during a pump outage.

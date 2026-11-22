@@ -1,5 +1,18 @@
 # Ändringslogg
 
+## Ej släppt
+
+- Radiatortermostater styrda av rumsgivare (av från början, med skuggläge).
+  En smart radiatortermostat mäter vid elementet och visar ofta fel. Nu
+  kan du para ihop den med en rumsgivare i samma rum: är rummet minst
+  0,8 °C över målet i 15 minuter (t.ex. när kaminen brinner) sänks
+  termostatens börvärde till 16 °C så att ventilen stryper, och det
+  tidigare börvärdet skrivs tillbaka när rummet svalnat till målet
+  +0,2 °C. Gränserna går att ändra. Börvärdet återställs också om
+  rumsgivaren tystnar, automatiken eller funktionen stängs av, pumpen
+  larmar 229 eller tillägget stoppas. Ändrar du börvärdet själv under
+  strypningen lämnas det orört.
+
 ## 0.2.60
 
 - Antalet installationer räknas nu riktigt. Tillägget skickar var 6:e
