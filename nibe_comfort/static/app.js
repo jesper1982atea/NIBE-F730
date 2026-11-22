@@ -405,7 +405,7 @@ function renderPreheatTimeline(windows, now) {
 function renderSettings(formSettings = settings, preserveView = false) {
   for (const [key, value] of Object.entries(formSettings)) {
     const input = $(key);
-    if (!input || ["room_sensors", "priority_sensors", "fireplace_rooms"].includes(key)) continue;
+    if (!input || ["room_sensors", "priority_sensors", "fireplace_rooms", "radiator_pairs"].includes(key)) continue;
     if (typeof value === "boolean") input.checked = value;
     else if (input.tagName !== "SELECT") input.value = value;
   }
@@ -424,7 +424,8 @@ function renderSettings(formSettings = settings, preserveView = false) {
   renderModeSelects("hot_water", formSettings.hot_water_mode_entity, formSettings.hot_water_cheap_option, formSettings.hot_water_normal_option);
   renderModeSelects("aux", formSettings.aux_limit_entity, formSettings.aux_limit_option, formSettings.aux_normal_option);
   selectOptions("solar_power_entity", (entity) => entity.entity_id.startsWith("sensor.") && ["W", "kW"].includes(entity.unit), formSettings.solar_power_entity);
-  for (const id of ["adaptive_reduction_mode", "solar_mode", "hot_water_habit_mode"]) $(id).value = formSettings[id];
+  for (const id of ["adaptive_reduction_mode", "solar_mode", "hot_water_habit_mode", "radiator_mode"]) $(id).value = formSettings[id];
+  renderRadiatorPairs(formSettings.radiator_pairs, isTemperature);
   renderModeDiscovery();
   $("price_provider").value = formSettings.price_provider;
   $("price_mode").value = formSettings.price_mode;
@@ -539,11 +540,66 @@ function readSettings() {
       // is not reported as an unsaved change. Newly chosen rooms are added last.
       const checked = Array.from($(key).querySelectorAll("input:checked"), (input) => input.value);
       result[key] = [...value.filter((id) => checked.includes(id)), ...checked.filter((id) => !value.includes(id))];
-    } else if (typeof value === "boolean") result[key] = $(key).checked;
+    } else if (key === "radiator_pairs") result[key] = readRadiatorPairs();
+    else if (typeof value === "boolean") result[key] = $(key).checked;
     else if (typeof value === "number") result[key] = $(key).valueAsNumber;
     else result[key] = $(key).value;
   }
   return result;
+}
+
+// Radiator thermostat + room sensor pairs. Empty rows are ignored when saving.
+function radiatorPairRow(pair, isTemperature) {
+  const row = document.createElement("div");
+  row.className = "radiator-pair field-pair";
+  const make = (cls, label, predicate, value) => {
+    const wrap = document.createElement("div");
+    const caption = document.createElement("label");
+    caption.textContent = label;
+    const select = document.createElement("select");
+    select.className = cls;
+    select.add(new Option("Inte vald", ""));
+    for (const entity of entities.filter(predicate)) select.add(new Option(`${entity.name} · ${entity.entity_id}`, entity.entity_id));
+    if (value && !Array.from(select.options).some((option) => option.value === value)) select.add(new Option(`${value} (saknas)`, value));
+    select.value = value || "";
+    wrap.append(caption, select);
+    return wrap;
+  };
+  const remove = document.createElement("button");
+  Object.assign(remove, { type: "button", className: "secondary", textContent: "Ta bort" });
+  remove.addEventListener("click", () => { row.remove(); updateSaveState(); });
+  row.append(make("radiator-thermostat", "Termostat", (e) => e.entity_id.startsWith("climate."), pair.thermostat),
+    make("radiator-sensor", "Rumsgivare i samma rum", isTemperature, pair.sensor), remove);
+  return row;
+}
+
+let radiatorIsTemperature = () => false;
+function renderRadiatorPairs(pairs, isTemperature) {
+  radiatorIsTemperature = isTemperature;
+  $("radiator_pairs").replaceChildren(...(pairs || []).map((pair) => radiatorPairRow(pair, isTemperature)));
+}
+
+function readRadiatorPairs() {
+  return Array.from($("radiator_pairs").querySelectorAll(".radiator-pair"), (row) => ({
+    thermostat: row.querySelector(".radiator-thermostat").value, sensor: row.querySelector(".radiator-sensor").value,
+  })).filter((pair) => pair.thermostat || pair.sensor);
+}
+
+function renderRadiatorStatus() {
+  const state = lastStatus?.radiators;
+  const mode = settings?.radiator_mode;
+  $("radiator-status").textContent = !mode || mode === "off" ? "Av. Inga radiatorbörvärden ändras."
+    : !state ? "Väntar på nästa avläsning."
+    : state.error ? state.error
+    : `Läge ${RULE_MODES[mode]}. Stryper vid ${displayNumber(state.close_at)} °C, öppnar vid ${displayNumber(state.open_at)} °C.`;
+  $("radiator-rows").replaceChildren(...(mode && mode !== "off" ? state?.rows || [] : []).map((row) => {
+    const li = document.createElement("li");
+    const name = entities.find((e) => e.entity_id === row.thermostat)?.name || row.thermostat;
+    const room = row.room == null ? "" : ` · rum ${displayNumber(row.room)} °C`;
+    const setpoint = row.setpoint == null ? "" : ` · börvärde ${displayNumber(row.setpoint)} °C`;
+    li.textContent = `${name}${room}${setpoint}: ${[row.error, row.message].filter(Boolean).join(" · ")}`;
+    return li;
+  }));
 }
 
 function renderPriorityPicker(selected) {
@@ -908,6 +964,7 @@ function renderRoomImpact() {
     ? `Pausad: ${lastStatus.error_message}`
     : control?.enabled ? `Termostatbegränsning på${lastStatus.enabled ? "" : " · huvudautomatiken är av, inga nya ändringar skickas"}.`
       : "Termostatbegränsning av. Inga börvärden ändras.";
+  renderRadiatorStatus();
   $("thermostat-control-rooms").replaceChildren(...(control?.rooms || []).map((room) => {
     const li = document.createElement("li");
     li.textContent = `${entities.find((e) => e.entity_id === room.entity_id)?.name || room.entity_id}: ${room.error || room.message} ${room.warning || ""}`;
@@ -3007,6 +3064,9 @@ const fieldLabels = {
   adaptive_reduction_mode: "Behovsanpassad sänkning", auto_base_memory_days: "Baskorrigeringens minne",
   solar_mode: "Solvärme", solar_power_entity: "Solcellseffekt", solar_power_threshold: "Solen räknas från",
   hot_water_habit_mode: "Varmvatten efter vanor",
+  radiator_mode: "Radiatortermostater", radiator_pairs: "Radiatortermostater och rumsgivare",
+  radiator_close_above: "Stryp radiator vid", radiator_open_above: "Öppna radiator vid",
+  radiator_closed_setpoint: "Börvärde vid strypning", radiator_close_minutes: "Varmt minst (radiator)",
 };
 
 function logValue(value) {
@@ -3297,11 +3357,18 @@ async function init() {
       || next.target_temperature !== settings.target_temperature
       || JSON.stringify(next.room_sensors) !== JSON.stringify(settings.room_sensors))
       && !window.confirm("Valda termostaters högre börvärden kan sänkas till ditt rumsmål vid minst 0,5 °C övertemperatur. Tillräckligt flöde måste finnas i anläggningen. Avstängning återställer inte redan ändrade börvärden. Godkänner du termostatbegränsningen för dessa rum och detta mål?")) return;
+    if (next.radiator_mode === "on" && (settings.radiator_mode !== "on"
+      || JSON.stringify(next.radiator_pairs) !== JSON.stringify(settings.radiator_pairs))
+      && !window.confirm("Valda radiatortermostaters börvärden sänks när rumsgivaren visar att rummet är varmt, och återställs när det svalnat. Ventilerna stryper då flödet; säkerställ att värmesystemet har tillräckligt flöde genom övriga element. Godkänner du detta?")) return;
     if (next.enabled && JSON.stringify(next.priority_sensors) !== JSON.stringify(settings.priority_sensors)
       && !window.confirm("Styrningen kommer att följa snittet för de prioriterade rummen, eller alla valda rum om inget prioriteras. Kurvförskjutningen påverkar hela huset och andra rum kan bli varmare. Spara ändringen?")) return;
     if (next.enabled && (!settings.enabled || next.offset_entity !== settings.offset_entity)
       && !window.confirm("Har du verifierat att vald entitet är kurvförskjutning och att gränserna passar din pump? Automatiken får ändra denna entitet.")) return;
     void save(next);
+  });
+  $("add-radiator-pair").addEventListener("click", () => {
+    $("radiator_pairs").append(radiatorPairRow({ thermostat: "", sensor: "" }, radiatorIsTemperature));
+    updateSaveState();
   });
   $("settings").addEventListener("input", updateSaveState);
   $("settings").addEventListener("change", updateSaveState);

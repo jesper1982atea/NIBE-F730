@@ -464,6 +464,34 @@ om den väljs; börvärdet används aldrig som reservvärde. Välj inte både en
 termostat och dess separata givare om du vill undvika dubbel vikt för samma rum.
 En avstängd termostat kan fortfarande lämna en giltig temperatur.
 
+### Radiatortermostater styrda av rumsgivare
+
+För smarta radiatortermostater (Matter, Zigbee) som sitter på elementet och
+därför mäter fel. Funktionen är **av från början** och har ett skuggläge som
+bara loggar vad den hade gjort. Lägg till en rad per termostat och välj
+rumsgivaren i samma rum; termostaten behöver inte vara vald som rumsgivare.
+
+- Är rummet minst **0,8 °C över ditt rumsmål** (inställbart) i minst
+  **15 minuter** sänks termostatens börvärde till **16 °C** (inställbart,
+  avrundat uppåt till termostatens steg och aldrig under dess minimum), så
+  att ventilen stryper. Det tidigare börvärdet sparas i
+  `/data/radiator-state.json` före anropet.
+- När rummet svalnat till högst **målet +0,2 °C** skrivs det tidigare
+  börvärdet tillbaka. Högst en ändring per termostat var 10:e minut.
+- Det tidigare börvärdet återställs direkt om rumsgivaren saknar aktuellt
+  värde, huvudautomatiken eller funktionen stängs av, termostaten tas bort
+  ur listan, pumpen rapporterar larm 229 (korta drifttider, ofta för lite
+  flöde) eller tillägget stoppas. Under pumpavbrott i myUplink fortsätter
+  funktionen, eftersom den bara behöver rumsgivaren.
+- Varje ändring återläses. En strypning som inte syns inom 15 minuter
+  glöms; en återställning som inte syns görs om.
+- Ändrar du börvärdet själv medan termostaten stryps lämnas det orört och
+  skrivs inte tillbaka. Termostater som inte är i värmeläge (`heat`) rörs inte.
+- Samma termostat kan inte samtidigt användas i **Begränsa övertemperatur med
+  termostater**.
+- Kurvförskjutningen påverkas inte. Kontrollera att värmesystemet har
+  tillräckligt flöde genom övriga element när ventilerna stryper.
+
 ### Rumsval och termostaten närmast pumpen
 
 Temperaturkorten visar namn, uppmätt temperatur, driftläge och termostatens

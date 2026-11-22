@@ -432,3 +432,4 @@ main[data-layout=grouped][data-active-view=settings]>[data-view]:not([data-view=
 .community-badge{color:var(--muted);font-weight:600;cursor:help}
 .when-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.when-picker select{width:100%}
 .hero .now-tile a{color:#cfe8dc;font-size:13px;text-decoration:underline;text-decoration-color:rgba(207,232,220,.5);text-underline-offset:3px}.hero .now-tile a:hover{color:#fff}
+.radiator-pair{grid-template-columns:1fr 1fr auto;align-items:end}.radiator-pair button{margin-bottom:2px}

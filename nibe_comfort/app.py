@@ -580,6 +580,12 @@ def main():
     stop.wait()
     # A stopped add-on must not leave the electric heater limited for the rest of the winter.
     lift_aux_limit(controller, "tillägget stoppas", timeout=10)
+    # Likewise, a throttled radiator must not stay throttled while nothing watches the room.
+    try:
+        for error in controller.restore_radiators("tillägget stoppas", timeout=5):
+            LOG.warning("Radiatortermostat kunde inte återställas: %s", error)
+    except Exception:
+        LOG.exception("Kunde inte återställa radiatortermostaterna")
     for server in servers:
         server.shutdown()
         server.server_close()
