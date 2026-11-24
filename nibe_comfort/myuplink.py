@@ -244,7 +244,10 @@ class MyUplink:
                            "alarms": alarms, "checked_at": time.time()}
             return self.cached
 
-    def reset(self, identifier, events, expected_system=None, expected_device=None):
+    def reset(self, identifier, events, expected_system=None, expected_device=None, *, automatic=False,
+              analysis_summary=None):
+        if type(automatic) is not bool:
+            raise ControlError("Automatisk kvittering måste vara uttryckligen av eller på.")
         if not isinstance(identifier, str) or not re.fullmatch(r"[1-9][0-9]{0,9}", identifier):
             raise ControlError("Kvittering kräver ett verifierat numeriskt larm-ID; UUID och larmkod godtas inte.")
         if not self.lock.acquire(blocking=False):
@@ -255,7 +258,7 @@ class MyUplink:
             if ((expected_system is not None and expected_system != self.system_id)
                     or (expected_device is not None and expected_device != self.device_id)):
                 raise ControlError("Molnpumpvalet har ändrats. Uppdatera larmvyn innan kvittering.")
-            if any(e["kind"] == "alarm_reset_attempt"
+            if any(e["kind"] in ("alarm_reset_attempt", "alarm_auto_reset_attempt")
                    and e["details"].get("system_id") == self.system_id
                    and e["details"].get("notification_id") == identifier
                    for e in events.history(time.time() - 120, time.time())):
@@ -264,8 +267,12 @@ class MyUplink:
             alarm = next((a for a in self.active() if a["id"] == identifier), None)
             if not alarm or not alarm["can_reset"]:
                 raise ControlError("Larmet kan inte kvitteras: nytt aktivt larm 229 med verifierat ID krävs.")
-            events.add("alarm_reset_attempt", "Användaren begär manuell larmkvittering via myUplink.",
-                       system_id=self.system_id, device_id=self.device_id, notification_id=identifier, code=229)
+            kind = "alarm_auto_reset_attempt" if automatic else "alarm_reset_attempt"
+            message = ("Automatisk kvittering begärd efter komplett 30+10-minuters pumpdiagnostik."
+                       if automatic else "Användaren begär manuell larmkvittering via myUplink.")
+            events.add(kind, message, system_id=self.system_id, device_id=self.device_id,
+                       notification_id=identifier, code=229, automatic=automatic,
+                       analysis_summary=analysis_summary if automatic else None)
             result = self.request(f"/v2/systems/{self.system_id}/notifications/{identifier}/reset",
                                   b"{}", self.access_token())
             if not isinstance(result, dict) or type(result.get("status")) is not int or result["status"] != 200:

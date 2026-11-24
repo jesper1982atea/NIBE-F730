@@ -69,6 +69,126 @@ class CloudAlarmCache:
                 self.loading = False
 
 
+class AutoAlarmResetMonitor:
+    """One-shot 229 reset only after a clear baseline and a complete diagnostic window."""
+
+    def __init__(self, controller, myuplink):
+        self.controller = controller
+        self.myuplink = myuplink
+        self.armed_since = None
+        self.last_checked_at = None
+        self.observed_alarm = False
+        self.last_error = None
+
+    def tick(self):
+        diagnostics = self.controller.compressor_diagnostics
+        try:
+            report = self.myuplink.report()
+            if not report.get("configured"):
+                self.armed_since = self.last_checked_at = None
+                self.observed_alarm = False
+                return
+            checked_at = report.get("checked_at")
+            system_id, device_id = report.get("system_id"), report.get("device_id")
+            if (not isinstance(checked_at, (int, float)) or isinstance(checked_at, bool)
+                    or not isinstance(system_id, str) or not isinstance(device_id, str)):
+                raise ControlError("myUplink gav ingen verifierad system-, enhets- eller kontrolltid.")
+
+            if self.last_checked_at is not None and checked_at - self.last_checked_at > 120:
+                diagnostics.auto_reset_block_pending(
+                    system_id, device_id, checked_at, "Övervakningen hade en lucka; automatisk kvittering spärrad.",
+                )
+                self.armed_since = None
+                self.observed_alarm = False
+            self.last_checked_at = checked_at
+            active_229 = [alarm for alarm in report.get("alarms", []) if alarm.get("code") == 229]
+            if not active_229:
+                diagnostics.auto_reset_cancel_pending(system_id, device_id, checked_at)
+                if self.observed_alarm or self.armed_since is None:
+                    self.armed_since = checked_at
+                self.observed_alarm = False
+                self.last_error = None
+                return
+
+            self.observed_alarm = True
+            if len(active_229) != 1 or active_229[0].get("status") != "Active" or not active_229[0].get("can_reset"):
+                for alarm in active_229:
+                    diagnostics.auto_reset_block(
+                        system_id, device_id, str(alarm.get("id", "invalid")),
+                        checked_at, "Endast ett entydigt aktivt larm 229 med verifierat numeriskt ID kan kvitteras.",
+                    )
+                self.armed_since = None
+                return
+
+            alarm = active_229[0]
+            alarm_id = alarm["id"]
+            if self.armed_since is None or checked_at - self.armed_since < 1800:
+                diagnostics.auto_reset_block(
+                    system_id, device_id, alarm_id, checked_at,
+                    "Larmet var redan aktivt eller saknar 30 minuters verifierad larmfri förhistorik; ingen automatisk kvittering.",
+                )
+                self.armed_since = None
+                return
+
+            first_seen, state = diagnostics.begin_auto_reset(system_id, device_id, alarm_id, checked_at)
+            if state != "pending":
+                return
+            elapsed = checked_at - first_seen
+            if elapsed < 600:
+                diagnostics.auto_reset_update_pending(
+                    system_id, device_id, alarm_id, checked_at,
+                    f"Väntar på efterloggning: {max(0, round((600 - elapsed) / 60))} minuter kvar.",
+                )
+                return
+
+            analysis = diagnostics.analyze_alarm_window(first_seen, checked_at, self.controller.settings())
+            if not analysis["ready"]:
+                message = f"Automatisk kvittering spärrad: {analysis['reason']}"
+                diagnostics.auto_reset_finish(system_id, device_id, alarm_id, checked_at, "blocked", message, analysis)
+                self.controller.events.add(
+                    "alarm_auto_reset_blocked", message, system_id=system_id, device_id=device_id,
+                    notification_id=alarm_id, code=229,
+                )
+                return
+            if self.controller.events.alarm_reset_attempted(system_id, device_id, alarm_id):
+                message = "Automatisk kvittering spärrad: en kvittering har redan begärts för detta larm-ID."
+                diagnostics.auto_reset_finish(system_id, device_id, alarm_id, checked_at, "blocked", message, analysis)
+                return
+            if not diagnostics.auto_reset_claim(system_id, device_id, alarm_id, checked_at, analysis):
+                return
+            summary = " ".join(analysis["recommendations"])
+            try:
+                result = self.myuplink.reset(
+                    alarm_id, self.controller.events, system_id, device_id,
+                    automatic=True, analysis_summary=summary,
+                )
+            except (ControlError, OSError, ValueError) as exc:
+                message = f"Engångsbegäran misslyckades; ingen automatisk återförsökning görs: {exc}"
+                diagnostics.auto_reset_finish(system_id, device_id, alarm_id, time.time(), "failed", message, analysis)
+                LOG.warning("%s", message)
+            else:
+                message = result["message"]
+                diagnostics.auto_reset_finish(system_id, device_id, alarm_id, time.time(), "submitted", message, analysis)
+                LOG.warning("Automatisk kvittering begärd för aktivt larm 229; kontrollera pumpen.")
+            self.last_error = None
+        except (ControlError, OSError, ValueError, TypeError) as exc:
+            if str(exc) != self.last_error:
+                LOG.warning("Automatisk larmövervakning pausad: %s", exc)
+                self.last_error = str(exc)
+            self.armed_since = None
+            self.observed_alarm = False
+        except Exception:
+            LOG.exception("Oväntat fel i automatisk larmövervakning")
+            self.armed_since = None
+            self.observed_alarm = False
+
+    def run(self, stop, interval=60):
+        while not stop.is_set():
+            self.tick()
+            if stop.wait(interval):
+                return
+
+
 def run_control_loop(controller, stop, interval=60, retries=LOOP_RETRIES, retry_seconds=LOOP_RETRY_SECONDS):
     """Run control rounds until stopped. An unexpected error is reported to Home Assistant and retried
     a few times; after that the loop stops and says so instead of leaving stale "Styr" sensors."""
@@ -218,6 +338,14 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                     self.respond(200, insights.overview(controller.settings(), cloud_alarms.get()))
                 elif path == "/api/alarms":
                     self.respond(200, insights.alarms(controller.settings(), cloud_alarms.get()))
+                elif path == "/api/compressor-diagnostics":
+                    values = parse_qs(urlsplit(self.path).query, keep_blank_values=True).get("hours", ["72"])
+                    if len(values) != 1 or values[0] not in ("6", "24", "72"):
+                        self.respond(400, {"error": "Välj 6, 24 eller 72 timmar."})
+                        return
+                    report = controller.compressor_diagnostics.report(int(values[0]))
+                    report["auto_reset_enabled"] = bool(getattr(controller, "auto_reset_enabled", False))
+                    self.respond(200, report)
                 elif path == "/api/myuplink/alarms":
                     self.respond(200, myuplink.report())
                 elif path == "/api/myuplink/discovery":
@@ -565,6 +693,7 @@ def main():
 
     insights = Insights(controller.ha, controller.data_dir)
     myuplink = MyUplink(options, controller.data_dir)
+    controller.auto_reset_enabled = options.get("myuplink_auto_reset_229", False) is True
     servers = [ThreadingHTTPServer(("0.0.0.0", 8098), handler_for(controller, insights=insights, myuplink=myuplink))]
     if local_token:
         servers.append(ThreadingHTTPServer(("0.0.0.0", 8099), handler_for(controller, local_token, insights, myuplink)))
@@ -572,6 +701,9 @@ def main():
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=run_control_loop, args=(controller, stop), daemon=True).start()
+    if controller.auto_reset_enabled:
+        monitor = AutoAlarmResetMonitor(controller, myuplink)
+        threading.Thread(target=monitor.run, args=(stop,), daemon=True).start()
     reporter = Reporter(COMMUNITY_BASE, os.environ.get("NIBE_COMFORT_VERSION", "dev"), controller.data_dir)
     threading.Thread(target=usage_loop, args=(controller, reporter, stop), daemon=True).start()
     for sig in (signal.SIGTERM, signal.SIGINT):

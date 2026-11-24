@@ -1,5 +1,15 @@
 # Ändringslogg
 
+## 0.2.64
+
+- Kompressordiagnostik loggar pumpvärden och möjliga korta körningar i sju
+  dagar. Valfri automatisk kvittering av ett entydigt numeriskt larm 229 är
+  avstängd som standard och kräver 30 minuters larmfri baslinje samt ett
+  komplett analysfönster på 30 minuter före och 10 minuter efter larmet.
+  Saknade sensorer eller datagap spärrar funktionen; högst en begäran görs
+  utan automatiska återförsök. Diagnostikvyn visar analysens begränsningar
+  och försiktiga förslag på kod- och systemkontroller.
+
 ## 0.2.63
 
 - Radiatortermostater styrda av rumsgivare (av från början, med skuggläge).

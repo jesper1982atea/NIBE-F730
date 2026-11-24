@@ -433,3 +433,8 @@ main[data-layout=grouped][data-active-view=settings]>[data-view]:not([data-view=
 .when-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.when-picker select{width:100%}
 .hero .now-tile a{color:#cfe8dc;font-size:13px;text-decoration:underline;text-decoration-color:rgba(207,232,220,.5);text-underline-offset:3px}.hero .now-tile a:hover{color:#fff}
 .radiator-pair{grid-template-columns:1fr 1fr auto;align-items:end}.radiator-pair button{margin-bottom:2px}
+.diagnostic-cycle{color:#146c50}.chart-event.diagnostic-cycle line{stroke:#146c50;stroke-dasharray:3 3}.chart-event.diagnostic-cycle rect{fill:#e6f3ee;stroke:#146c50}.chart-event.diagnostic-cycle text{fill:#0d4a37}
+.diagnostic-alarm{color:#b04743}.chart-event.diagnostic-alarm line{stroke:#b04743;stroke-dasharray:2 3}.chart-event.diagnostic-alarm rect{fill:#fbe9e4;stroke:#b04743}.chart-event.diagnostic-alarm text{fill:#7d2b19}
+:root[data-theme=dark] .chart-event.diagnostic-cycle line{stroke:#4cc08f}:root[data-theme=dark] .chart-event.diagnostic-cycle rect{fill:#173d2d;stroke:#4cc08f}:root[data-theme=dark] .chart-event.diagnostic-cycle text{fill:#bff0d8}
+:root[data-theme=dark] .chart-event.diagnostic-alarm line{stroke:#ee8a75}:root[data-theme=dark] .chart-event.diagnostic-alarm rect{fill:#3a221d;stroke:#ee8a75}:root[data-theme=dark] .chart-event.diagnostic-alarm text{fill:#ffd2c7}
+#compressor-diagnostics .field-pair>div{max-width:320px}#compressor-parameter{max-width:560px}

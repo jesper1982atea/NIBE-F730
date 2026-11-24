@@ -1916,6 +1916,194 @@ async function resetCloudAlarm(id) {
   }
 }
 
+let compressorDiagnosticsBusy = false;
+let compressorDiagnosticsData = null;
+let compressorParameterSelection = "";
+
+function diagnosticSnapshot(snapshot) {
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = `Visa pumpvärden · ${dayAndTime(snapshot.timestamp)}`;
+  details.append(summary);
+  const values = document.createElement("ul");
+  values.className = "plan-changes";
+  for (const item of snapshot.pump || []) {
+    const row = document.createElement("li");
+    const value = item.value === null ? "okänt" : `${item.value}${item.unit ? ` ${item.unit}` : ""}`;
+    const age = item.age_seconds === null ? "rapportålder okänd" : `senast rapporterad ${item.age_seconds} s före provet`;
+    row.textContent = `${item.name}: ${value} · ${age}`;
+    values.append(row);
+  }
+  const app = snapshot.app || {};
+  const controls = document.createElement("p");
+  const context = [
+    app.price_level ? `Elpris: ${app.price_level}` : null,
+    app.price !== null && app.price !== undefined ? `pris ${displayNumber(Number(app.price))}` : null,
+    app.target_shift !== null && app.target_shift !== undefined ? `pris-/förvärmningsbidrag ${displayNumber(Number(app.target_shift))}°` : null,
+    app.desired_offset !== null && app.desired_offset !== undefined ? `önskat offset ${displayNumber(Number(app.desired_offset))}` : null,
+    app.current_offset !== null && app.current_offset !== undefined ? `aktuellt offset ${displayNumber(Number(app.current_offset))}` : null,
+  ].filter(Boolean);
+  controls.className = "hint";
+  controls.textContent = context.length ? `NIBE Comfort vid provet: ${context.join(" · ")}` : "Ingen extra styrkontext rapporterad vid provet.";
+  details.append(controls, values);
+  return details;
+}
+
+function renderCompressorDiagnostics(data) {
+  compressorDiagnosticsData = data;
+  const status = $("compressor-diagnostics-status");
+  const metrics = $("compressor-diagnostics-metrics");
+  $("compressor-auto-reset-status").textContent = data.auto_reset_enabled
+    ? "Automatisk kvittering är PÅ. Kräver 30 min larmfri övervakning före larmet, ett komplett 30+10-minuters analysfönster, aktivt 229 med ett numeriskt ID och en enda begäran utan återförsök."
+    : "Automatisk kvittering är AV (standard). Endast den manuella, bekräftade myUplink-kvitteringen kan användas.";
+  const stateNames = {
+    pending: "Väntar på analysfönstret", attempting: "En engångsbegäran pågår",
+    submitted: "Begäran skickad – pumpens status är inte bekräftad",
+    failed: "Begäran misslyckades – inget återförsök görs",
+    blocked: "Automatisk kvittering spärrad", cleared: "Larmet försvann före analysen",
+  };
+  $("compressor-auto-reset-history").replaceChildren(...(data.auto_resets || []).map((item) => {
+    const article = document.createElement("article");
+    article.className = "event";
+    const time = document.createElement("small");
+    time.textContent = `Larm-ID ${item.alarm_id} · första observation ${dayAndTime(item.first_seen)}`;
+    const title = document.createElement("strong");
+    title.textContent = stateNames[item.state] || item.state;
+    const message = document.createElement("p");
+    message.textContent = item.message;
+    article.append(time, title, message);
+    for (const recommendation of item.analysis?.recommendations || []) {
+      const line = document.createElement("p");
+      line.className = "hint";
+      line.textContent = recommendation;
+      article.append(line);
+    }
+    return article;
+  }));
+  const recommendations = data.recommendations || [];
+  $("compressor-recommendations").replaceChildren(...recommendations.map((text) => {
+    const item = document.createElement("li");
+    item.textContent = text;
+    return item;
+  }));
+  $("compressor-diagnostics-quality").textContent = data.available
+    ? `${data.sample_count} prover · provintervall typiskt ${data.sample_interval_seconds ?? "—"} s · största lucka ${data.max_gap_seconds ?? "—"} s · ${data.gaps_over_120_seconds} luckor över 2 minuter · ${data.samples_without_pump_values} prover utan pumpvärden. ${data.message}${data.truncated ? " Pumpens entitetslista är avkortad." : ""}`
+    : data.message;
+  if (!data.available) {
+    status.textContent = data.message;
+    metrics.replaceChildren();
+    $("compressor-temperature-chart").textContent = "Inväntar pumpvärden.";
+    $("compressor-temperature-legend").replaceChildren();
+    $("compressor-parameter-chart").replaceChildren();
+    $("compressor-cycles").textContent = "Inga körningar kan visas ännu.";
+    $("compressor-alarm-events").textContent = "Inga larm kan visas ännu.";
+    $("compressor-latest-values").replaceChildren();
+    fillSelect($("compressor-parameter"), [new Option("Inga numeriska pumpvärden", "")], "");
+    return;
+  }
+  status.textContent = `${data.sample_count} prover från ${dayAndTime(data.start)} till ${dayAndTime(data.end)}.`;
+  const summaryMetrics = [
+    { label: "Prover", value: String(data.sample_count) },
+    { label: "Typiskt intervall", value: data.sample_interval_seconds === null ? "—" : `${data.sample_interval_seconds} s` },
+    { label: "Största lucka", value: data.max_gap_seconds === null ? "—" : `${Math.round(data.max_gap_seconds / 60)} min` },
+    { label: "Prover utan pumpdata", value: String(data.samples_without_pump_values) },
+    { label: "Körningar", value: String(data.cycles.length) },
+  ];
+  metrics.replaceChildren(...summaryMetrics.map((item) => metric(item)));
+
+  const markers = [];
+  for (const cycle of data.cycles.slice(-20)) {
+    markers.push({ time: cycle.start, label: "Kompressor start", short: "Start", className: "diagnostic-cycle",
+      title: `Kompressor påvisad ${dayAndTime(cycle.start)}` });
+    markers.push({ time: cycle.end, label: "Kompressor stopp", short: "Stopp", className: "diagnostic-cycle",
+      title: `Kompressor avläst av ${dayAndTime(cycle.end)}` });
+  }
+  for (const alarm of data.alarms) {
+    markers.push({ time: alarm.timestamp, label: alarm.code === 229 ? "Larm 229" : "Larm", short: "Larm",
+      className: "diagnostic-alarm", title: `Aktivt larm${alarm.code ? ` ${alarm.code}` : ""} avläst ${dayAndTime(alarm.timestamp)}` });
+  }
+  const temperatureSeries = data.temperatures.map((item, index) => ({
+    name: item.name, points: item.points, color: index,
+  }));
+  const validRange = Number.isFinite(data.start) && Number.isFinite(data.end) && data.end > data.start;
+  if (temperatureSeries.length && validRange) {
+    drawChart($("compressor-temperature-chart"), temperatureSeries, {
+      start: data.start, end: data.end, markers, unit: "°", pad: 1, empty: "Inga temperaturvärden i perioden.",
+    });
+    legend($("compressor-temperature-legend"), temperatureSeries);
+  } else {
+    $("compressor-temperature-chart").textContent = "Temperaturgrafen visas när minst två tidspunkter har rapporterats.";
+    $("compressor-temperature-legend").replaceChildren();
+  }
+
+  const select = $("compressor-parameter");
+  const current = select.value || compressorParameterSelection;
+  const options = data.series.map((item) => new Option(
+    `${item.name}${item.unit ? ` · ${item.unit}` : ""}`, item.entity_id,
+  ));
+  const fallback = data.series.find((item) => item.entity_id.replace(/_\d+$/, "").endsWith("_return_line_bt3"))
+    || data.series.find((item) => item.entity_id.replace(/_\d+$/, "").endsWith("_supply_line_bt2"))
+    || data.series.find((item) => !data.temperatures.some((temperature) => temperature.entity_id === item.entity_id))
+    || data.series[0];
+  compressorParameterSelection = data.series.some((item) => item.entity_id === current) ? current : fallback?.entity_id || "";
+  fillSelect(select, options.length ? options : [new Option("Inga numeriska pumpvärden", "")], compressorParameterSelection);
+  const chosen = data.series.find((item) => item.entity_id === select.value);
+  if (chosen && validRange) {
+    const unit = chosen.unit || "";
+    const lastValue = chosen.points[chosen.points.length - 1]?.[1] || 1;
+    drawChart($("compressor-parameter-chart"), [{ name: chosen.name, points: chosen.points }],
+      { start: data.start, end: data.end, markers, unit, pad: Math.max(0.1, Math.abs(lastValue) * 0.03), integer: false });
+  } else {
+    $("compressor-parameter-chart").textContent = "Värdegrafen visas när minst två tidspunkter har rapporterats.";
+  }
+
+  const cycles = $("compressor-cycles");
+  cycles.replaceChildren(...[...data.cycles].reverse().slice(0, 30).map((cycle) => {
+    const article = document.createElement("article");
+    article.className = "event";
+    const time = document.createElement("small");
+    time.textContent = `${dayAndTime(cycle.start)} – ${dayAndTime(cycle.end)} · observerat ${Math.round(cycle.observed_seconds / 60)} min`;
+    const title = document.createElement("strong");
+    const maximum = cycle.maximum_seconds === null ? "okänt" : `${Math.round(cycle.maximum_seconds / 60)}`;
+    title.textContent = `${cycle.classification} · möjligt gångtidsintervall ${Math.round(cycle.minimum_seconds / 60)}–${maximum} min`;
+    article.append(time, title, diagnosticSnapshot(cycle.start_sample), diagnosticSnapshot(cycle.end_sample));
+    return article;
+  }));
+  if (!data.cycles.length) cycles.textContent = "Ingen fullständig start/stopp-körning i perioden.";
+
+  const alarms = $("compressor-alarm-events");
+  alarms.replaceChildren(...[...data.alarms].reverse().map((alarm) => {
+    const article = document.createElement("article");
+    article.className = "event";
+    const title = document.createElement("strong");
+    title.textContent = alarm.code ? `Aktivt larm ${alarm.code}` : "Aktivt larm (kod saknas)";
+    const time = document.createElement("small");
+    time.textContent = `Första aktiva provet ${dayAndTime(alarm.timestamp)}`;
+    article.append(time, title, diagnosticSnapshot(alarm.sample));
+    return article;
+  }));
+  if (!data.alarms.length) alarms.textContent = "Inga övergångar till aktivt HA-larm har fångats i perioden.";
+  $("compressor-latest-values").replaceChildren(...data.entities.map((item) => metric({
+    label: `${item.name} · prov ${dayAndTime(item.sampled_at)}`,
+    value: item.value === null ? "Okänt" : item.value, unit: item.unit || "",
+  })));
+}
+
+async function refreshCompressorDiagnostics() {
+  if (compressorDiagnosticsBusy) return;
+  compressorDiagnosticsBusy = true;
+  $("refresh-compressor-diagnostics").disabled = true;
+  try {
+    const hours = $("compressor-diagnostics-hours").value;
+    renderCompressorDiagnostics(await api(`compressor-diagnostics?hours=${encodeURIComponent(hours)}`));
+  } catch (error) {
+    $("compressor-diagnostics-status").textContent = `Kunde inte läsa kompressordiagnostiken: ${error.message}`;
+  } finally {
+    compressorDiagnosticsBusy = false;
+    $("refresh-compressor-diagnostics").disabled = false;
+  }
+}
+
 async function refreshAlarms() {
   if (alarmsBusy || alarmActionBusy) return;
   alarmsBusy = true;
@@ -3409,6 +3597,12 @@ async function init() {
   $("fireplace_max_age_minutes").addEventListener("input", updateSaveState);
   $("refresh-overview").addEventListener("click", () => void refreshOverview());
   $("refresh-alarms").addEventListener("click", () => { void refreshAlarms(); void refreshCloudAlarms(); });
+  $("refresh-compressor-diagnostics").addEventListener("click", () => void refreshCompressorDiagnostics());
+  $("compressor-diagnostics-hours").addEventListener("change", () => void refreshCompressorDiagnostics());
+  $("compressor-parameter").addEventListener("change", () => {
+    compressorParameterSelection = $("compressor-parameter").value;
+    if (compressorDiagnosticsData) renderCompressorDiagnostics(compressorDiagnosticsData);
+  });
   $("alarm-pause").addEventListener("click", () => void pauseAlarmThermostats());
   $("aux-recovery-ack").addEventListener("click", () => void acknowledgeAuxRecovery());
   $("fireplace-manual-start").addEventListener("click", () => void manualFireplace());
@@ -3483,6 +3677,7 @@ async function init() {
   void refreshForecast();
   void refreshPlan();
   void refreshHotWater();
+  void refreshCompressorDiagnostics();
   void refreshLearning();
   void refreshEnergy();
   void refreshSavings();
@@ -3494,6 +3689,7 @@ async function init() {
   window.setInterval(refreshHotWater, 120000);
   window.setInterval(refreshDashboard, 60000);
   window.setInterval(refreshHistory, 300000);
+  window.setInterval(refreshCompressorDiagnostics, 300000);
   window.setInterval(refreshEnergy, 300000);
   window.setInterval(refreshSavings, 900000);
   window.setInterval(refreshAuxiliary, 120000);
