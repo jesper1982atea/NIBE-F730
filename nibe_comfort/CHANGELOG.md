@@ -1,6 +1,6 @@
 # Ändringslogg
 
-## Ej släppt
+## 0.2.63
 
 - Radiatortermostater styrda av rumsgivare (av från början, med skuggläge).
   En smart radiatortermostat mäter vid elementet och visar ofta fel. Nu
