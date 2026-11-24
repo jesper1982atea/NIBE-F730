@@ -346,6 +346,14 @@ def handler_for(controller, api_token=None, insights=None, myuplink=None):
                     report = controller.compressor_diagnostics.report(int(values[0]))
                     report["auto_reset_enabled"] = bool(getattr(controller, "auto_reset_enabled", False))
                     self.respond(200, report)
+                elif path == "/api/hot-water-monitor":
+                    values = parse_qs(urlsplit(self.path).query, keep_blank_values=True).get("hours", ["72"])
+                    if len(values) != 1 or values[0] not in ("24", "72", "168"):
+                        self.respond(400, {"error": "Välj 24, 72 eller 168 timmar."})
+                        return
+                    report = controller.compressor_diagnostics.hot_water_monitor(int(values[0]))
+                    report["price_control_enabled"] = controller.settings()["hot_water_price_enabled"]
+                    self.respond(200, report)
                 elif path == "/api/myuplink/alarms":
                     self.respond(200, myuplink.report())
                 elif path == "/api/myuplink/discovery":

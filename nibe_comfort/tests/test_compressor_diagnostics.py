@@ -14,6 +14,9 @@ COMPRESSOR = "sensor.pump_status_compressor_1001"
 RETURN = "sensor.pump_return_line_bt3_1002"
 ALARM = "binary_sensor.pump_alarm"
 ALARM_CODE = "sensor.pump_alarms_1003"
+HOT_WATER = "sensor.pump_active_compressors_hot_water"
+BT6 = "sensor.pump_hot_water_charging_bt6"
+HOT_WATER_MODE = "select.pump_hot_water_amount"
 
 
 def state(entity_id, value, unit=None):
@@ -84,6 +87,67 @@ class CompressorDiagnosticsTests(unittest.TestCase):
         self.assertEqual(self.log.report(6, now=1100)["sample_count"], 1)
         with self.assertRaises(ValueError):
             self.log.report(12, now=1100)
+
+    def water_sample(self, timestamp, charging, alarm=False, offset=1):
+        states = [state(OFFSET, offset), state(HOT_WATER, charging), state(BT6, 45, "°C"),
+                  state(HOT_WATER_MODE, "Normal")]
+        self.log.record(states, (HOT_WATER, BT6, HOT_WATER_MODE), OFFSET, self.config,
+                        {"checked_at": timestamp, "current_offset": offset,
+                         "pump_alarm": {"active": alarm, "error": None}}, timestamp)
+
+    def test_hot_water_cycle_requires_complete_followup_for_no_observed_alarm(self):
+        for index in range(16):
+            self.water_sample(1000 + index * 60, 1 if 1 <= index <= 4 else 0,
+                              offset=2 if index >= 3 else 1)
+        report = self.log.hot_water_monitor(24, now=1900)
+        self.assertEqual(report["current"], "idle")
+        self.assertEqual(report["charges"][0]["alarm_result"], "none_observed")
+        self.assertEqual(report["charges"][0]["observed_seconds"], 180)
+        self.assertEqual(report["charges"][0]["start_values"]["bt6"], 45)
+        self.assertEqual(report["charges"][0]["start_values"]["mode"], "Normal")
+        self.assertEqual(report["offset_changes"][0]["value"], 2)
+        self.assertEqual(report["offset_changes"][0]["alarm_result"], "none_observed")
+
+    def test_hot_water_alarm_and_incomplete_followup_are_distinct(self):
+        for index in range(8):
+            self.water_sample(1000 + index * 60, 1 if 1 <= index <= 4 else 0,
+                              alarm=index == 5)
+        report = self.log.hot_water_monitor(24, now=1420)
+        self.assertEqual(report["charges"][0]["alarm_result"], "observed")
+        self.log = CompressorDiagnostics(Path(self.temp.name) / "incomplete.sqlite")
+        for index in range(8):
+            self.water_sample(1000 + index * 60, 1 if 1 <= index <= 4 else 0)
+        self.assertEqual(self.log.hot_water_monitor(24, now=1420)["charges"][0]["alarm_result"], "unknown")
+
+    def test_gap_cannot_mark_interrupted_charge_as_alarm_free(self):
+        for timestamp, charging in ((1000, 0), (1060, 1), (1120, 1), (1400, 0)):
+            self.water_sample(timestamp, charging)
+        report = self.log.hot_water_monitor(24, now=1400)
+        self.assertTrue(report["charges"][0]["interrupted"])
+        self.assertEqual(report["charges"][0]["alarm_result"], "unknown")
+        self.assertEqual(self.log.hot_water_monitor(24, now=1600)["current"], "unknown")
+
+    def test_unknown_alarm_status_is_not_reported_as_alarm_free(self):
+        for index in range(16):
+            timestamp = 1000 + index * 60
+            self.water_sample(timestamp, 1 if 1 <= index <= 4 else 0)
+        with self.log.connect() as connection:
+            row = connection.execute("SELECT data FROM samples WHERE timestamp=?", (1360,)).fetchone()
+            import json
+            sample = json.loads(row[0])
+            sample["app"]["pump_alarm"]["active"] = None
+            connection.execute("UPDATE samples SET data=? WHERE timestamp=?", (json.dumps(sample), 1360))
+        self.assertEqual(self.log.hot_water_monitor(24, now=1900)["charges"][0]["alarm_result"], "unknown")
+
+    def test_ambiguous_hot_water_status_is_not_guessed(self):
+        self.log.record([state(OFFSET, 1), state(HOT_WATER, 1),
+                         state("sensor.other_active_compressors_hot_water", 0)],
+                        (HOT_WATER, "sensor.other_active_compressors_hot_water"), OFFSET,
+                        self.config, {}, 1000)
+        report = self.log.hot_water_monitor(24, now=1000)
+        self.assertEqual(report["current"], "unknown")
+        self.assertEqual(report["charges"], [])
+        self.assertIn("Flera", report["message"])
 
     def test_controller_records_the_selected_pump_after_each_tick(self):
         controller = Controller(Mock(), self.temp.name)

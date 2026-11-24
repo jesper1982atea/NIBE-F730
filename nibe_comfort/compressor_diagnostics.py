@@ -5,6 +5,7 @@ import re
 import sqlite3
 import statistics
 import time
+from bisect import bisect_left
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -226,6 +227,144 @@ class CompressorDiagnostics:
             "message": ("Proverna kommer från vald myUplink-pump via Home Assistant. "
                         "Tidsstämplar visar när tillägget läste värdena; själva pump-/integrationens rapport kan vara äldre."),
         }
+
+    def hot_water_monitor(self, hours=72, now=None):
+        if type(hours) is not int or hours not in (24, 72, 168):
+            raise ValueError("Välj 24, 72 eller 168 timmar.")
+        now = time.time() if now is None else now
+        samples = []
+        suffixes = ("_active_compressors_hot_water", "_supply_line_bt2", "_return_line_bt3",
+                    "_hot_water_charging_bt6", "_hot_water_top_bt7", "_hot_water_amount",
+                    "_hot_water_comfort_mode")
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT timestamp,data FROM samples WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp",
+                (now - hours * 3600, now),
+            )
+            for stamp, data in rows:
+                sample = json.loads(data)
+                pump = [item for item in sample.get("pump", [])
+                        if _entity_base(item["entity_id"]).endswith(suffixes)]
+                app = sample.get("app") or {}
+                samples.append({"timestamp": stamp, "pump": pump,
+                                "app": {key: app.get(key) for key in ("checked_at", "pump_alarm", "current_offset")}})
+        timestamps = [sample["timestamp"] for sample in samples]
+        ids = sorted({item["entity_id"] for sample in samples for item in sample.get("pump", [])
+                      if _entity_base(item["entity_id"]).endswith("_active_compressors_hot_water")})
+        result = {
+            "hours": hours, "sample_count": len(samples),
+            "last_sample": samples[-1]["timestamp"] if samples else None,
+            "current": "unknown", "current_reported_at": None,
+            "charges": [], "offset_changes": [], "truncated": False,
+            "message": "Väntar på pumpens varmvattenstatus och diagnostikprover.",
+        }
+        if len(ids) != 1:
+            if len(ids) > 1:
+                result["message"] = "Flera varmvattenstatusgivare hittades; välj en entydig pump."
+            return result
+
+        def mode(sample):
+            value = next((numeric_state(item.get("value")) for item in sample.get("pump", [])
+                          if item["entity_id"] == ids[0]), None)
+            return True if value is not None and value > 0 else False if value == 0 else None
+
+        def values(sample):
+            found = {}
+            for item in sample.get("pump", []):
+                base = _entity_base(item["entity_id"])
+                for suffix, key in (("_supply_line_bt2", "bt2"), ("_return_line_bt3", "bt3"),
+                                    ("_hot_water_charging_bt6", "bt6"), ("_hot_water_top_bt7", "bt7")):
+                    if base.endswith(suffix):
+                        found.setdefault(key, []).append(numeric_state(item.get("value")))
+            result = {key: items[0] for key, items in found.items() if len(items) == 1}
+            modes = [item.get("value") for item in sample.get("pump", [])
+                     if item["entity_id"].startswith("select.")
+                     and _entity_base(item["entity_id"]).endswith(("_hot_water_amount", "_hot_water_comfort_mode"))]
+            result["mode"] = modes[0] if len(modes) == 1 and modes[0] not in ("unknown", "unavailable") else None
+            return result
+
+        def alarm(sample):
+            app = sample.get("app") or {}
+            status = app.get("pump_alarm")
+            checked = app.get("checked_at")
+            if (not isinstance(status, dict) or status.get("error")
+                    or type(status.get("active")) is not bool
+                    or not isinstance(checked, (int, float)) or isinstance(checked, bool)
+                    or abs(sample["timestamp"] - checked) > 120):
+                return None
+            return status["active"]
+
+        def alarm_window(start, end, can_complete=True):
+            window = []
+            for index in range(bisect_left(timestamps, start), len(samples)):
+                sample = samples[index]
+                if sample["timestamp"] > end + 120:
+                    break
+                window.append(sample)
+                if sample["timestamp"] >= end:
+                    break
+            if any(alarm(sample) is True for sample in window):
+                return "observed"
+            continuous = bool(window) and all(
+                b["timestamp"] - a["timestamp"] <= 120 for a, b in zip(window, window[1:]))
+            if (can_complete and window and window[-1]["timestamp"] >= end and continuous
+                    and all(alarm(sample) is False for sample in window)):
+                return "none_observed"
+            return "unknown"
+
+        charges = []
+        active = None
+        previous = None
+        offsets = []
+        previous_offset = None
+        for sample in samples:
+            stamp = sample["timestamp"]
+            state = mode(sample)
+            contiguous = previous is not None and stamp - previous["timestamp"] <= 120
+            if active is not None and (not contiguous or state is None):
+                active.update(end=None, interrupted=True)
+                charges.append(active)
+                active = None
+            if state is True:
+                if active is None:
+                    active = {"start": stamp, "last_on": stamp, "start_values": values(sample),
+                              "start_known": contiguous and mode(previous) is False}
+                active["last_on"] = stamp
+            elif state is False and active is not None:
+                active.update(end=stamp, end_values=values(sample), interrupted=False)
+                charges.append(active)
+                active = None
+            offset = numeric_state((sample.get("app") or {}).get("current_offset"))
+            if contiguous and previous_offset is not None and offset is not None and offset != previous_offset:
+                offsets.append({"timestamp": stamp, "previous": previous_offset, "value": offset})
+            previous_offset = offset
+            previous = sample
+        if active is not None:
+            active.update(end=None, interrupted=False)
+            charges.append(active)
+
+        for charge in charges:
+            start = charge["start"]
+            end = charge["end"]
+            charge["observed_seconds"] = max(0, round(charge["last_on"] - start))
+            window_end = end + 600 if end is not None else charge["last_on"]
+            charge["alarm_result"] = alarm_window(
+                start, window_end, end is not None and not charge["interrupted"] and charge["start_known"])
+        for change in offsets:
+            change["alarm_result"] = alarm_window(change["timestamp"], change["timestamp"] + 600)
+        latest = samples[-1] if samples else None
+        if latest and now - latest["timestamp"] <= 120:
+            current = mode(latest)
+            result["current"] = "charging" if current is True else "idle" if current is False else "unknown"
+            item = next((item for item in latest["pump"] if item["entity_id"] == ids[0]), None)
+            result["current_reported_at"] = item.get("reported_at") if item else None
+        result.update(
+            charges=list(reversed(charges[-100:])), offset_changes=list(reversed(offsets[-100:])),
+            truncated=len(charges) > 100 or len(offsets) > 100,
+            message=("Varmvattenladdning avläses från pumpens statusgivare. "
+                     "Prov och rapporterade värden är inte exakta mätningar."),
+        )
+        return result
 
     def analyze_alarm_window(self, alarm_seen_at, now=None, config=None):
         """Check that the requested 30-minute-before/10-minute-after sample window is complete."""

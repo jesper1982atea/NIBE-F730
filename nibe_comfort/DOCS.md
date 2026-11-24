@@ -92,6 +92,25 @@ missa korta körningar och räcker inte alltid för att fastställa orsaken.
 Återkommande larm kräver installatör/service; appen kan inte garantera att
 larmet inte återkommer.
 
+### Övervakning av varmvattenladdning
+
+Under **Varmvatten → Varmvattenladdning och larm** visas pumpens avlästa
+laddningar och kurvförskjutningar för ett, tre eller sju dygn. En laddning
+kräver en entydig `active_compressors_hot_water`-entitet på den valda pumpen.
+Start, stopp och varaktighet bygger på provtagning; den observerade tiden är
+inte en exakt fysisk gångtid. BT2, BT3, BT6, BT7 och varmvattenläge visas
+när de finns. Efter varje laddning följs larmstatus i minst tio minuter;
+kurvförändringar följs i tio minuter efter avläsningen. Avbrott, saknad
+larmstatus eller en ofullständig uppföljning visas som okänt. Även när inget
+larm observerats kan gles rapportering ha missat händelser och senare larm
+kan uppstå. Mätvärden visar inte orsak, duschning eller faktiskt flöde.
+
+Länken **Aktivera eller pausa varmvatten-prisstyrning** öppnar den befintliga
+inställningen; ändra kryssrutan och spara. Paus lämnar aktuellt varmvattenläge
+oförändrat och stänger inte av pumpens varmvattenproduktion. Bostadens
+förvärmning är en separat inställning. Historiken börjar när diagnostikloggen
+har samlat in prover och lagras högst sju dygn; äldre data skapas inte bakåt.
+
 ### Kompressordiagnostik
 
 Diagnostikvyn sparar tidsstämplade prover från entiteter på pumpen som valts
@@ -1271,6 +1290,7 @@ Token ger behörighet att både läsa och ändra alla styrinställningar.
 | GET | `/api/history` | Senaste dygnets temperaturhistorik för sparade givare |
 | GET | `/api/forecast` | Prognos från vald eller entydigt upptäckt HA-väderkälla |
 | GET | `/api/hotwater` | Varmvattnets nivå, temperaturer, tappningar och laddningar senaste 7 dygnen (endast läsning) |
+| GET | `/api/hot-water-monitor?hours=72` | Observerade laddningar, kurvförändringar och larmuppföljning; `hours` är 24, 72 eller 168 (endast läsning) |
 | GET | `/api/plan` | Utetemperatur, Tibber-/Nord Pool-priser, faktisk/planerad förskjutning och uppskattad värmekurva (endast läsning) |
 | GET | `/api/events` | Senaste 100 logghändelser; `?before=<id>` hämtar äldre |
 | GET | `/api/settings` | Komplett sparad styrkonfiguration |

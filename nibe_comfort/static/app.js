@@ -3044,6 +3044,86 @@ function drawHourBars(container, events) {
   container.append(svg);
 }
 
+let hotWaterMonitorBusy = false;
+let hotWaterMonitorPending = false;
+async function refreshHotWaterMonitor() {
+  if (!$("hot-water-card").getClientRects().length) return;
+  if (hotWaterMonitorBusy) { hotWaterMonitorPending = true; return; }
+  hotWaterMonitorBusy = true;
+  try {
+    const hours = $("hw-monitor-hours").value;
+    const data = await api(`hot-water-monitor?hours=${encodeURIComponent(hours)}`);
+    $("hw-monitor-control").textContent = data.price_control_enabled
+      ? "Varmvatten-prisstyrning är PÅ. Pumpens läge kan ändras av appen."
+      : "Varmvatten-prisstyrning är AV. Pumpen behåller sitt aktuella läge och sköter varmvattnet.";
+    const current = {
+      charging: "Pumpen rapporterar varmvattenladdning.",
+      idle: "Pumpen rapporterar ingen varmvattenladdning.",
+      unknown: "Aktuell varmvattenstatus är okänd.",
+    }[data.current];
+    const reported = data.current_reported_at ? ` Statusgivaren rapporterade senast ${new Date(data.current_reported_at).toLocaleString("sv-SE")}; provtagning innebär inte en ny pumprapport.` : "";
+    $("hw-monitor-status").textContent = `${current} ${data.message} ${data.sample_count} prover${data.last_sample ? `; senaste ${dayAndTime(data.last_sample)}` : ""}.${reported}${data.truncated ? " Visar högst 100 händelser av varje typ." : ""}`;
+    const charges = data.charges.map((charge) => {
+      const article = document.createElement("article");
+      article.className = "event";
+      const heading = document.createElement("strong");
+      heading.textContent = charge.end ? "Varmvattenladdning avslutad"
+        : charge.interrupted ? "Laddning avbruten i loggen" : "Varmvattenladdning pågår eller väntar på nytt prov";
+      const time = document.createElement("small");
+      const duration = Math.floor(charge.observed_seconds / 60);
+      time.textContent = `Först avläst ${dayAndTime(charge.start)}${charge.end ? ` · stopp avläst ${dayAndTime(charge.end)}` : ""} · observerat minst ${duration} min${charge.start_known ? "" : " · start före första säkra provet är möjlig"}`;
+      const outcome = document.createElement("p");
+      outcome.textContent = {
+        observed: "Larm observerat under laddningen eller uppföljningen efteråt. Kontrollera larmvyn och pumpen.",
+        none_observed: "Inget aktivt larm observerat under laddningen eller de följande tio minuterna. Det bevisar inte att inga händelser missades.",
+        unknown: "Larmresultat okänt: laddningen, efterföljande tio minuter eller larmstatus har inte observerats sammanhängande.",
+      }[charge.alarm_result];
+      const temperatures = document.createElement("p");
+      temperatures.className = "hint";
+      const start = charge.start_values || {}, end = charge.end_values || {};
+      const fields = [["bt6", "Tank BT6"], ["bt7", "Topp BT7"], ["bt2", "Fram BT2"], ["bt3", "Retur BT3"]];
+      const readings = fields.flatMap(([key, label]) => {
+        if (typeof start[key] !== "number" && typeof end[key] !== "number") return [];
+        const from = typeof start[key] === "number" ? `${displayNumber(start[key])}°` : "—";
+        const to = typeof end[key] === "number" ? `${displayNumber(end[key])}°` : "—";
+        return [`${label}: ${from} → ${to}`];
+      });
+      if (start.mode) readings.unshift(`Varmvattenläge vid start: ${start.mode}`);
+      temperatures.textContent = readings.length ? readings.join(" · ") : "Temperatur eller varmvattenläge saknas i start-/stopproverna.";
+      article.append(time, heading, outcome, temperatures);
+      return article;
+    });
+    $("hw-monitor-charges").replaceChildren(...charges);
+    if (!charges.length) $("hw-monitor-charges").textContent = "Ingen varmvattenladdning har fångats i perioden.";
+    const offsets = data.offset_changes.map((change) => {
+      const article = document.createElement("article");
+      article.className = "event";
+      const time = document.createElement("small");
+      time.textContent = dayAndTime(change.timestamp);
+      const text = document.createElement("strong");
+      text.textContent = `Förskjutning ${displayNumber(change.previous)} → ${displayNumber(change.value)}`;
+      const outcome = document.createElement("p");
+      outcome.textContent = {
+        observed: "Larm observerat under uppföljningen efter ändringen.",
+        none_observed: "Inget aktivt larm observerat under de följande tio minuterna; senare larm kan fortfarande uppstå.",
+        unknown: "Larmresultat okänt: väntar på tio minuters sammanhängande larmstatus.",
+      }[change.alarm_result];
+      article.append(time, text, outcome);
+      return article;
+    });
+    $("hw-monitor-offsets").replaceChildren(...offsets);
+    if (!offsets.length) $("hw-monitor-offsets").textContent = "Ingen ändring av förskjutningen har avlästs i perioden.";
+  } catch (error) {
+    $("hw-monitor-status").textContent = `Kunde inte läsa övervakningen: ${error.message}`;
+  } finally {
+    hotWaterMonitorBusy = false;
+    if (hotWaterMonitorPending) {
+      hotWaterMonitorPending = false;
+      void refreshHotWaterMonitor();
+    }
+  }
+}
+
 async function refreshHotWater() {
   if (hotWaterBusy) { pendingRefreshes.add("hot-water"); return; }
   hotWaterBusy = true;
@@ -3461,6 +3541,7 @@ function setPageLayout(mode, view = $("main").dataset.activeView) {
     for (const chart of main.querySelectorAll(".chart")) {
       if (chart.getClientRects().length && chart.querySelector("svg")) chartRedraws.get(chart)?.();
     }
+    if ($("hot-water-card").getClientRects().length) void refreshHotWaterMonitor();
   });
 }
 
@@ -3657,6 +3738,8 @@ async function init() {
   });
   $("refresh-plan").addEventListener("click", () => void refreshPlan());
   $("refresh-hot-water").addEventListener("click", () => void refreshHotWater());
+  $("refresh-hot-water").addEventListener("click", () => void refreshHotWaterMonitor());
+  $("hw-monitor-hours").addEventListener("change", () => void refreshHotWaterMonitor());
   $("refresh-learning").addEventListener("click", () => void refreshLearning());
   $("refresh-events").addEventListener("click", () => void refreshEvents());
   $("test-start").addEventListener("click", () => void testAction("start"));
@@ -3677,6 +3760,7 @@ async function init() {
   void refreshForecast();
   void refreshPlan();
   void refreshHotWater();
+  void refreshHotWaterMonitor();
   void refreshCompressorDiagnostics();
   void refreshLearning();
   void refreshEnergy();
@@ -3687,6 +3771,7 @@ async function init() {
   window.setInterval(refreshStatus, 15000);
   window.setInterval(refreshLearning, 900000);
   window.setInterval(refreshHotWater, 120000);
+  window.setInterval(refreshHotWaterMonitor, 60000);
   window.setInterval(refreshDashboard, 60000);
   window.setInterval(refreshHistory, 300000);
   window.setInterval(refreshCompressorDiagnostics, 300000);
@@ -3705,6 +3790,7 @@ async function init() {
     void refreshDashboard();
     void refreshPlan();
     void refreshHotWater();
+    void refreshHotWaterMonitor();
     void refreshTest();
     void refreshEnergy();
     void refreshAuxiliary(); void refreshSources();

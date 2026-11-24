@@ -141,6 +141,15 @@ class ApiTests(unittest.TestCase):
         self.assertFalse(report["available"])
         self.assertFalse(report["auto_reset_enabled"])
 
+    def test_hot_water_monitor_requires_auth_and_limits_period(self):
+        self.assertEqual(self.request("/api/hot-water-monitor", token=False)[0], 401)
+        self.assertEqual(self.request("/api/hot-water-monitor?hours=12")[0], 400)
+        self.assertEqual(self.request("/api/hot-water-monitor?hours=24&hours=72")[0], 400)
+        status, report = self.request("/api/hot-water-monitor?hours=168")
+        self.assertEqual(status, 200)
+        self.assertEqual(report["current"], "unknown")
+        self.assertFalse(report["price_control_enabled"])
+
     def test_direct_myuplink_endpoint_auth_confirmation_and_no_secrets(self):
         cloud = Mock()
         cloud.report.return_value = {"configured": False, "alarms": [], "checked_at": None}
