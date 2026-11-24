@@ -19,4 +19,5 @@ jobs:
       - run: node --check nibe_comfort/static/app.js && node --check nibe_comfort/static/theme.js
       - run: node nibe_comfort/tests/test_discovery_ui.cjs
       - run: node nibe_comfort/tests/test_hot_water_monitor_ui.cjs
+      - run: node nibe_comfort/tests/test_room_cards_ui.cjs
       - run: docker build --tag nibe-comfort:test nibe_comfort

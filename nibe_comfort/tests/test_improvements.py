@@ -309,8 +309,10 @@ class WarningTests(unittest.TestCase):
         self.controller.config = config(room_sensors=["sensor.living", "sensor.bedroom", "climate.radiator"],
                                         priority_sensors=["sensor.living"])
         self.controller.tick()
-        warnings = self.controller.snapshot()["warnings"]
+        status = self.controller.snapshot()
+        warnings = status["warnings"]
         self.assertTrue(any("termostat" in w and "husets snitt" in w for w in warnings))
+        self.assertEqual(status["room_sensor_warnings"], [w for w in warnings if "termostat" in w])
 
     def test_skipped_room_is_explained(self):
         self.ha.states.side_effect = lambda: stale(fixtures(), "sensor.bedroom")

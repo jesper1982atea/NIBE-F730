@@ -50,6 +50,11 @@ justering behövs. Detta är förskjutningen, inte numret på pumpens grundkurva
 Därunder visas elpriset just nu.
 
 Status och aktuella temperaturer hämtas automatiskt var 15:e sekund.
+Under **Hemma just nu** visar varje rumskort om givaren ingår i det senast
+beräknade styrande snittet. Om underlaget saknas visas rollen som okänd; vid
+reservstyrning följer korten de givare som faktiskt används. Termostatkort
+påminner om att en givare nära ett element kan påverkas av elementets värme.
+Det säger inte att alla termostater sitter vid ett element.
 Sparade inställningar hämtas samtidigt, men ett långsamt inställningsanrop
 blockerar inte temperaturerna. Ändras målet i en annan flik följer visningen
 med. Egna osparade ändringar ligger kvar och markeras som osparade; de används

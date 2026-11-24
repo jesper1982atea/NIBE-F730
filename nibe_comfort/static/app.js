@@ -519,7 +519,8 @@ function renderPriceMode() {
 }
 
 function renderStatusExtras(state) {
-  const warnings = state.warnings || [];
+  const roomWarnings = new Set(state.room_sensor_warnings || []);
+  const warnings = (state.warnings || []).filter((warning) => !roomWarnings.has(warning));
   $("status-warnings").replaceChildren(...warnings.map((text) => {
     const item = document.createElement("li");
     item.textContent = text;
@@ -943,14 +944,28 @@ function renderRoomImpact() {
       if (room.setpoint == null && room.thermostat_error) setpoint.textContent = room.thermostat_error;
       const footer = document.createElement("span");
       footer.className = "home-room-card-footer";
+      const role = document.createElement("span");
+      role.className = "home-room-role";
+      role.textContent = !Array.isArray(lastStatus?.indoor_rooms) || lastStatus?.error_message
+        ? "Styrande snitt kan inte bedömas"
+        : lastStatus.indoor_rooms.includes(room.entity_id) ? "Ingår i styrande snitt"
+          : room.error ? "Ingår inte i styrande snitt · mätvärde saknas"
+            : "Ingår inte i styrande snitt";
+      if (typeof lastStatus?.house_indoor === "number") role.textContent += " · ingår i husets snitt";
       const trend = document.createElement("small");
       trend.textContent = roomTrend(room);
       const tags = [room.priority ? "Prioriterat" : "", room.nearest ? "Närmast pumpen" : "",
         settings?.fireplace_rooms.includes(room.entity_id) ? "Kaminrum" : ""].filter(Boolean);
       const note = document.createElement("small");
       note.textContent = [tags.join(" · "), control?.error || control?.message || "", control?.warning || ""].filter(Boolean).join(" · ");
-      footer.append(trend);
+      footer.append(role, trend);
       if (note.textContent) footer.append(note);
+      if (room.entity_id.startsWith("climate.")) {
+        const sensorNote = document.createElement("small");
+        sensorNote.className = "home-room-sensor-note";
+        sensorNote.textContent = "Termostatens givare kan påverkas av värmen från ett närliggande element.";
+        footer.append(sensorNote);
+      }
       // A plain temperature sensor has no setpoint: skip the row instead of saying "Enhet: Temperaturgivare".
       card.append(header, reading, ...(room.setpoint != null || room.thermostat_error ? [thermostat] : []), footer);
       cards.append(card);
@@ -1353,6 +1368,7 @@ async function refreshStatus() {
       ...response, indoor: null, outdoor: null, house_indoor: null, current_offset: null,
       desired_offset: null, next_offset: null, contributions: null, warm_rooms: [], thermostat_control: null,
       fireplace: null,
+      indoor_rooms: null,
       rooms: (response.rooms || []).map((room) => ({ ...room, temperature: null, setpoint: null,
         error: "Avläsningen är inte aktuell.", thermostat_error: "Avläsningen är inte aktuell." })),
     } : response;

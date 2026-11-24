@@ -1766,6 +1766,17 @@ class Controller:
         return {"enabled": self.config["auto_base_enabled"], "value": round(value, 3) + 0.0, "limit": limit,
                 "memory_days": memory}
 
+    def room_sensor_warnings(self, result):
+        names = {room["entity_id"]: room.get("name") or room["entity_id"] for room in result.get("rooms") or []}
+        notes = []
+        if not self.config["thermostat_control_enabled"]:
+            controlling = control_rooms(self.config)
+            for key in self.config["room_sensors"]:
+                if key.startswith("climate."):
+                    notes.append(f"{names.get(key, key)} är en termostat som mäter nära elementet och kan visa för varmt; "
+                                 + ("den styr värmen." if key in controlling else "den räknas in i husets snitt."))
+        return notes
+
     def warnings(self, result):
         """Things worth knowing that do not stop control."""
         names = {room["entity_id"]: room.get("name") or room["entity_id"] for room in result.get("rooms") or []}
@@ -1773,12 +1784,7 @@ class Controller:
                  for room in result.get("skipped_rooms") or []]
         if result.get("indoor_fallback"):
             notes.append("Alla prioriterade rumsgivare är tysta; styr tillfälligt på dina övriga valda rum.")
-        if not self.config["thermostat_control_enabled"]:
-            controlling = control_rooms(self.config)
-            for key in self.config["room_sensors"]:
-                if key.startswith("climate."):
-                    notes.append(f"{names.get(key, key)} är en termostat som mäter nära elementet och kan visa för varmt; "
-                                 + ("den styr värmen." if key in controlling else "den räknas in i husets snitt."))
+        notes.extend(result["room_sensor_warnings"] if "room_sensor_warnings" in result else self.room_sensor_warnings(result))
         if result.get("price_error") and (self.config["cheap_boost"] or self.config["expensive_reduction"]):
             notes.append(result["price_error"])
         return notes
@@ -3024,6 +3030,7 @@ class Controller:
                     and not (testing_now or vacation or alarm["active"] is True)
                     and not preheat["kind"] and fireplace["phase"] != "active"
                     and not result["indoor_fallback"] and not result["skipped_rooms"])
+                result["room_sensor_warnings"] = self.room_sensor_warnings(result)
                 result["warnings"] = self.warnings(result)
                 if alarm_hold and result["writable"]:
                     result["next_offset"] = result["current_offset"]
