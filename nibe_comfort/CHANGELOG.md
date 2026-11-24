@@ -1,5 +1,11 @@
 # Ändringslogg
 
+## 0.2.66
+
+- Rumskorten visar vilka givare som ingår i det styrande snittet och
+  förklarar hur värmen från ett närliggande element kan påverka en
+  termostatgivare. Upprepade förklaringar ersätter inte viktiga varningar.
+
 ## 0.2.65
 
 - Varmvattenvyn visar observerade laddningar, hur länge de har pågått,
