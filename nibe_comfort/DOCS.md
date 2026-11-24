@@ -92,6 +92,28 @@ missa korta körningar och räcker inte alltid för att fastställa orsaken.
 Återkommande larm kräver installatör/service; appen kan inte garantera att
 larmet inte återkommer.
 
+### Kompressordiagnostik
+
+Diagnostikvyn sparar tidsstämplade prover från entiteter på pumpen som valts
+med kurvförskjutningsentiteten. Den använder de redan hämtade Home Assistant-
+tillstånden i styrloopen, ungefär en gång per minut; den gör ingen extra
+pollning. Proverna sparas lokalt i tilläggets datamapp i högst sju dagar.
+Vyn kan visa rapporterade temperaturer, kompressorns avlästa start/stopp,
+aktiva HA-larm samt NIBE Comforts pris- och styrstatus vid provet.
+
+Start/stopp är observationer vid provtillfällena, inte exakta mätningar av
+kompressorns fysiska gångtid. Diagnostiken visar därför ett möjligt intervall
+och markerar osäkerhet när provluckan gör en femminutersbedömning oklar.
+Home Assistant Recorder eller myUplink kan ha äldre historik, men tilläggets
+nya logg skapar ingen historik bakåt i tiden. Sensorernas egen rapportering
+kan också vara äldre än provtiden; ålder visas när HA tillhandahåller
+tidsstämpeln. Frånvarande värden fylls inte i. Samtidiga temperatur-,
+pris- och styrförändringar visar inte i sig vad som orsakade ett larm.
+
+Automatisk kvittering är avstängd som standard. Ett återkommande
+kompressorskydd kan indikera ett kvarstående fel, och en återställning kan
+starta kompressorn igen innan orsaken är åtgärdad.
+
 Vid ett aktuellt, entydigt bekräftat larm 229 väntar nya automatiska
 kurvförskjutningar och termostatbegränsningar. När giltiga rapporter visar
 att larmet är borta kan kurvstyrningen fortsätta. Redan påbörjad
@@ -106,12 +128,12 @@ omstart; återaktivera medvetet under Inställningar. Övriga osparade
 formulärändringar bevaras.
 
 **Home Assistant-anslutningen erbjuder ingen fjärrkvittering.** Version
-0.2.41 lägger till en separat, valfri myUplink-anslutning enligt nedan.
-Åtgärda orsaken och följ NIBEs instruktioner före manuell kvittering.
-Appen gissar inte datapunkter och återställer aldrig ett kompressorskydd
-automatiskt.
+0.2.41 lade till en separat, valfri myUplink-anslutning enligt nedan.
+Manuell kvittering kräver uttrycklig bekräftelse. Valfri automatisk
+kvittering av 229 måste aktiveras separat i tilläggets Konfiguration och
+följer de diagnostikspärrar som beskrivs här.
 
-### Direkt myUplink: larmlista och begränsad manuell kvittering
+### Direkt myUplink: larmlista och begränsad kvittering
 
 Det [publika myUplink-API:t](https://api.myuplink.com/swagger/index.html)
 dokumenterar `GET /v2/systems/{systemId}/notifications/active` och
@@ -235,6 +257,29 @@ begäran. Även HTTP 200 kräver lyckad enhetsstatus i svaret och visas bara
 som **accepterad begäran**, aldrig som bevis för släckt pumplarm.
 Uppdatera larmvyn och kontrollera pumpens/myUplinks faktiska status; ett
 tomt molnsvar bevisar inte att felet på anläggningen är åtgärdat.
+
+#### Automatisk kvittering efter analys (valfri, av som standard)
+
+Aktivera `myuplink_auto_reset_229` i **tilläggets Konfiguration** först när
+du förstår risken. Funktionen pollar myUplink ungefär varje minut. Den
+kvitterar aldrig andra larm och försöker inte återställa UUID-ID:n,
+flera samtidiga 229-larm eller redan aktiva larm när tillägget/övervakningen
+startar.
+
+För en ny 229-händelse krävs minst 30 minuter då myUplink har bekräftat att
+inget sådant larm är aktivt. Därefter väntar tillägget 10 minuter från första
+observationen och kräver en sammanhängande logg med 30 minuter före och
+10 minuter efter händelsen, kompressorstatus, minst en fram-/returtemperatur,
+inga prover utan pumpvärden och inga provluckor över två minuter. Saknas
+något spärras automatiken och larmet lämnas för manuell hantering.
+
+Efter godkänd analys skickas högst **en** reset-begäran för det exakta,
+fortfarande aktiva numeriska larm-ID:t på den konfigurerade pumpen. En
+tidigare reset-begäran, avbruten övervakning eller saknad analys blockerar
+automatiken. Det finns inga automatiska återförsök. Att myUplink accepterar
+begäran bevisar inte att larmet är släckt eller att grundorsaken är åtgärdad;
+kompressorn kan starta igen och larmet återkomma. Kontrollera alltid pumpen
+och följ NIBEs råd. Stäng av inställningen om du inte vill ta den risken.
 
 ### Prioritera ett eller två rum
 

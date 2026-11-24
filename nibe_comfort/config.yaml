@@ -1,5 +1,5 @@
 name: NIBE Comfort
-version: "0.2.63"
+version: "0.2.64"
 slug: nibe_comfort
 stage: experimental
 description: Enkel temperaturstyrning med rumsgivare, väder och elpris via myUplink
@@ -27,9 +27,11 @@ options:
   myuplink_client_secret: ""
   myuplink_system_id: ""
   myuplink_device_id: ""
+  myuplink_auto_reset_229: false
 schema:
   api_token: password
   myuplink_client_id: str?
   myuplink_client_secret: password?
   myuplink_system_id: str?
   myuplink_device_id: str?
+  myuplink_auto_reset_229: bool

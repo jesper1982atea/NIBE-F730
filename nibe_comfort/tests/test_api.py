@@ -132,6 +132,15 @@ class ApiTests(unittest.TestCase):
         self.ha.set_offset.assert_not_called()
         self.ha.set_thermostat.assert_not_called()
 
+    def test_compressor_diagnostics_endpoint_validates_period_and_requires_auth(self):
+        self.assertEqual(self.request("/api/compressor-diagnostics", token=False)[0], 401)
+        self.assertEqual(self.request("/api/compressor-diagnostics?hours=12")[0], 400)
+        code, report = self.request("/api/compressor-diagnostics?hours=24")
+        self.assertEqual(code, 200)
+        self.assertEqual(report["sample_count"], 0)
+        self.assertFalse(report["available"])
+        self.assertFalse(report["auto_reset_enabled"])
+
     def test_direct_myuplink_endpoint_auth_confirmation_and_no_secrets(self):
         cloud = Mock()
         cloud.report.return_value = {"configured": False, "alarms": [], "checked_at": None}

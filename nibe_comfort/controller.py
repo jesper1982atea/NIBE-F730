@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from alarm_codes import alarm_info, alarm_label
+from compressor_diagnostics import CompressorDiagnostics
 from fireplace import empty_state, intervals as fireplace_intervals, update as update_fireplace, validate_state as validate_fireplace_state
 from learning import predict as model_predict
 from radiators import (CONFIRM_SECONDS as RADIATOR_CONFIRM_SECONDS, MATCH as RADIATOR_MATCH,
@@ -1452,6 +1453,17 @@ class EventLog:
             ).fetchall()
         return [dict(id=r[0], timestamp=r[1], kind=r[2], message=r[3], details=json.loads(r[4])) for r in rows]
 
+    def alarm_reset_attempted(self, system_id, device_id, notification_id):
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM events WHERE kind IN ('alarm_reset_attempt','alarm_auto_reset_attempt') "
+                "AND json_extract(details,'$.system_id')=? "
+                "AND json_extract(details,'$.device_id')=? "
+                "AND json_extract(details,'$.notification_id')=? LIMIT 1",
+                (system_id, device_id, notification_id),
+            ).fetchone()
+        return row is not None
+
 
 class Controller:
     def __init__(self, ha, data_dir):
@@ -1482,6 +1494,7 @@ class Controller:
                     saved.setdefault(key, copy.deepcopy(DEFAULTS[key]))
             self.config = validate(saved)
         self.events = EventLog(Path(data_dir) / "events.sqlite")
+        self.compressor_diagnostics = CompressorDiagnostics(Path(data_dir) / "compressor-diagnostics.sqlite")
         self.pending = None
         self.observed_offset = None
         self.last_error = None
@@ -1539,6 +1552,7 @@ class Controller:
             self.radiators = {}
         self.radiator_status = None
         self.tick_entities = None
+        self.tick_pump_peers = ()
         self.tick_alarm_hold = False
         self.thermostat_path = Path(data_dir) / "thermostat-state.json"
         self.thermostats = json.loads(self.thermostat_path.read_text()) if self.thermostat_path.exists() else {}
@@ -1771,6 +1785,7 @@ class Controller:
 
     def tick(self):
         self.tick_entities, self.tick_alarm_hold = None, False
+        self.tick_pump_peers = ()
         try:
             self.control_tick()
         finally:
@@ -1778,6 +1793,13 @@ class Controller:
             try:
                 self.radiator_tick()
             finally:
+                try:
+                    self.compressor_diagnostics.record(
+                        self.tick_entities, self.tick_pump_peers, self.config.get("offset_entity"),
+                        self.settings(), self.snapshot(),
+                    )
+                except Exception:
+                    LOG.exception("Kunde inte spara kompressordiagnostik; värmestyrningen fortsätter.")
                 self.report(time.time())
 
     def report(self, now):
@@ -2945,6 +2967,7 @@ class Controller:
                     self.outage_since = None
                 self.vacation_step(entities, now)
                 peers = self.peers()
+                self.tick_pump_peers = tuple(self.myuplink_peers.get(self.config["offset_entity"], ()))
                 readings = current_readings(self.config, entities, now, peers)
                 alarm = pump_alarm(entities, self.config, peers, now)
                 alarm_hold = alarm["active"] is True and alarm["code"] == 229 and not alarm["error"]

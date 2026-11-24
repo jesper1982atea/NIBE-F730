@@ -36,6 +36,7 @@
       <a href="#savings-section">Besparingskalkyl</a>
       <a href="#auxiliary-section">Elpatron</a>
       <a href="#alarm-card">Larm</a>
+      <a href="#compressor-diagnostics">Kompressordiagnostik</a>
       <a href="#vacation-card">Semester</a>
       <a href="#fireplace-card">Braskamin</a>
       <a href="#settings-panel">Inställningar</a>
@@ -389,6 +390,48 @@
           <a href="https://www.home-assistant.io/integrations/myuplink/" target="_blank" rel="noopener noreferrer">Home Assistants officiella callback-guide</a>
         </details>
         <p id="cloud-alarm-status" role="status">Hämtar direktanslutningens status…</p>
+      </details>
+    </section>
+
+    <section class="card dashboard" id="compressor-diagnostics" data-view="system">
+      <div class="section-heading">
+        <div><span class="section-number">PASSIV LOGG · VALD PUMP</span><h2>Kompressordiagnostik</h2></div>
+        <button type="button" id="refresh-compressor-diagnostics" class="secondary">Uppdatera logg</button>
+      </div>
+      <p class="section-intro">Tidslinje för kompressordrift, temperaturer, larm och NIBE Comforts styr-/prisbeslut. Loggen läser pumpens redan tillgängliga Home Assistant-värden; den skickar inga pumpkommandon.</p>
+      <div class="field-pair">
+        <div>
+          <label for="compressor-diagnostics-hours">Visa period</label>
+          <select id="compressor-diagnostics-hours">
+            <option value="6">Senaste 6 timmarna</option>
+            <option value="24">Senaste dygnet</option>
+            <option value="72" selected>Senaste 3 dygnen</option>
+          </select>
+        </div>
+      </div>
+      <p id="compressor-diagnostics-status" role="status">Hämtar kompressordiagnostik…</p>
+      <div id="compressor-diagnostics-metrics" class="live-grid"></div>
+      <p id="compressor-auto-reset-status" class="explanation" role="status"></p>
+      <h3>Analys och möjliga kodåtgärder</h3>
+      <ul id="compressor-recommendations" class="plan-changes"></ul>
+      <div id="compressor-auto-reset-history" class="events-list"></div>
+      <h3>Pumpens temperaturer</h3>
+      <div id="compressor-temperature-chart" class="chart" role="img" aria-label="Pumpens rapporterade temperaturer och kompressor-/larmhändelser"></div>
+      <div id="compressor-temperature-legend" class="chart-legend"></div>
+      <label for="compressor-parameter">Följ ett annat pumpvärde</label>
+      <select id="compressor-parameter"></select>
+      <div id="compressor-parameter-chart" class="chart" role="img" aria-label="Valt pumpvärde över tid"></div>
+      <h3>Kompressorns körningar</h3>
+      <p class="hint">Start och stopp är första prov där statusen ändras. Varaktigheten är därför ett intervall, inte en exakt mätning av kompressorns fysiska gångtid. Stora luckor gör femminutersbedömningen osäker.</p>
+      <div id="compressor-cycles" class="events-list"></div>
+      <h3>Observerade larm</h3>
+      <div id="compressor-alarm-events" class="events-list"></div>
+      <details class="disclosure">
+        <summary>Senaste pumpvärdena och datakvalitet</summary>
+        <div id="compressor-latest-values" class="live-grid"></div>
+        <p id="compressor-diagnostics-quality" class="hint"></p>
+        <p class="hint">Prover sparas lokalt i tilläggets datamapp i högst sju dagar, ungefär en gång per styrvarv. Ingen historik skapas bakåt i tiden: tidigare nätter syns bara om Home Assistants Recorder/myUplink fortfarande har kvar motsvarande värden. Pumpens integration kan rapportera äldre värden än provtiden; ålder visas per entitet. En frånvarande datapunkt fylls inte i eller interpoleras.</p>
+        <p class="hint warning">Automatisk kvittering är avstängd som standard. Om du aktiverar den i tilläggets Konfiguration görs högst en begäran för ett entydigt aktivt larm 229 med numeriskt ID, efter 30 minuters larmfri förhistorik och ett komplett analysfönster på 30 minuter före och 10 minuter efter första larmobservationen. Saknade värden, datagap, UUID eller tidigare kvitteringsförsök blockerar den. En begäran kan ändå starta kompressorn utan att grundorsaken är åtgärdad; följ NIBEs råd och kontrollera pumpen.</p>
       </details>
     </section>
 
