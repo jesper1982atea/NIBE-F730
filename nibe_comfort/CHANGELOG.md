@@ -1,5 +1,15 @@
 # Ändringslogg
 
+## 0.2.65
+
+- Varmvattenvyn visar observerade laddningar, hur länge de har pågått,
+  temperaturer, varmvattenläge och larmstatus under och efter laddningen.
+  Den visar även avlästa kurvförändringar och larmuppföljning. Saknade
+  prover eller larmstatus visas som osäkert, inte som en felfri körning.
+- En länk i varmvattenvyn leder direkt till inställningen där prisstyrning
+  kan aktiveras eller pausas. Pumpens befintliga varmvattenläge behålls när
+  prisstyrningen pausas; själva varmvattenproduktionen stängs inte av.
+
 ## 0.2.64
 
 - Kompressordiagnostik loggar pumpvärden och möjliga korta körningar i sju
