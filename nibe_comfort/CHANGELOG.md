@@ -1,5 +1,12 @@
 # Ändringslogg
 
+## 0.2.67
+
+- Kompressordiagnostiken analyserar även larm där automatisk kvittering
+  spärrats, exempelvis när myUplink ger ett UUID. Om analysfönstret saknar
+  data visas orsaken. Varmvattenladdning nära larmet visas som en observation,
+  inte en fastställd orsak. Kvitteringsskydden är oförändrade.
+
 ## 0.2.66
 
 - Rumskorten visar vilka givare som ingår i det styrande snittet och

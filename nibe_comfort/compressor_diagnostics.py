@@ -164,6 +164,12 @@ class CompressorDiagnostics:
             raise ValueError("Välj 6, 24 eller 72 timmar.")
         end = time.time() if now is None else now
         start = end - hours * 3600
+        reset_history = self.auto_reset_history()
+        for item in reset_history:
+            if item["state"] == "blocked" and item["analysis"] is None and end >= item["first_seen"] + 600:
+                item["analysis"] = self.analyze_alarm_window(item["first_seen"], end)
+                if not item["analysis"]["ready"]:
+                    item["analysis"]["recommendations"] = [f"Analysen är ofullständig: {item['analysis']['reason']}"]
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT timestamp,data FROM samples WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp",
@@ -176,7 +182,7 @@ class CompressorDiagnostics:
                 "sample_interval_seconds": None, "max_gap_seconds": None, "gaps_over_120_seconds": 0,
                 "samples_without_pump_values": 0,
                 "entities": [], "temperatures": [], "series": [], "cycles": [], "alarms": [],
-                "recommendations": [], "auto_resets": self.auto_reset_history(),
+                "recommendations": [], "auto_resets": reset_history,
                 "message": "Pumpdiagnostiken börjar samla värden när tillägget har en aktuell avläsning.",
             }
         if not any(sample["pump"] for sample in samples):
@@ -186,7 +192,7 @@ class CompressorDiagnostics:
                 "sample_count": len(samples), "sample_interval_seconds": None, "max_gap_seconds": None,
                 "gaps_over_120_seconds": 0, "samples_without_pump_values": len(samples),
                 "entities": [], "temperatures": [], "series": [],
-                "cycles": [], "alarms": [], "recommendations": [], "auto_resets": self.auto_reset_history(),
+                "cycles": [], "alarms": [], "recommendations": [], "auto_resets": reset_history,
                 "message": ("Vald pumps entiteter kunde inte läsas i perioden. Kontrollera Home Assistant-anslutningen."
                             if configured else "Välj en myUplink-entitet för kurvförskjutning så tillägget hittar pumpens övriga entiteter."),
             }
@@ -222,7 +228,7 @@ class CompressorDiagnostics:
             "entities": entities, "temperatures": temperatures, "series": series,
             "cycles": cycles[-100:], "alarms": alarms[-30:],
             "recommendations": self._recommendations(samples, cycles),
-            "auto_resets": self.auto_reset_history(),
+            "auto_resets": reset_history,
             "truncated": any(sample.get("truncated") for sample in samples),
             "message": ("Proverna kommer från vald myUplink-pump via Home Assistant. "
                         "Tidsstämplar visar när tillägget läste värdena; själva pump-/integrationens rapport kan vara äldre."),
@@ -423,6 +429,13 @@ class CompressorDiagnostics:
 
         cycles = self._cycles(samples)
         recommendations = self._recommendations(samples, cycles, config)
+        observation = min(samples, key=lambda sample: abs(sample["timestamp"] - alarm_seen_at))
+        if abs(observation["timestamp"] - alarm_seen_at) <= 120:
+            pump = observation["pump"]
+            water = [item for item in pump if _entity_base(item["entity_id"]).endswith("_active_compressors_hot_water")]
+            if len(water) == 1 and numeric_state(water[0].get("value")) == 1:
+                recommendations.insert(0, "Vid första myUplink-observationen rapporterade pumpen varmvattenladdning. "
+                                       "Det är ett tidsmässigt samband, inte bevis på orsaken.")
         return {
             "ready": True, "reason": "30 minuter före och 10 minuter efter larmet har analyserats.",
             "start": samples[0]["timestamp"], "end": samples[-1]["timestamp"],
