@@ -102,6 +102,36 @@ class AutoAlarmResetTests(unittest.TestCase):
         self.assertEqual(self.myuplink.reset.call_count, 0)
         self.assertEqual(self.diagnostics.auto_reset_history()[0]["state"], "blocked")
 
+    def test_blocked_uuid_still_gets_analysis_without_a_reset(self):
+        self.run_alarm_window(alarm_id="e822a6ef-0cf2-4c0a-a06c-a9e1d3c9b798")
+        report = self.diagnostics.report(6, now=3400)
+        self.assertEqual(report["auto_resets"][0]["state"], "blocked")
+        self.assertTrue(report["auto_resets"][0]["analysis"]["ready"])
+        self.assertEqual(self.myuplink.reset.call_count, 0)
+        self.assertIsNone(self.diagnostics.auto_reset_history()[0]["analysis"])
+
+    def test_blocked_uuid_incomplete_window_does_not_claim_analysis_ready(self):
+        self.run_alarm_window(alarm_id="e822a6ef-0cf2-4c0a-a06c-a9e1d3c9b798",
+                              omit_samples=(1600, 1660))
+        analysis = self.diagnostics.report(6, now=3400)["auto_resets"][0]["analysis"]
+        self.assertFalse(analysis["ready"])
+        self.assertIn("Datagap", analysis["reason"])
+        self.assertIn("ofullständig", analysis["recommendations"][0])
+        self.assertEqual(self.myuplink.reset.call_count, 0)
+
+    def test_analysis_reports_water_charging_as_observation_not_cause(self):
+        water = "sensor.pump_active_compressors_hot_water"
+        for timestamp in range(1000, 3521, 60):
+            self.diagnostics.record(
+                [state(OFFSET, 1), state(COMPRESSOR, "on"), state(RETURN, 30, "°C"),
+                 state(ALARM, "off"), state(water, "1.0")],
+                (*self.peers, water), OFFSET, {}, {}, timestamp,
+            )
+        analysis = self.diagnostics.analyze_alarm_window(2800, 3500)
+        self.assertTrue(analysis["ready"])
+        self.assertIn("varmvattenladdning", analysis["recommendations"][0])
+        self.assertIn("inte bevis", analysis["recommendations"][0])
+
     def test_failed_reset_is_terminal_and_not_retried(self):
         self.myuplink.reset.side_effect = OSError("timeout")
         self.run_alarm_window()
